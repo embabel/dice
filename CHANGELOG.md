@@ -19,8 +19,9 @@ and the consumer PRs that deliver it).
   standalone save of the same text. **Compatibility: behavioral.**
 
 - The graph stores run on Drivine's SQL stores where they used Neo4j-only Cypher.
-  `findClusters` measures the candidates through Drivine instead of Neo4j's vector index
-  procedure. The whole-graph `observe()` reads the labels the nodes wear. The decay sweep commits
+  `findClusters` measures the candidates in the database instead of through Neo4j's vector index
+  procedure; on SQLite each anchor keeps its best `topK` among later ids there, so no more than
+  that is read back. The whole-graph `observe()` reads the labels the nodes wear. The decay sweep commits
   a page of propositions at a time, and a scoped sweep leaves alone a proposition that left the
   context while it ran, on Neo4j as well. **Compatibility: behavioral.**
 - A save embeds its text before it opens a transaction, so a slow embedding service no longer
@@ -38,9 +39,10 @@ and the consumer PRs that deliver it).
   extraction-run stores still run their transactions on Drivine's, and a save or run transition
   inside the host's transaction runs in a Drivine transaction of its own. Before, each statement
   committed on its own. A host JDBC manager whose data source Drivine reads through Spring's
-  `TransactionAwareDataSourceProxy` is kept. Any other way of sharing Drivine's SQLite file with
+  `TransactionAwareDataSourceProxy`, wrapping that data source directly, is kept. Any other way of sharing Drivine's SQLite file with
   the host's manager, such as one raw pool for both or two pools over one file, is refused at
-  startup. Drivine's transaction state comes from its bean or from Drivine's persistence manager.
+  startup, however the file is spelt. Drivine's transaction state and registry come from its beans
+  or from Drivine's persistence manager.
   With neither, the host's manager is used and a warning is logged. A run transition the store
   committed itself is announced at once. **Compatibility: behavioral.**
 - A uniqueness violation on SQLite is recognised as one, so a save that loses a dedup race reuses

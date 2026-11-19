@@ -26,6 +26,7 @@ import com.embabel.dice.storage.FakeEmbeddingService
 import com.embabel.dice.storage.TestApplication
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -149,6 +150,38 @@ class SqlitePropositionRepositoryIntegrationTest {
         assertEquals(setOf("a" to "b", "b" to "c", "c" to "d"), pairs)
     }
 
+    /**
+     * Twelve propositions all close to one another make 66 pairs above the threshold. The database
+     * keeps each anchor's best two, so no more than two rows an anchor ever reach the JVM.
+     */
+    @Test
+    fun `findClusters reads at most topK pairs an anchor from SQLite however many pass the threshold`() {
+        fun at(degrees: Double) = floatArrayOf(
+            Math.cos(Math.toRadians(degrees)).toFloat(),
+            Math.sin(Math.toRadians(degrees)).toFloat(),
+        )
+        val names = (0 until 12).map { "p%02d".format(it) }
+        val vectors = names.mapIndexed { i, n -> "$n fact" to at(i.toDouble()) }.toMap()
+        val counting = RowCountingPersistenceManager(persistenceManager)
+        val shaped = DrivinePropositionRepository(
+            graphObjectManager,
+            counting,
+            FixedEmbeddingService(vectors, FakeEmbeddingService()),
+            transactionManager,
+        )
+        names.forEach { shaped.save(ghost("$it fact", "cluster-dense", id = it)) }
+        counting.pairRows = 0
+
+        val clusters = shaped.findClusters(similarityThreshold = 0.9, topK = 2, query = PropositionQuery.forContextId(ContextId("cluster-dense")))
+
+        assertTrue(counting.pairRows in 1..names.size * 2, "read ${counting.pairRows} pair rows for ${names.size} anchors")
+        assertEquals(11, clusters.size)
+        clusters.forEach { cluster ->
+            assertTrue(cluster.similar.size <= 2)
+            assertTrue(cluster.similar.all { it.match.id > cluster.anchor.id })
+        }
+    }
+
     private fun ghost(text: String, context: String, id: String? = null): Proposition {
         val proposition = Proposition(
             contextId = ContextId(context),
@@ -179,4 +212,15 @@ private class FixedEmbeddingService(
         vectors[text]?.copyOf(fallback.dimensions) ?: fallback.embed(text)
 
     override fun embed(texts: List<String>): List<FloatArray> = texts.map(::embed)
+}
+
+/** Passes every call on, counting the rows of each pair query. */
+private class RowCountingPersistenceManager(private val delegate: PersistenceManager) : PersistenceManager by delegate {
+    var pairRows = 0
+
+    override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+        val rows = delegate.query(spec)
+        if (spec.parameters.containsKey("topK")) pairRows += rows.size
+        return rows
+    }
 }

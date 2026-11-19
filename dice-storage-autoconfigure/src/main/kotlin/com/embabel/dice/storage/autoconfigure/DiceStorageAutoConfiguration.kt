@@ -68,7 +68,6 @@ import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.ResourceTransactionManager
-import java.nio.file.Files
 import java.nio.file.Path
 import javax.sql.DataSource
 
@@ -158,7 +157,9 @@ class DiceStorageAutoConfiguration {
         val managed = (manager as? ResourceTransactionManager)?.resourceFactory as? DataSource ?: return HostSharing.NONE
         val drivine = drivineDataSource(persistenceManager) ?: return HostSharing.NONE
         val chain = unwrapped(drivine)
-        if (isTransactionAwareProxy(chain.first()) && managed in chain.drop(1)) return HostSharing.THROUGH_PROXY
+        // The proxy looks the host's connection up under its own target, so only the data source it
+        // wraps directly can be the one the manager binds.
+        if (isTransactionAwareProxy(chain.first()) && chain.getOrNull(1) == managed) return HostSharing.THROUGH_PROXY
         if (persistenceManager.type != DatabaseType.SQLITE) return HostSharing.NONE
         if (managed in chain) return HostSharing.SAME_SQLITE_FILE
         val drivineFile = sqliteFile(chain.last())
@@ -170,11 +171,21 @@ class DiceStorageAutoConfiguration {
         generateSequence<Class<*>>(dataSource.javaClass) { it.superclass }
             .any { it.name == TRANSACTION_AWARE_PROXY }
 
-    /** The SQLite file [dataSource] opens, or null when it is not SQLite's or cannot be asked. */
+    /**
+     * The SQLite file [dataSource] opens, as SQLite itself names it, or null when it is not SQLite's
+     * or cannot be asked. SQLite resolves `file:` URIs and their escapes, so two spellings of one
+     * file come out the same.
+     */
     private fun sqliteFile(dataSource: DataSource): Path? = runCatching {
-        val url = dataSource.connection.use { it.metaData.url }
-        val path = url.removePrefix("jdbc:sqlite:").substringBefore('?').removePrefix("file:")
-        Path.of(path).toAbsolutePath().normalize().let { if (Files.exists(it)) it.toRealPath() else it }
+        val file = dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("PRAGMA database_list").use { rows ->
+                    generateSequence { if (rows.next()) rows.getString("name") to rows.getString("file") else null }
+                        .firstOrNull { it.first == "main" }?.second
+                }
+            }
+        }
+        file?.takeIf { it.isNotEmpty() }?.let { Path.of(it).toRealPath() }
     }.getOrNull()
 
     /** How far [unwrapped] follows delegating data sources, so a cycle cannot loop for ever. */
@@ -192,9 +203,13 @@ class DiceStorageAutoConfiguration {
             runCatching { current.javaClass.getMethod("getTargetDataSource").invoke(current) as? DataSource }.getOrNull()
         }.take(maxDataSourceWrappers).toList()
 
-    /** The JDBC data source behind [persistenceManager]'s store, when Drivine reaches it through one. */
+    /**
+     * The JDBC data source behind [persistenceManager]'s store, when Drivine reaches it through one.
+     * The registry is Drivine's bean, or else the one Drivine's own persistence manager carries.
+     */
     private fun drivineDataSource(persistenceManager: PersistenceManager): DataSource? {
-        val provider = databaseRegistry?.connectionProvider(persistenceManager.database) as? NativeDriverSource<*>
+        val registry = databaseRegistry ?: (persistenceManager as? DelegatingPersistenceManager)?.contextHolder?.databaseRegistry
+        val provider = registry?.connectionProvider(persistenceManager.database) as? NativeDriverSource<*>
         return provider?.nativeDriver as? DataSource
     }
 

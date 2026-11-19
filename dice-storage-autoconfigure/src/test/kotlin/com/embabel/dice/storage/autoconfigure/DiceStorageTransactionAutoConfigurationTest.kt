@@ -43,6 +43,7 @@ import org.springframework.boot.transaction.autoconfigure.TransactionAutoConfigu
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
+import org.springframework.jdbc.datasource.LazyConnectionDataSourceProxy
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy
 import org.springframework.test.util.ReflectionTestUtils
 import org.springframework.transaction.PlatformTransactionManager
@@ -212,6 +213,70 @@ class DiceStorageTransactionAutoConfigurationTest {
                 assertThat(output.out).doesNotContain("not Drivine's")
             }
     }
+
+    /**
+     * A lazy proxy between the transaction-aware proxy and the pool the manager binds: the outer
+     * proxy looks the host's connection up under the lazy one, finds none, and takes a second
+     * connection to the file. Refused.
+     */
+    @Test
+    fun `a transaction-aware proxy over another wrapper of the host's pool is refused at startup`() {
+        val target = sqliteDataSource(Files.createTempFile("dice-host-lazy-", ".db"))
+
+        sharedFileRunner(
+            TransactionAwareDataSourceProxy(LazyConnectionDataSourceProxy(target)),
+            DataSourceTransactionManager(target),
+        ).run { ctx ->
+            assertThat(ctx).hasFailed()
+            assertThat(ctx.startupFailure).rootCause().hasMessageContaining("TransactionAwareDataSourceProxy")
+        }
+    }
+
+    /** One file named once as a path and once as a `file:` URI with an escaped space is still one file. */
+    @Test
+    fun `a host's pool naming Drivine's SQLite file as an escaped file URI is refused at startup`() {
+        val dir = Files.createTempDirectory("dice host spaced")
+        val file = dir.resolve("store.db")
+        val uri = "jdbc:sqlite:file:" + file.toString().replace(" ", "%20")
+
+        sharedFileRunner(sqliteDataSource(file), DataSourceTransactionManager(sqliteDataSource(uri))).run { ctx ->
+            assertThat(ctx).hasFailed()
+            assertThat(ctx.startupFailure).rootCause().hasMessageContaining("TransactionAwareDataSourceProxy")
+        }
+    }
+
+    /**
+     * A host that builds Drivine by hand publishes no registry bean. The SQLite store's transaction
+     * mode is read through the registry Drivine's own persistence manager carries, and it starts.
+     */
+    @Test
+    fun `without a registry bean, the SQLite store reads its data source from Drivine's persistence manager`() {
+        val provider = mock<JdbcConnectionProvider>()
+        whenever(provider.nativeDriver).thenReturn(sqliteDataSource(Files.createTempFile("dice-hand-built-", ".db")))
+        val registry = mock<DatabaseRegistry>()
+        whenever(registry.connectionProvider("neo")).thenReturn(provider)
+        val holder = mock<TransactionContextHolder>()
+        whenever(holder.databaseRegistry).thenReturn(registry)
+        val delegating = mock<DelegatingPersistenceManager>()
+        whenever(delegating.contextHolder).thenReturn(holder)
+        whenever(delegating.type).thenReturn(DatabaseType.SQLITE)
+        whenever(delegating.database).thenReturn("neo")
+
+        ApplicationContextRunner()
+            .withUserConfiguration(SharedDataSourceStubConfig::class.java)
+            .withPropertyValues("embabel.dice.store.type=graph")
+            .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
+            .withBean(PersistenceManager::class.java, { delegating })
+            .withBean(PlatformTransactionManager::class.java, { mock<PlatformTransactionManager>() })
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx).hasSingleBean(PropositionRepository::class.java)
+            }
+    }
+
+    private fun sqliteDataSource(url: String): DataSource =
+        SQLiteDataSource(SQLiteConfig().apply { setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE) })
+            .apply { this.url = url }
 
     private fun sqliteDataSource(file: Path): DataSource =
         SQLiteDataSource(SQLiteConfig().apply { setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE) })

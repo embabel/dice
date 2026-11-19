@@ -205,7 +205,8 @@ class DrivinePropositionRepository(
      * the store's locks. On SQLite that lock is the whole file's. A save that only repeats a fact the
      * store already holds, evidence and all, is answered before that, from reads alone: it writes
      * nothing, so it needs no embedding. Inside a caller's SQLite transaction that check is skipped,
-     * since its reads would take the lock before the embedding.
+     * since its reads would take the lock before the embedding, so an exact replay there still calls
+     * the embedder.
      *
      * Propositions with blank text have nothing to dedup on and are persisted directly.
      *
@@ -1215,10 +1216,10 @@ class DrivinePropositionRepository(
         val byId = candidates.associateBy { it.id }
         val ids = candidates.map { it.id }
 
-        val rows = if (persistenceManager.type.speaksCypher) {
-            nearestPairsByIndex(ids, similarityThreshold, topK)
-        } else {
-            nearestPairsAmong(ids, similarityThreshold, topK)
+        val rows = when {
+            persistenceManager.type.speaksCypher -> nearestPairsByIndex(ids, similarityThreshold, topK)
+            persistenceManager.type == DatabaseType.SQLITE -> nearestLaterPairs(ids, similarityThreshold, topK)
+            else -> nearestPairsAmong(ids, similarityThreshold, topK)
         }
 
         val clusters = rows
@@ -1268,13 +1269,11 @@ class DrivinePropositionRepository(
     }
 
     /**
-     * The same rows as [nearestPairsByIndex], measured by Drivine on a store with no index procedure.
-     * Every candidate is measured against every other, and each pair is kept under its smaller id,
-     * so each anchor's [topK] is taken among its later candidates, as the in-memory store takes it.
+     * The same rows as [nearestPairsByIndex], measured by Drivine on a SQL store other than SQLite.
+     * Each pair is kept under its smaller id whichever member's search found it.
      */
-    @Suppress("UNUSED_PARAMETER")
     private fun nearestPairsAmong(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> =
-        graphObjectManager.loadNearestAmong(PropositionView::class.java, ids, ids.size - 1, toEngineScore(similarityThreshold))
+        graphObjectManager.loadNearestAmong(PropositionView::class.java, ids, topK, toEngineScore(similarityThreshold))
             .flatMap { (seedId, near) ->
                 near.map { other ->
                     val (anchorId, otherId) = if (seedId < other.value) seedId to other.value else other.value to seedId
@@ -1282,6 +1281,22 @@ class DrivinePropositionRepository(
                 }
             }
             .distinctBy { it["anchorId"] to it["otherId"] }
+
+    /**
+     * On SQLite, each anchor's [topK] nearest among the candidates with a later id, as the in-memory
+     * store pairs them. The database scores every pair by cosine and keeps each anchor's best
+     * [topK], so what comes back is at most [topK] rows an anchor however many pairs pass the
+     * threshold. Drivine's own search ranks each candidate against all the others, which can leave
+     * out a pair neither member ranks high enough.
+     */
+    private fun nearestLaterPairs(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> {
+        @Suppress("UNCHECKED_CAST")
+        return persistenceManager.query(
+            cypherQuery(NEAREST_LATER_PAIRS)
+                .bind(mapOf("ids" to ids, "threshold" to similarityThreshold, "topK" to topK))
+                .transform(Map::class.java),
+        ) as List<Map<String, Any>>
+    }
 
     /**
      * A Neo4j COSINE vector index reports `(1 + cosine) / 2`, not raw cosine — this converts an
@@ -1832,6 +1847,27 @@ class DrivinePropositionRepository(
     private fun Any?.asStringList(): List<String> = (this as? List<String>) ?: emptyList()
 
     companion object {
+        /**
+         * Every pair of candidates scored by cosine, the earlier id as anchor, and each anchor's best
+         * `topK` kept in the database. Cosine is spelt out because SQLite has no vector functions.
+         */
+        private val NEAREST_LATER_PAIRS = """
+            MATCH (a:Proposition), (b:Proposition)
+            WHERE a.id IN ${'$'}ids AND b.id IN ${'$'}ids AND a.id < b.id
+              AND a.embedding IS NOT NULL AND b.embedding IS NOT NULL AND size(a.embedding) = size(b.embedding)
+            WITH a, b,
+              reduce(s = 0.0, i IN range(0, size(a.embedding) - 1) | s + a.embedding[i] * b.embedding[i]) AS dot,
+              reduce(s = 0.0, i IN range(0, size(a.embedding) - 1) | s + a.embedding[i] * a.embedding[i]) AS aa,
+              reduce(s = 0.0, i IN range(0, size(b.embedding) - 1) | s + b.embedding[i] * b.embedding[i]) AS bb
+            WHERE aa > 0 AND bb > 0
+            WITH a, b, dot / sqrt(aa * bb) AS score
+            WHERE score >= ${'$'}threshold
+            WITH a, b, score ORDER BY a.id, score DESC, b.id
+            WITH a, collect({otherId: b.id, score: score})[0..${'$'}topK] AS near
+            UNWIND near AS n
+            RETURN {anchorId: a.id, otherId: n.otherId, score: n.score} AS row
+        """.trimIndent()
+
         /**
          * How a proposition save treats `HAS_MENTION`: the view's list is the whole list, and a
          * `:Mention` the save drops is deleted once nothing else points at it.
