@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.embabel.dice</groupId>
+        <artifactId>dice-starters</artifactId>
+        <version>0.5.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>dice-starter-mcp</artifactId>
+    <packaging>jar</packaging>
+    <name>Dice MCP Starter</name>
+    <description>Starter for exporting DICE tools over the agent framework's MCP server</description>
+    <url>https://github.com/embabel/dice</url>
+
+    <scm>
+        <url>https://github.com/embabel/dice</url>
+        <connection>scm:git:https://github.com/embabel/dice.git</connection>
+        <developerConnection>scm:git:https://github.com/embabel/dice.git</developerConnection>
+        <tag>HEAD</tag>
+    </scm>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-starter</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-mcp-autoconfigure</artifactId>
+        </dependency>
+
+        <!--
+          dice-mcp-autoconfigure only marks this optional, and its auto-configuration stays off
+          unless McpToolExport is on the classpath, so the starter brings it in.
+        -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-mcpserver</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>
