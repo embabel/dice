@@ -36,6 +36,7 @@ import it.unibo.tuprolog.core.Tuple
 import it.unibo.tuprolog.core.Var
 import it.unibo.tuprolog.core.parsing.parse
 import org.jetbrains.annotations.ApiStatus
+import org.slf4j.LoggerFactory
 import java.math.BigDecimal
 import java.security.MessageDigest
 import java.time.Clock
@@ -65,18 +66,19 @@ import java.time.ZoneOffset
  * every answer is worked out before the goal's limit is applied. Only ask declared rules that don't recurse.
  *
  * **Answers stay terms.** The goal and each declaration's head, inputs and guards are parsed into Prolog terms once,
- * and every answer is put into them as terms, never pasted in as text, so a value always means exactly what Prolog
- * bound. Declarations are picked by the parsed goal's name and arity. A lone `_`, in the goal or in a declared input
- * or guard, gets a variable of its own so its value comes back: answers that differ only there stay separate
- * conclusions, and an input with a `_` cites only the fact it matched.
+ * and every answer is put into them as terms for tracing, citing and spotting repeats, never pasted in as text, so a
+ * value always means exactly what Prolog bound. Declarations are picked by the parsed goal's name and arity. A lone
+ * `_`, in the goal or in a declared input or guard, gets a variable of its own so its value comes back: answers that
+ * differ only there stay separate conclusions, and an input with a `_` cites only the fact it matched.
  *
  * **Conclusion text reads back as the proved term.** The conclusion is the goal as written with each variable's
  * value filled in: atoms in single quotes exactly as they are, case included, integers bare, a real always with a
  * digit on both sides of the decimal point (such as `1.0e-7`), and compound terms written by name, such as
  * `pair(alice, kubernetes)` or `'-'(5)`. The provider reads that text back and keeps it only when Prolog reads it as
- * the very term the answer proved. When it doesn't, for example `negated('alice', -N)` with `N` as 5 would read as
- * the number -5 rather than `-(5)`, the conclusion is the whole filled-in goal written out term by term instead, such
- * as `negated('alice', '-'(5))`. An answer whose text can't be read back either way is left out.
+ * the very term the answer proved. When it doesn't, each filled-in value is written again in brackets and checked
+ * once more: `negated('alice', -N)` with `N` as 5 would read as the number -5, so it becomes `negated('alice', -(5))`.
+ * An answer whose text still reads as some other term is left out, with a warning naming the goal, so a conclusion's
+ * text never names a term other than the one proved.
  *
  * **Citations need atom arguments.** Facts are written to Prolog through [PrologFact.quoteAtom], which lower-cases
  * and replaces anything outside `a-z`, `0-9` and `_`, so every projected argument is an atom in that form. An input
@@ -85,10 +87,9 @@ import java.time.ZoneOffset
  * `"kotlin"` (which this engine reads as an atom) all cite the same fact. A number such as `2024`, a compound term
  * such as `f(a)`, or an atom such as `'Foo Bar'` that only normalises to `foo_bar` cites nothing, because the proof
  * can't have used the projected fact. Two recorded facts whose arguments only differ in case or punctuation, such as
- * `Alice-Smith` and `alice smith`, are the same projected fact and both are cited. One kind of spelling never cites:
- * a declared input written with a backslash escape other than `\\` or `\'`, such as `value('\x61\b')`, finds no
- * fact even though Prolog reads it as `value(ab)`, so a citation never rests on an escape-built atom. Values the proof
- * binds aren't affected by this, since they come from Prolog, not from the declaration's text.
+ * `Alice-Smith` and `alice smith`, are the same projected fact and both are cited. Escapes are read as Prolog reads
+ * them, so `value('\x61\b')` is the atom `ab` and cites the projected `value(ab)`, while `value('a\nb')` holds a line
+ * break and doesn't cite `value(anb)`.
  *
  * **Confidence** is the weakest input: each matched fact counts at the highest decayed confidence among its source
  * propositions found in the repository (an invalidated one counts at 0.0), or its own confidence when none is found
@@ -203,7 +204,14 @@ class PrologEvidenceProvider private constructor(
             val facts = declared.firstNotNullOfOrNull { trace(it, filled) } ?: continue
             val values = goalVariables.associate { it.name to it.apply(answer) }
             // The text shown for an answer that can't be written so it reads back would name another term.
-            val text = conclusionText(goal.goal, values, named.map { it.apply(answer) }, filled) ?: continue
+            val text = conclusionText(goal.goal, values, named.map { it.apply(answer) }, filled)
+            if (text == null) {
+                logger.warn(
+                    "Left out an answer to {}: its conclusion text doesn't read back as the term proved",
+                    goal.goal,
+                )
+                continue
+            }
             conclusions += derive(goal, parsed, text, values, facts)
         }
         return conclusions
@@ -214,20 +222,19 @@ class PrologEvidenceProvider private constructor(
     private fun trace(declaration: ParsedDeclaration, filled: Struct): List<CitableFact>? {
         if (declaration.inputs.isEmpty()) return null
         val query = Tuple.wrapIfNeeded(
-            listOf(Struct.of("=", declaration.head, filled)) + declaration.inputs.map { it.term } + declaration.guards
+            listOf(Struct.of("=", declaration.head, filled)) + declaration.inputs + declaration.guards
         ) as Struct
 
         for (proof in engine.solveTerm(query)) {
-            val perInput = declaration.inputs.map { input ->
-                if (input.citable) citableFactsFor(input.term.apply(proof)) else emptyList()
-            }
+            val perInput = declaration.inputs.map { citableFactsFor(it.apply(proof)) }
             if (perInput.any { it.isEmpty() }) continue
             return perInput.flatten()
         }
         return null
     }
 
-    // Recorded facts only hold atoms, so an input whose arguments aren't all atoms can't be any of them.
+    // Recorded facts only hold atoms, so an input whose arguments aren't all atoms can't be any of them. Each atom is
+    // compared by the value Prolog read, so how the declaration quoted or escaped it doesn't matter.
     private fun citableFactsFor(input: Term): List<CitableFact> {
         val struct = input as? Struct ?: return emptyList()
         val atoms = struct.args.map { (it as? Atom)?.value ?: return emptyList() }
@@ -273,11 +280,8 @@ class PrologEvidenceProvider private constructor(
 
     private class CitableFact(val fact: PrologFact, val ids: List<String>)
 
-    // A declared input as a term, and whether its spelling lets it be cited at all (see the class docs).
-    private class DeclaredInput(val term: Term, val citable: Boolean)
-
     // A declaration whose head, inputs and guards share one set of variables, as they would in a single clause.
-    private class ParsedDeclaration(val head: Struct, val inputs: List<DeclaredInput>, val guards: List<Term>)
+    private class ParsedDeclaration(val head: Struct, val inputs: List<Term>, val guards: List<Term>)
 
     companion object {
 
@@ -291,6 +295,8 @@ class PrologEvidenceProvider private constructor(
         @JvmStatic
         fun of(projection: PrologProjectionResult, schema: PrologSchema): PrologEvidenceProvider =
             PrologEvidenceProvider(projection, schema, emptyList(), null)
+
+        private val logger = LoggerFactory.getLogger(PrologEvidenceProvider::class.java)
 
         // The name given to each lone _. Every one is still its own variable; only the name is shared.
         private const val ANONYMOUS_NAME = "Anon"
@@ -315,25 +321,14 @@ class PrologEvidenceProvider private constructor(
                 return term.apply(Substitution.of(renaming))
             }
             val head = join(declaration.head) as? Struct ?: return null
-            val inputs = declaration.inputs.map { DeclaredInput(join(it) ?: return null, !hasOtherEscape(it)) }
+            val inputs = declaration.inputs.map { join(it) ?: return null }
             val guards = declaration.guards.map { join(it) ?: return null }
             return ParsedDeclaration(head, inputs, guards)
         }
 
-        // True when [text] holds a backslash escape other than \\ or \'.
-        private fun hasOtherEscape(text: String): Boolean {
-            var i = 0
-            while (i < text.length) {
-                if (text[i] != '\\') i++
-                else if (text.getOrNull(i + 1) == '\\' || text.getOrNull(i + 1) == '\'') i += 2
-                else return true
-            }
-            return false
-        }
-
-        // The text a caller sees for one answer. First the goal as written with each variable's value put in its
-        // place, kept only if Prolog reads it back as the filled-in term; otherwise the filled-in term written out
-        // whole. Null when neither reads back.
+        // The text a caller sees for one answer: the goal as written with each variable's value put in its place,
+        // kept only if Prolog reads it back as the filled-in term. If it doesn't, each value is put in brackets and
+        // checked again, so -N with N as 5 becomes -(5) rather than the number -5. Null when neither reads back.
         private fun conclusionText(
             goal: String,
             values: Map<String, Term>,
@@ -341,21 +336,23 @@ class PrologEvidenceProvider private constructor(
             filled: Struct,
         ): String? {
             val key = termKey(filled)
-            val writer = TermWriter(forKey = false)
-            val spliced = fillVariables(goal) { name, anonymousIndex ->
-                val value = if (name == "_") anonymousValues.getOrNull(anonymousIndex) else values[name]
-                value?.let { writer.write(it, quoteAtoms = true) }
+            for (bracketed in listOf(false, true)) {
+                val writer = TermWriter(forKey = false)
+                val text = fillVariables(goal) { name, anonymousIndex ->
+                    val value = if (name == "_") anonymousValues.getOrNull(anonymousIndex) else values[name]
+                    value?.let { writer.write(it, quoteAtoms = true) }?.let { if (bracketed) "($it)" else it }
+                }
+                if (readsBackAs(text, key)) return text
             }
-            if (readsBackAs(spliced, key)) return spliced
-            val whole = TermWriter(forKey = false).writeGoal(filled)
-            return if (readsBackAs(whole, key)) whole else null
+            return null
         }
 
         private fun readsBackAs(text: String, key: String): Boolean = parseTerm(text)?.let(::termKey) == key
 
-        // Writes [goal] with each variable replaced by the text [value] gives it, leaving quoted text alone. A
-        // variable is a name starting with an upper-case letter or `_`; each lone `_` is passed with its position
-        // among the lone `_`s. A variable [value] has nothing for is left as it is.
+        // Writes [goal] with each variable replaced by the text [value] gives it, leaving quoted text and character
+        // codes such as 0'A alone. A variable is a name starting with an upper-case letter or `_`; each lone `_` is
+        // passed with its position among the lone `_`s. A variable [value] has nothing for is left as it is. This
+        // only has to be right for goals people write: the caller checks that the result reads back.
         private fun fillVariables(goal: String, value: (name: String, anonymousIndex: Int) -> String?): String =
             buildString {
                 var quote: Char? = null
@@ -379,6 +376,12 @@ class PrologEvidenceProvider private constructor(
                         var end = i
                         while (end < goal.length && isNameChar(goal[end])) end++
                         val name = goal.substring(i, end)
+                        if (name == "0" && goal.getOrNull(end) == '\'') {
+                            val codeEnd = characterCodeEnd(goal, end + 1)
+                            append(goal, i, codeEnd)
+                            i = codeEnd
+                            continue
+                        }
                         val written = when {
                             name == "_" -> value(name, anonymousIndex++)
                             name[0].isUpperCase() || name[0] == '_' -> value(name, -1)
@@ -392,6 +395,17 @@ class PrologEvidenceProvider private constructor(
                     }
                 }
             }
+
+        // Where the character after 0' ends, starting at [start]: a doubled quote such as 0''', an escape such as
+        // 0'\n or 0'\x41\ (up to its closing backslash), or else a single character.
+        private fun characterCodeEnd(goal: String, start: Int): Int = when {
+            start >= goal.length -> start
+            goal[start] == '\'' && goal.getOrNull(start + 1) == '\'' -> start + 2
+            goal[start] != '\\' -> start + 1
+            goal.getOrNull(start + 1)?.let { it == 'x' || it.isDigit() } == true ->
+                goal.indexOf('\\', start + 2).let { if (it < 0) goal.length else it + 1 }
+            else -> minOf(start + 2, goal.length)
+        }
 
         private val QUOTES = setOf('\'', '"', '`')
 
@@ -428,9 +442,6 @@ class PrologEvidenceProvider private constructor(
             // Unbound variables are named by first appearance, so two terms that differ only in variable names
             // write the same.
             private val names = HashMap<Var, String>()
-
-            fun writeGoal(goal: Struct): String =
-                functor(goal.functor) + goal.args.joinToString(", ", "(", ")") { write(it, quoteAtoms = true) }
 
             fun write(term: Term, quoteAtoms: Boolean): String = when (term) {
                 is Var -> names.getOrPut(term) { "_V${names.size + 1}" }

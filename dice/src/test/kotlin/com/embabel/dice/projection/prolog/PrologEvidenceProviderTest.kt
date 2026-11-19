@@ -520,6 +520,8 @@ class PrologEvidenceProviderTest {
                 provider(rules = negatedRule).withDeclaration(exact).conclusions(RuleGoal.of("negated('alice',-N)"))
             )
 
+            // -5 would read back as the number, so the value is written again in brackets.
+            assertEquals("negated('alice',-(5))", derived.conclusion)
             assertTrue(PrologEngine.fromTheory("").query("(${derived.conclusion}) == negated(alice, -(5))"))
             assertTrue(provable(derived.conclusion, negatedRule), "${derived.conclusion} should be provable")
             assertEquals(listOf("prop-1"), derived.inputIds)
@@ -574,6 +576,30 @@ class PrologEvidenceProviderTest {
             assertTrue(PrologEngine.fromTheory("").query("(${derived.conclusion}) == help(alice, 65, kubernetes)"))
             assertEquals("help/3", derived.rule.ruleId)
             assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+
+        @Test
+        fun `a character code doesn't hide the variables after it from the conclusion`() {
+            val rules = "help(P, C, T) :- expert_in(P, T), integer(C)."
+            val help = RuleDeclaration.of("help(P, C, T)").withInput("expert_in(P, T)")
+            val provider = provider(rules = rules).withDeclaration(help)
+
+            val goals = listOf("help('alice', 0'A, T)", "help('alice', 0''', T)", "help('alice', 0'\\x41\\, T)")
+            assertEquals(
+                goals.map { it.replace(", T)", ", 'kubernetes')") },
+                goals.map { only(provider.conclusions(RuleGoal.of(it))).conclusion },
+            )
+        }
+
+        @Test
+        fun `an answer whose text can't be written to read back as the proved term is left out`() {
+            // The apostrophe in the comment hides T from the text filling, so the text would still hold a variable.
+            val rules = "help(P, C, T) :- expert_in(P, T), integer(C)."
+            val help = RuleDeclaration.of("help(P, C, T)").withInput("expert_in(P, T)")
+            val goal = RuleGoal.of("help('alice', 1, /* it's */ T)")
+
+            assertTrue(provider(rules = rules).withDeclaration(help).conclusions(goal).isEmpty())
+            assertInstanceOf(Evidence.Missing::class.java, provider(rules = rules).withDeclaration(help).evidence(goal))
         }
     }
 
@@ -642,15 +668,19 @@ class PrologEvidenceProviderTest {
         }
 
         @Test
-        fun `a declared input spelling an atom with an escape other than backslash or quote cites nothing`() {
-            // '\x61\b' reads as the atom ab, but escapes other than \\ and \' are never read for a citation, so this
-            // declaration finds no fact even though the proof used value(ab).
+        fun `a declared input spelling an atom with an escape cites the fact its decoded atom equals`() {
+            // '\x61\b' is the hex escape \x61\ (the letter a) then a plain b, so Prolog reads it as the two-letter
+            // atom ab: exactly the projected atom, and the one the proof used.
             val rules = "has_a(X) :- expert_in(X, _), value(ab)."
             val facts = baseFacts + fact("value", "ab", confidence = 0.9, ids = listOf("prop-v"))
             val escaped = RuleDeclaration.of("has_a(X)").withInput("expert_in(X, T)").withInput("value('\\x61\\b')")
             val plain = RuleDeclaration.of("has_a(X)").withInput("expert_in(X, T)").withInput("value(ab)")
 
-            assertTrue(provider(facts, rules).withDeclaration(escaped).conclusions(RuleGoal.of("has_a('alice')")).isEmpty())
+            assertTrue(PrologEngine.fromTheory("").query("'\\x61\\b' == ab"))
+            assertEquals(
+                listOf("prop-1", "prop-v"),
+                only(provider(facts, rules).withDeclaration(escaped).conclusions(RuleGoal.of("has_a('alice')"))).inputIds,
+            )
             assertEquals(
                 listOf("prop-1", "prop-v"),
                 only(provider(facts, rules).withDeclaration(plain).conclusions(RuleGoal.of("has_a('alice')"))).inputIds,
