@@ -22,6 +22,7 @@ import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.HashKey
 import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.storage.model.ProcessedChunkNode
+import org.drivine.connection.DatabaseType
 import org.drivine.manager.*
 import org.drivine.query.QuerySpecification
 import org.springframework.transaction.annotation.Transactional
@@ -62,16 +63,25 @@ class DrivineChunkHistoryStore(
      * Most-recently-processed chunk for the source. A bare `@NodeFragment` has no generated query
      * DSL, so the "latest by processedAt" pick is a small parameterized Cypher returning the id;
      * the node itself is then loaded via the high-level API (correct temporal deserialization).
+     * Two records with the same time give the one whose window ends further on.
+     *
+     * SQLite keeps the time as text, which sorts wrongly where a whole second meets a fraction, so
+     * there the order goes by the time's sort key first. That key reads the text with a regular
+     * expression, which FalkorDB 4 refuses, so the graph databases order by their native time alone.
      */
     @Transactional(readOnly = true)
     override fun getLastBookmark(key: BookmarkKey): AnalysisBookmark? {
+        val byTextTime = persistenceManager.type == DatabaseType.SQLITE
+        val timeOrder = if (byTextTime) "${InstantText.sortKey("c.processedAt")} DESC, " else ""
+        val parameters = mapOf("contextId" to key.contextId.value, "sourceId" to key.sourceId) +
+            if (byTextTime) mapOf(InstantText.PATTERN_PARAMETER to InstantText.PATTERN) else emptyMap()
         val latestId = persistenceManager.maybeGetOne(
-            QuerySpecification
-                .withStatement(
+            cypherQuery(
                     "MATCH (c:ProcessedChunk {contextId: \$contextId, sourceId: \$sourceId}) " +
-                        "RETURN c.id AS id ORDER BY c.processedAt DESC LIMIT 1"
+                        "RETURN c.id AS id " +
+                        "ORDER BY ${timeOrder}c.processedAt DESC, c.endIndex DESC, c.id DESC LIMIT 1"
                 )
-                .bind(mapOf("contextId" to key.contextId.value, "sourceId" to key.sourceId))
+                .bind(parameters)
                 .transform(String::class.java)
         ) ?: return null
         val node = graphObjectManager.load<ProcessedChunkNode>(latestId) ?: return null
@@ -81,8 +91,7 @@ class DrivineChunkHistoryStore(
     @Transactional
     override fun clearByContext(contextId: ContextId) {
         persistenceManager.execute(
-            QuerySpecification
-                .withStatement("MATCH (c:ProcessedChunk {contextId: \$contextId}) DETACH DELETE c")
+            cypherQuery("MATCH (c:ProcessedChunk {contextId: \$contextId}) DETACH DELETE c")
                 .bind(mapOf("contextId" to contextId.value))
         )
     }
@@ -100,7 +109,7 @@ class DrivineChunkHistoryStore(
     @Transactional
     override fun clearAll() {
         persistenceManager.execute(
-            QuerySpecification.withStatement("MATCH (c:ProcessedChunk) DETACH DELETE c"),
+            cypherQuery("MATCH (c:ProcessedChunk) DETACH DELETE c"),
         )
     }
 
