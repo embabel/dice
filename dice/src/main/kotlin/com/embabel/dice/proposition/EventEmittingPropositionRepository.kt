@@ -21,7 +21,9 @@ import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionPersisted
+import com.embabel.dice.common.PropositionPinned
 import com.embabel.dice.common.PropositionStatusChanged
+import com.embabel.dice.common.PropositionUnpinned
 import org.slf4j.LoggerFactory
 
 /**
@@ -38,6 +40,8 @@ import org.slf4j.LoggerFactory
  * - [saveAll] is explicitly overridden to call this decorator's own [save] per proposition,
  *   so one event fires per proposition. The default interface `saveAll` would bypass the
  *   decorator's [save] and emit nothing.
+ * - [pin] and [unpin] emit one [PropositionPinned] or [PropositionUnpinned] when the flag actually
+ *   changes, and nothing when it was already set that way.
  *
  * To keep fresh ACTIVE inserts read-free, the prior-status lookup is skipped when the incoming
  * status is already ACTIVE. The tradeoff isn't only performance: it loses a real signal. A revival
@@ -159,6 +163,44 @@ open class EventEmittingPropositionRepository<D : PropositionRepository>(
     ): PropositionPersistenceResult {
         val inputs = propositions.toList()
         return PropositionPersistenceResult.of(inputs, inputs.map { save(it) })
+    }
+
+    /**
+     * Pins the proposition and emits one [PropositionPinned] carrying the saved, pinned fact.
+     *
+     * Nothing is saved or emitted when the fact is already pinned (you get it back as it is) or
+     * when no proposition has [id] (you get null). The save goes straight to the delegate, so a pin
+     * never shows up as a [PropositionPersisted] too.
+     *
+     * @param id The proposition to pin.
+     * @return The pinned proposition, or null if there is none with [id].
+     */
+    override fun pin(id: String): Proposition? = setPinned(id, pinned = true)
+
+    /**
+     * Clears the pin and emits one [PropositionUnpinned] carrying the saved, unpinned fact.
+     *
+     * Nothing is saved or emitted when the fact isn't pinned (you get it back as it is) or when no
+     * proposition has [id] (you get null). The save goes straight to the delegate, so an unpin never
+     * shows up as a [PropositionPersisted] too.
+     *
+     * @param id The proposition to unpin.
+     * @return The unpinned proposition, or null if there is none with [id].
+     */
+    override fun unpin(id: String): Proposition? = setPinned(id, pinned = false)
+
+    private fun setPinned(id: String, pinned: Boolean): Proposition? {
+        val current = delegate.findById(id) ?: return null
+        if (current.pinned == pinned) return current
+        val saved = delegate.save(current.withPinned(pinned))
+        if (pinned) {
+            logger.debug("Emitting PropositionPinned for {}", saved.id.take(8))
+            listener.onEvent(PropositionPinned(saved))
+        } else {
+            logger.debug("Emitting PropositionUnpinned for {}", saved.id.take(8))
+            listener.onEvent(PropositionUnpinned(saved))
+        }
+        return saved
     }
 
     // ========================================================================

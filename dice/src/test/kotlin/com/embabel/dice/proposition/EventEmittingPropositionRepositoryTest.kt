@@ -20,11 +20,15 @@ import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.common.PropositionPersisted
+import com.embabel.dice.common.PropositionPinned
 import com.embabel.dice.common.PropositionStatusChanged
+import com.embabel.dice.common.PropositionUnpinned
 import com.embabel.dice.common.RecordingDiceEventListener
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -212,5 +216,161 @@ class EventEmittingPropositionRepositoryTest {
             throughDecoratorClusters.size,
             "findClusters through the decorator must match the bare delegate's clusters",
         )
+    }
+
+    // ========================================================================
+    // Pin and unpin: one event, only when the flag actually changes
+    // ========================================================================
+
+    /** A recording repository that can also subtract provenance, so `wrapping` picks that shape. */
+    private class SubtractingRecordingRepository(
+        private val inner: RecordingRepository = RecordingRepository(),
+    ) : PropositionRepository by inner, ProvenanceSubtractionCapable {
+        val saved: List<Proposition> get() = inner.saved
+
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? = inner.findById(propositionId)
+    }
+
+    @Test
+    fun `pinning an unpinned fact emits one PropositionPinned carrying the saved pinned fact`() {
+        val delegate = RecordingRepository()
+        val fact = delegate.save(proposition("Jim prefers tea"))
+        val recording = RecordingDiceEventListener()
+        val repo = EventEmittingPropositionRepository.wrapping(delegate, recording)
+
+        val returned = repo.pin(fact.id)
+
+        assertTrue(returned!!.pinned, "pin returns the pinned fact")
+        assertTrue(delegate.findById(fact.id)!!.pinned, "the pinned flag reached the delegate")
+        val pinned = recording.eventsOfType<PropositionPinned>()
+        assertEquals(1, pinned.size, "exactly one PropositionPinned")
+        assertSame(returned, pinned.single().proposition, "the event carries the saved instance")
+        assertEquals(1, recording.count(), "pin emits nothing else")
+    }
+
+    @Test
+    fun `unpinning a pinned fact emits one PropositionUnpinned carrying the saved unpinned fact`() {
+        val delegate = RecordingRepository()
+        val fact = delegate.save(proposition("Jim prefers tea").withPinned(true))
+        val recording = RecordingDiceEventListener()
+        val repo = EventEmittingPropositionRepository.wrapping(delegate, recording)
+
+        val returned = repo.unpin(fact.id)
+
+        assertFalse(returned!!.pinned, "unpin returns the unpinned fact")
+        assertFalse(delegate.findById(fact.id)!!.pinned, "the cleared flag reached the delegate")
+        val unpinned = recording.eventsOfType<PropositionUnpinned>()
+        assertEquals(1, unpinned.size, "exactly one PropositionUnpinned")
+        assertSame(returned, unpinned.single().proposition, "the event carries the saved instance")
+        assertEquals(1, recording.count(), "unpin emits nothing else")
+    }
+
+    @Test
+    fun `pinning an already pinned fact emits nothing and returns it without saving`() {
+        val delegate = RecordingRepository()
+        val fact = delegate.save(proposition("Jim prefers tea").withPinned(true))
+        val savesBefore = delegate.saved.size
+        val recording = RecordingDiceEventListener()
+        val repo = EventEmittingPropositionRepository.wrapping(delegate, recording)
+
+        val returned = repo.pin(fact.id)
+
+        assertSame(fact, returned, "the stored fact comes back as is")
+        assertEquals(savesBefore, delegate.saved.size, "no save when the flag already matches")
+        assertEquals(0, recording.count(), "no event when the flag already matches")
+    }
+
+    @Test
+    fun `unpinning an unpinned fact emits nothing and returns it without saving`() {
+        val delegate = RecordingRepository()
+        val fact = delegate.save(proposition("Jim prefers tea"))
+        val savesBefore = delegate.saved.size
+        val recording = RecordingDiceEventListener()
+        val repo = EventEmittingPropositionRepository.wrapping(delegate, recording)
+
+        val returned = repo.unpin(fact.id)
+
+        assertSame(fact, returned, "the stored fact comes back as is")
+        assertEquals(savesBefore, delegate.saved.size, "no save when the flag already matches")
+        assertEquals(0, recording.count(), "no event when the flag already matches")
+    }
+
+    @Test
+    fun `pinning or unpinning an unknown id returns null and emits nothing`() {
+        val delegate = RecordingRepository()
+        val recording = RecordingDiceEventListener()
+        val repo = EventEmittingPropositionRepository.wrapping(delegate, recording)
+
+        assertNull(repo.pin("no-such-id"))
+        assertNull(repo.unpin("no-such-id"))
+        assertTrue(delegate.saved.isEmpty(), "nothing saved for an unknown id")
+        assertEquals(0, recording.count(), "nothing emitted for an unknown id")
+    }
+
+    @Test
+    fun `pin and unpin emit no PropositionPersisted`() {
+        val delegate = RecordingRepository()
+        val fact = delegate.save(proposition("Jim prefers tea"))
+        val recording = RecordingDiceEventListener()
+        val repo = EventEmittingPropositionRepository.wrapping(delegate, recording)
+
+        repo.pin(fact.id)
+        repo.unpin(fact.id)
+
+        assertTrue(recording.eventsOfType<PropositionPersisted>().isEmpty(), "pin and unpin emit no PropositionPersisted")
+        assertEquals(1, recording.eventsOfType<PropositionPinned>().size)
+        assertEquals(1, recording.eventsOfType<PropositionUnpinned>().size)
+    }
+
+    @Test
+    fun `pin and unpin emit through the provenance-subtracting shape`() {
+        val delegate = SubtractingRecordingRepository()
+        val fact = delegate.save(proposition("Jim prefers tea"))
+        val recording = RecordingDiceEventListener()
+        val repo = EventEmittingPropositionRepository.wrapping(delegate, recording)
+        assertInstanceOf(ProvenanceSubtractingEventEmittingPropositionRepository::class.java, repo)
+
+        val pinned = repo.pin(fact.id)
+        repo.pin(fact.id)
+        val unpinned = repo.unpin(fact.id)
+
+        assertSame(pinned, recording.eventsOfType<PropositionPinned>().single().proposition)
+        assertSame(unpinned, recording.eventsOfType<PropositionUnpinned>().single().proposition)
+        assertEquals(2, recording.count(), "only the two flag changes emit")
+        assertEquals(3, delegate.saved.size, "the seed save plus one save per flag change")
+    }
+
+    @Test
+    fun `pin and unpin emit through the source-revision shape`() {
+        val delegate = InMemoryPropositionRepository()
+        val fact = delegate.save(proposition("Jim prefers tea"))
+        val recording = RecordingDiceEventListener()
+        val repo = EventEmittingPropositionRepository.wrapping(delegate, recording)
+        assertInstanceOf(SourceRevisionEventEmittingPropositionRepository::class.java, repo)
+
+        val pinned = repo.pin(fact.id)
+        assertTrue(delegate.findById(fact.id)!!.pinned)
+        val unpinned = repo.unpin(fact.id)
+        repo.unpin(fact.id)
+
+        assertSame(pinned, recording.eventsOfType<PropositionPinned>().single().proposition)
+        assertSame(unpinned, recording.eventsOfType<PropositionUnpinned>().single().proposition)
+        assertEquals(2, recording.count(), "only the two flag changes emit")
+    }
+
+    @Test
+    fun `a store that is not wrapped pins without any listener involved`() {
+        val delegate = RecordingRepository()
+        val fact = delegate.save(proposition("Jim prefers tea"))
+
+        val returned = delegate.pin(fact.id)
+
+        assertTrue(returned!!.pinned)
+        assertEquals(2, delegate.saved.size, "the interface default still saves through the store")
     }
 }
