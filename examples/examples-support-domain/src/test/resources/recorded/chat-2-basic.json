@@ -1,0 +1,26 @@
+{
+  "propositions": [
+    {
+      "text": "Dana is the admin at Acme",
+      "mentions": [
+        { "span": "Dana", "type": "Contact", "role": "SUBJECT" },
+        { "span": "Acme", "type": "Customer", "role": "OBJECT" }
+      ],
+      "confidence": 0.9,
+      "decay": 0.01,
+      "importance": 0.6,
+      "reasoning": "Dana introduces herself as the admin"
+    },
+    {
+      "text": "Acme moved back to the Basic plan",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" },
+        { "span": "Basic plan", "type": "Plan", "role": "OBJECT" }
+      ],
+      "confidence": 0.9,
+      "decay": 0.005,
+      "importance": 0.8,
+      "reasoning": "Stated directly by the account's admin"
+    }
+  ]
+}
