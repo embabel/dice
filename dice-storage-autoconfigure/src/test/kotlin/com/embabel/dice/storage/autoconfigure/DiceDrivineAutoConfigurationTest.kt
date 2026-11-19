@@ -40,6 +40,7 @@ import org.drivine.schema.SchemaTargets
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+import org.springframework.beans.factory.NoSuchBeanDefinitionException
 import org.springframework.beans.factory.support.BeanDefinitionOverrideException
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.beans.factory.getBean
@@ -66,7 +67,9 @@ import org.springframework.context.annotation.Primary
  */
 class DiceDrivineAutoConfigurationTest {
 
+    // All of this is for apps that added dice-starter-neo4j, so the runner carries its marker.
     private val runner = ApplicationContextRunner()
+        .withClassLoader(StarterOnClasspath())
         .withConfiguration(
             AutoConfigurations.of(
                 DrivineAutoConfiguration::class.java,
@@ -475,6 +478,112 @@ class DiceDrivineAutoConfigurationTest {
         assertThat(registered).contains(DiceDrivineAutoConfiguration::class.java.name)
     }
 
+    @Test
+    fun `type=graph with only a host PersistenceManager doesn't ask for both or neither`() {
+        // On main this app starts, because it replaced every store that takes the other manager.
+        runner
+            .withPropertyValues(*datasource("neo"), "host.datasource=neo", "embabel.dice.store.type=graph")
+            .withUserConfiguration(HostPersistenceManager::class.java, HostStoresOnGraphObjectManager::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.containsBeanDefinition("persistenceManager")).isFalse()
+                assertThat(ctx.containsBeanDefinition("statelessGraphObjectManager")).isFalse()
+                assertThat(ctx).doesNotHaveBean(StatelessGraphObjectManager::class.java)
+            }
+    }
+
+    @Test
+    fun `without the starter, Drivine datasources and the host's own pair leave DICE in memory and out of the database`() {
+        withoutStarter
+            .withPropertyValues(*datasource("neo"), "host.datasource=neo")
+            .withUserConfiguration(HostDrivinePair::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<PropositionRepository>()).isInstanceOf(InMemoryPropositionRepository::class.java)
+                assertThat(ctx.getBean<ChunkHistoryStore>()).isInstanceOf(InMemoryChunkHistoryStore::class.java)
+                assertThat(ctx).hasSingleBean(PersistenceManager::class.java)
+                assertThat(ctx).hasSingleBean(StatelessGraphObjectManager::class.java)
+                assertNothingFromDiceDrivine(ctx)
+                assertThat(ctx.getBeansOfType(SchemaCatalog::class.java)).isEmpty()
+            }
+    }
+
+    @Test
+    fun `without the starter, Drivine datasources and no managers leave DICE in memory with no PersistenceManager`() {
+        // Two datasources and none named, which would stop startup if DICE tried to build its managers.
+        withoutStarter.withPropertyValues(*datasource("neo"), *datasource("other")).run { ctx ->
+            assertThat(ctx).hasNotFailed()
+            assertThat(ctx.getBean<PropositionRepository>()).isInstanceOf(InMemoryPropositionRepository::class.java)
+            assertThat(ctx.getBean<ChunkHistoryStore>()).isInstanceOf(InMemoryChunkHistoryStore::class.java)
+            assertThat(ctx).doesNotHaveBean(PersistenceManager::class.java)
+            assertThat(ctx).doesNotHaveBean(StatelessGraphObjectManager::class.java)
+            assertNothingFromDiceDrivine(ctx)
+            assertThat(ctx.getBeansOfType(SchemaCatalog::class.java)).isEmpty()
+        }
+    }
+
+    @Test
+    fun `without the starter, type=graph with the host's own pair wires DICE's Drivine stores on them`() {
+        withoutStarter
+            .withPropertyValues(*datasource("neo"), "host.datasource=neo", "embabel.dice.store.type=graph")
+            .withUserConfiguration(HostDrivinePair::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                val repository = ctx.getBean<PropositionRepository>()
+                assertThat(repository).isInstanceOf(DrivinePropositionRepository::class.java)
+                assertThat(repository).extracting("persistenceManager").isSameAs(ctx.getBean("hostPersistenceManager"))
+                assertThat(repository).extracting("graphObjectManager").isSameAs(ctx.getBean("hostGraphObjectManager"))
+                assertThat(ctx.getBean<ChunkHistoryStore>()).isInstanceOf(DrivineChunkHistoryStore::class.java)
+                assertNothingFromDiceDrivine(ctx)
+            }
+    }
+
+    @Test
+    fun `without the starter, type=graph with only a host PersistenceManager starts as on main when its stores don't need the other`() {
+        withoutStarter
+            .withPropertyValues(*datasource("neo"), "host.datasource=neo", "embabel.dice.store.type=graph")
+            .withUserConfiguration(HostPersistenceManager::class.java, HostStoresOnGraphObjectManager::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertNothingFromDiceDrivine(ctx)
+            }
+    }
+
+    @Test
+    fun `without the starter, type=graph with only a host PersistenceManager fails as on main, on the missing bean`() {
+        withoutStarter
+            .withPropertyValues(*datasource("neo"), "host.datasource=neo", "embabel.dice.store.type=graph")
+            .withUserConfiguration(HostPersistenceManager::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasFailed()
+                assertThat(ctx).getFailure().rootCause()
+                    .isInstanceOf(NoSuchBeanDefinitionException::class.java)
+                    .hasMessageContaining("StatelessGraphObjectManager")
+                    .hasMessageNotContaining("neither")
+            }
+    }
+
+    /** DICE's auto-configurations with no dice-starter-neo4j marker, which the test classpath doesn't have. */
+    private val withoutStarter = ApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                DrivineAutoConfiguration::class.java,
+                DiceDrivineAutoConfiguration::class.java,
+                DiceStorageAutoConfiguration::class.java,
+                CollectorAutoConfiguration::class.java,
+            ),
+        )
+        .withUserConfiguration(StubAi::class.java)
+
+    /** Checks DICE's Drivine auto-configuration added nothing: no managers, no registrar, no schema targeting. */
+    private fun assertNothingFromDiceDrivine(ctx: AssertableApplicationContext) {
+        assertThat(ctx).doesNotHaveBean(DiceDrivineAutoConfiguration::class.java)
+        assertThat(ctx.containsBeanDefinition(DiceDrivineManagerRegistrar.BEAN_NAME)).isFalse()
+        assertThat(ctx.containsBeanDefinition("persistenceManager")).isFalse()
+        assertThat(ctx.containsBeanDefinition("statelessGraphObjectManager")).isFalse()
+        assertThat(ctx).doesNotHaveBean(DiceSchemaTargeting::class.java)
+    }
+
     private val runnerWithCollector = runner.withConfiguration(
         AutoConfigurations.of(CollectorAutoConfiguration::class.java),
     )
@@ -492,6 +601,7 @@ class DiceDrivineAutoConfigurationTest {
 
     /** A child of [parent] with DICE's auto-configurations, which inherits Drivine and the parent's managers. */
     private fun childOf(parent: ApplicationContext) = ApplicationContextRunner()
+        .withClassLoader(StarterOnClasspath())
         .withParent(parent)
         .withConfiguration(
             AutoConfigurations.of(
@@ -771,6 +881,17 @@ class DiceDrivineAutoConfigurationTest {
             factory: PersistenceManagerFactory,
             @Value("\${host.datasource}") datasource: String,
         ): PersistenceManager = factory.get(datasource)
+    }
+
+    /** A host's own versions of the two stores that take a StatelessGraphObjectManager, so it needs only a PersistenceManager. */
+    @Configuration(proxyBeanMethods = false)
+    open class HostStoresOnGraphObjectManager {
+
+        @Bean
+        open fun hostPropositionRepository(): PropositionRepository = InMemoryPropositionRepository(mock<EmbeddingService>())
+
+        @Bean
+        open fun hostChunkHistoryStore(): ChunkHistoryStore = InMemoryChunkHistoryStore()
     }
 
     /** A host that still writes the two beans itself, as hosts had to before. */

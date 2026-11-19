@@ -48,6 +48,7 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.ConditionContext
 import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.Import
+import org.springframework.core.env.Environment
 import org.springframework.core.type.AnnotatedTypeMetadata
 
 /**
@@ -75,13 +76,17 @@ import org.springframework.core.type.AnnotatedTypeMetadata
  *
  * It runs after Drivine's auto-configuration, so the factories are already registered when it looks
  * for them, and before DICE's storage auto-configuration, which picks the Drivine stores when it
- * finds a `PersistenceManager` or sees that DICE is going to decide about one. With
- * `embabel.dice.store.type=in-memory` it does nothing, since DICE won't use Drivine at all.
+ * finds a `PersistenceManager` or sees that DICE is going to decide about one.
+ *
+ * It only runs for apps that added `dice-starter-neo4j`. An app that set up Drivine for its own use and
+ * never added the starter gets nothing from here (no managers, no schema targeting), whatever
+ * `embabel.dice.store.type` says. With `embabel.dice.store.type=in-memory` it does nothing either, since
+ * DICE won't use Drivine at all.
  */
 @AutoConfiguration(after = [DrivineAutoConfiguration::class], before = [DiceStorageAutoConfiguration::class])
 @ConditionalOnClass(PersistenceManagerFactory::class)
 @ConditionalOnBean(PersistenceManagerFactory::class, GraphObjectManagerFactory::class, DatabaseRegistry::class)
-@Conditional(NotForcedInMemory::class)
+@Conditional(OptedIntoDiceDrivine::class)
 @EnableConfigurationProperties(DiceDrivineProperties::class)
 @Import(DiceSchemaTargeting::class)
 class DiceDrivineAutoConfiguration {
@@ -117,7 +122,8 @@ class DiceDrivineAutoConfiguration {
         // Static, so Spring can run it before anything else here is created, which a registry post-processor needs.
         @JvmStatic
         @Bean(DiceDrivineManagerRegistrar.BEAN_NAME)
-        private fun diceDrivineManagerRegistrar(): DiceDrivineManagerRegistrar = DiceDrivineManagerRegistrar()
+        private fun diceDrivineManagerRegistrar(environment: Environment): DiceDrivineManagerRegistrar =
+            DiceDrivineManagerRegistrar(environment)
     }
 }
 
@@ -130,8 +136,12 @@ class DiceDrivineAutoConfiguration {
  * setup, so DICE registers nothing and doesn't look at them. Just one would leave DICE building the other
  * beside it, which is how saves and dedup end up on two databases, so that is a startup error. Beans in
  * parent contexts count, as they do for injection. Only definitions are read; nothing is created to answer.
+ *
+ * The one exception is an explicit `embabel.dice.store.type=graph`. Such an app may have started with one
+ * manager before DICE built any, by replacing the stores that need the other, so DICE builds nothing and
+ * lets injection succeed or fail exactly as it used to.
  */
-internal class DiceDrivineManagerRegistrar : BeanDefinitionRegistryPostProcessor {
+internal class DiceDrivineManagerRegistrar(private val environment: Environment) : BeanDefinitionRegistryPostProcessor {
 
     override fun postProcessBeanDefinitionRegistry(registry: BeanDefinitionRegistry) {
         val beanFactory = registry as? ListableBeanFactory
@@ -141,6 +151,7 @@ internal class DiceDrivineManagerRegistrar : BeanDefinitionRegistryPostProcessor
         when {
             persistenceManagers.isEmpty() && graphObjectManagers.isEmpty() -> registerDiceManagers(registry, beanFactory)
             persistenceManagers.isNotEmpty() && graphObjectManagers.isNotEmpty() -> Unit
+            StoreBackend.requested(environment) == StoreBackend.GRAPH -> Unit
             // Wrapped like any other failure Spring reports at startup, with the reason as the root cause.
             else -> throw BeanDefinitionStoreException(
                 "DICE can't decide about its Drivine managers",
@@ -264,19 +275,25 @@ internal class DiceSchemaTargeting : BeanPostProcessor, BeanFactoryAware {
 }
 
 /**
- * Keeps DICE's Drivine beans out when `embabel.dice.store.type=in-memory` forces the in-memory stores,
- * so several datasources with none named don't stop a host that isn't using them.
+ * Lets DICE's Drivine beans in only for apps that added `dice-starter-neo4j` and haven't forced the
+ * in-memory stores. Without the starter, an app's own Drivine setup is left exactly as it was; with
+ * `embabel.dice.store.type=in-memory`, several datasources with none named don't stop a host that isn't
+ * using them.
  */
-internal class NotForcedInMemory : SpringBootCondition() {
+internal class OptedIntoDiceDrivine : SpringBootCondition() {
 
     override fun getMatchOutcome(context: ConditionContext, metadata: AnnotatedTypeMetadata): ConditionOutcome {
         val message = ConditionMessage.forCondition("DICE Drivine beans")
-        return if (StoreBackend.requested(context.environment) == StoreBackend.IN_MEMORY) {
-            ConditionOutcome.noMatch(
+        return when {
+            StoreBackend.requested(context.environment) == StoreBackend.IN_MEMORY -> ConditionOutcome.noMatch(
                 message.because("${StoreBackend.TYPE_PROPERTY}=${StoreBackend.IN_MEMORY} forces the in-memory stores"),
             )
-        } else {
-            ConditionOutcome.match(message.because("the in-memory stores aren't forced"))
+            !StoreBackend.optedIn(context.classLoader) -> ConditionOutcome.noMatch(
+                message.didNotFind("dice-starter-neo4j marker").items(StoreBackend.STARTER_MARKER),
+            )
+            else -> ConditionOutcome.match(
+                message.found("dice-starter-neo4j marker").items(StoreBackend.STARTER_MARKER),
+            )
         }
     }
 }

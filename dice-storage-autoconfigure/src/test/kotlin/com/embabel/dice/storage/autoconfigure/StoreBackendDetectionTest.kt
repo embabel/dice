@@ -64,6 +64,10 @@ import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.transaction.PlatformTransactionManager
+import java.net.URL
+import java.nio.file.Files
+import java.util.Collections
+import java.util.Enumeration
 
 /**
  * DICE picks its stores from what the application has configured, with no property needed.
@@ -76,7 +80,9 @@ import org.springframework.transaction.PlatformTransactionManager
 @ExtendWith(OutputCaptureExtension::class)
 class StoreBackendDetectionTest {
 
+    // Detection is for apps that added dice-starter-neo4j, so these runners carry its marker.
     private val storage = ApplicationContextRunner()
+        .withClassLoader(StarterOnClasspath())
         .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
         .withUserConfiguration(StubAi::class.java)
 
@@ -211,6 +217,7 @@ class StoreBackendDetectionTest {
     inner class `with Drivine registered after DICE's auto-configuration` {
 
         private val late = ApplicationContextRunner()
+            .withClassLoader(StarterOnClasspath())
             .withConfiguration(
                 AutoConfigurations.of(DiceStorageAutoConfiguration::class.java, LateDrivine::class.java),
             )
@@ -289,6 +296,7 @@ class StoreBackendDetectionTest {
 
         /** No `Ai` bean, so DICE makes no proposition store at all, only the stores that don't embed. */
         private val lateWithoutAi = ApplicationContextRunner()
+            .withClassLoader(StarterOnClasspath())
             .withConfiguration(
                 AutoConfigurations.of(DiceStorageAutoConfiguration::class.java, LateDrivine::class.java),
             )
@@ -340,6 +348,7 @@ class StoreBackendDetectionTest {
         @Test
         fun `the collector trace and metamodel version stores are counted too`() {
             ApplicationContextRunner()
+                .withClassLoader(StarterOnClasspath())
                 .withConfiguration(
                     AutoConfigurations.of(
                         DiceStorageAutoConfiguration::class.java,
@@ -378,6 +387,7 @@ class StoreBackendDetectionTest {
     inner class `the collector trace store follows the same rule` {
 
         private val collector = ApplicationContextRunner()
+            .withClassLoader(StarterOnClasspath())
             .withConfiguration(
                 AutoConfigurations.of(
                     DiceStorageAutoConfiguration::class.java,
@@ -423,6 +433,7 @@ class StoreBackendDetectionTest {
         // On its own, as the other metamodel tests run it: the fixtures stub only the
         // PersistenceManager, which is all the governance stores need.
         private val metamodel = ApplicationContextRunner()
+            .withClassLoader(StarterOnClasspath())
             .withConfiguration(AutoConfigurations.of(MetamodelAutoConfiguration::class.java))
 
         @Test
@@ -458,6 +469,112 @@ class StoreBackendDetectionTest {
                         .isInstanceOf(InMemoryMetamodelVersionStore::class.java)
                     assertThat(ctx).doesNotHaveBean(DriftReportStore::class.java)
                     assertThat(ctx).doesNotHaveBean("metamodelSchema")
+                }
+        }
+    }
+
+    /**
+     * An app that never added dice-starter-neo4j gets what it got before detection existed: the
+     * in-memory stores unless it sets `embabel.dice.store.type=graph`, whatever Drivine beans it has
+     * for its own use. The test classpath has no marker, so these runners leave it out.
+     */
+    @Nested
+    inner class `without dice-starter-neo4j on the classpath` {
+
+        private val plain = ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(DiceStorageAutoConfiguration::class.java, CollectorAutoConfiguration::class.java),
+            )
+            .withUserConfiguration(StubAi::class.java)
+
+        @Test
+        fun `the marker really is missing from the test classpath`() {
+            assertThat(javaClass.classLoader.getResource(StarterOnClasspath.MARKER_PATH)).isNull()
+            assertThat(StarterOnClasspath().getResource(StarterOnClasspath.MARKER_PATH)).isNotNull()
+        }
+
+        @Test
+        fun `Drivine configured and the property unset gives the in-memory stores and no DICE schema`(
+            output: CapturedOutput,
+        ) {
+            plain.withUserConfiguration(StubDrivine::class.java).run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertInMemoryStores(ctx)
+                assertThat(ctx.getBean<CollectorTraceStore>()).isInstanceOf(InMemoryCollectorTraceStore::class.java)
+                assertThat(ctx.getBeanProvider(SchemaCatalog::class.java).orderedStream().toList()).isEmpty()
+                assertThat(output.out).doesNotContain(DEPRECATION_MARKER)
+            }
+        }
+
+        @Test
+        fun `Drivine configured and the property unset keeps the metamodel stores in memory`() {
+            ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(MetamodelAutoConfiguration::class.java))
+                .withUserConfiguration(InMemoryBackendConfig::class.java, StubDrivine::class.java)
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertThat(ctx.getBean<MetamodelVersionStore>())
+                        .isInstanceOf(InMemoryMetamodelVersionStore::class.java)
+                    assertThat(ctx).doesNotHaveBean(DriftReportStore::class.java)
+                    assertThat(ctx).doesNotHaveBean("metamodelSchema")
+                }
+        }
+
+        @Test
+        fun `Drivine registered after DICE's auto-configuration doesn't fail startup`() {
+            ApplicationContextRunner()
+                .withConfiguration(
+                    AutoConfigurations.of(DiceStorageAutoConfiguration::class.java, LateDrivine::class.java),
+                )
+                .withUserConfiguration(StubAi::class.java)
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertInMemoryStores(ctx)
+                }
+        }
+
+        @Test
+        fun `type=graph wires the Drivine stores, as it always has`() {
+            plain
+                .withUserConfiguration(StubDrivine::class.java)
+                .withPropertyValues("embabel.dice.store.type=graph")
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertDrivineStores(ctx)
+                    assertThat(ctx.getBean<CollectorTraceStore>()).isInstanceOf(DrivineCollectorTraceStore::class.java)
+                }
+        }
+
+        @Test
+        fun `type=in-memory gives the in-memory stores`() {
+            plain
+                .withUserConfiguration(StubDrivine::class.java)
+                .withPropertyValues("embabel.dice.store.type=in-memory")
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertInMemoryStores(ctx)
+                }
+        }
+
+        @Test
+        fun `a blank property counts as unset`() {
+            plain
+                .withUserConfiguration(StubDrivine::class.java)
+                .withPropertyValues("embabel.dice.store.type= ")
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertInMemoryStores(ctx)
+                }
+        }
+
+        @Test
+        fun `an unknown type still refuses to start`() {
+            plain
+                .withUserConfiguration(StubDrivine::class.java)
+                .withPropertyValues("embabel.dice.store.type=grpah")
+                .run { ctx ->
+                    assertThat(ctx).hasFailed()
+                    assertThat(ctx).getFailure().rootCause().hasMessageContaining("grpah")
                 }
         }
     }
@@ -549,5 +666,29 @@ class StoreBackendDetectionTest {
     private companion object {
         /** A fragment of the deprecation warning, distinctive enough to count. */
         const val DEPRECATION_MARKER = "embabel.dice.store.type is deprecated"
+    }
+}
+
+/**
+ * A class loader that can also find the marker dice-starter-neo4j ships, as if the starter were on the
+ * classpath. Everything else comes from the test classpath, which doesn't have the marker.
+ */
+internal class StarterOnClasspath(
+    parent: ClassLoader = StoreBackendDetectionTest::class.java.classLoader,
+) : ClassLoader(parent) {
+
+    override fun findResource(name: String): URL? = if (name == MARKER_PATH) MARKER else null
+
+    override fun findResources(name: String): Enumeration<URL> =
+        Collections.enumeration(listOfNotNull(findResource(name)))
+
+    companion object {
+        /** Where dice-starter-neo4j puts its marker; spelled out here so the test notices if it moves. */
+        const val MARKER_PATH = "META-INF/dice/drivine-stores.properties"
+
+        private val MARKER: URL = Files.createTempFile("drivine-stores", ".properties").also {
+            it.toFile().deleteOnExit()
+            Files.writeString(it, "# Stands in for the marker dice-starter-neo4j ships.\n")
+        }.toUri().toURL()
     }
 }
