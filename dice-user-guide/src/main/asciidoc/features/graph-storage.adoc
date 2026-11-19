@@ -33,6 +33,11 @@ Configure Drivine and DICE picks it up. Give Drivine a data source under `databa
 `StatelessGraphObjectManager` bean for it from Drivine's factories. <<how-to-choose-a-backend>> walks
 through both. DICE's auto-configuration runs after Drivine's, so it sees those beans when it decides.
 
+If your own auto-configuration registers the `PersistenceManager` after DICE's, DICE can't see it in
+time. Rather than run on in-memory stores while Drivine sits unused, startup fails and says so. To fix
+it, order your auto-configuration before `DiceStorageAutoConfiguration`, or define the store beans
+yourself.
+
 Without a `PersistenceManager` bean, DICE uses its in-memory stores. The deprecated
 `embabel.dice.store.type` property can still force `in-memory` while Drivine is present; see
 <<reference-configuration-properties>>.
