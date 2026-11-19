@@ -29,9 +29,11 @@ import com.embabel.dice.storage.cypherQuery
 import org.drivine.connection.ConnectionProvider
 import org.drivine.connection.DatabaseType
 import org.drivine.connection.JdbcConnectionProvider
+import org.drivine.manager.DelegatingPersistenceManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.query.QuerySpecification
+import org.drivine.transaction.Transactions
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -56,6 +58,8 @@ import org.sqlite.SQLiteErrorCode
 import org.sqlite.SQLiteException
 import java.nio.file.Files
 import java.time.Instant
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.sql.DataSource
 
 /**
@@ -211,6 +215,29 @@ class SqliteHostJdbcTransactionIntegrationTest {
                     .transform(String::class.java),
             ),
         )
+    }
+
+    /**
+     * A transaction begun through Drivine's own `Transactions` holds the file's write lock on the
+     * host's connection. A save inside it runs on that connection too, instead of asking the host's
+     * manager for a second one and waiting on the lock its own thread holds.
+     */
+    @Test
+    fun `a save inside a transaction begun through Drivine's own Transactions completes on its connection`() {
+        val transactions = Transactions((persistenceManager as DelegatingPersistenceManager).contextHolder)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val saved = executor.submit<String> {
+                transactions.transaction {
+                    persistenceManager.query(cypherQuery("MATCH (p:Proposition) RETURN p.id").transform(String::class.java))
+                    repository().save(ghost("The ghost keeps the lamp lit")).id
+                }
+            }.get(10, TimeUnit.SECONDS)
+
+            assertEquals(saved, repository().findById(saved)?.id)
+        } finally {
+            executor.shutdownNow()
+        }
     }
 
     private fun embeddingOf(id: String): List<*>? = persistenceManager.maybeGetOne(

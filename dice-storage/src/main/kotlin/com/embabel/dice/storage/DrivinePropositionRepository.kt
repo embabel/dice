@@ -229,7 +229,7 @@ class DrivinePropositionRepository(
      */
     @Transactional(propagation = Propagation.SUPPORTS)
     override fun save(proposition: Proposition): Proposition {
-        val inCallerTransaction = transactionManager.hasOpenTransaction()
+        val inCallerTransaction = transactionManager.hasOpenTransaction(persistenceManager)
         // Inside a caller's SQLite transaction the replay check's reads would take the file's write
         // lock before the embedding, which is what the order below exists to avoid.
         if (!(inCallerTransaction && callerTransactionHoldsWriteLock)) {
@@ -1384,7 +1384,7 @@ class DrivinePropositionRepository(
             )
         }
         when {
-            !(callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction()) ->
+            !(callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction(persistenceManager)) ->
                 txTemplate.executeWithoutResult { touch() }
             // A read-only caller's connection may refuse writes outright, when its driver is set to
             // enforce read-only. The access time is a hint, so the touch is then left out. SQLite
@@ -1540,7 +1540,7 @@ class DrivinePropositionRepository(
     // catches a failure, an incomplete re-embed among them, keeps its own work.
     @Transactional(propagation = Propagation.SUPPORTS, readOnly = true, noRollbackFor = [Throwable::class])
     override fun reembedAll(): PropositionReembedReport =
-        if (callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction()) {
+        if (callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction(persistenceManager)) {
             reembedEverything(insideCallerTransaction = true)
         } else {
             outsideTransactions.execute { reembedEverything(insideCallerTransaction = false) }!!

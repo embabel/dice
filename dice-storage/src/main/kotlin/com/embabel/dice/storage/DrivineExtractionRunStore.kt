@@ -349,7 +349,7 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
         transition: ExtractionRunTransition,
     ): ExtractionRunTransitionResult {
         ExtractionRunSchema.requireStorableTenant(key.contextId)
-        if (transactionManager.hasOpenTransaction()) {
+        if (transactionManager.hasOpenTransaction(persistenceManager)) {
             return announce(endRun(key, transition), durable = false)
         }
 
@@ -701,7 +701,7 @@ open class DrivineExtractionRunStore @JvmOverloads constructor(
      * first attempt, from whichever shape ran it.
      */
     private fun <T> ownedTransaction(attempts: Int = 5, block: () -> T): T {
-        if (transactionManager.hasOpenTransaction()) {
+        if (transactionManager.hasOpenTransaction(persistenceManager)) {
             return block()
         }
         var lastConflict: RuntimeException? = null

@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.storage
 
+import org.drivine.manager.DelegatingPersistenceManager
+import org.drivine.manager.PersistenceManager
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.support.TransactionTemplate
@@ -33,3 +35,13 @@ internal fun PlatformTransactionManager.hasOpenTransaction(): Boolean =
         // Read-only, so a check made inside a read-only transaction is not refused for asking.
         isReadOnly = true
     }.execute { status -> status.hasTransaction() } == true
+
+/**
+ * Whether a transaction is open on this thread that the store's statements run in: one this
+ * manager knows of, or one begun through Drivine's own `Transactions`, which [persistenceManager]
+ * keeps in its transaction state. When Drivine reads the host's data source through a
+ * transaction-aware proxy, the store's manager is the host's and cannot see Drivine's own.
+ */
+internal fun PlatformTransactionManager.hasOpenTransaction(persistenceManager: PersistenceManager): Boolean =
+    (persistenceManager as? DelegatingPersistenceManager)?.contextHolder?.currentTransaction != null ||
+        hasOpenTransaction()
