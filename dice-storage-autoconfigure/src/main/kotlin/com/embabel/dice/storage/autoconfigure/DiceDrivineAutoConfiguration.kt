@@ -315,8 +315,8 @@ internal object DrivineDatasource {
 }
 
 /**
- * The bean of [type] Spring would inject: the only one, or the primary among several, counting beans in
- * parent contexts the way injection does. Null when there is none, or several and Spring can't pick one.
+ * The bean of [type] Spring would inject into DICE's stores: the only one, the primary among several, or
+ * the one named like the stores' parameter, counting beans in parent contexts the way injection does. Null when there is none, or several and Spring can't pick one.
  *
  * Spring's own `getBeanProvider(type).getIfUnique()` looks at this context first and only asks the parent
  * when this one has none, so a plain local bean would hide a primary one in the parent that injection picks.
@@ -324,11 +324,10 @@ internal object DrivineDatasource {
  */
 private fun <T : Any> injectedBean(beanFactory: ConfigurableListableBeanFactory, type: Class<T>): T? {
     val point = ManagerInjectionPoints::class.java.declaredFields.single { it.type == type }
-    // Optional and not eager, so nothing is created just to learn its type. No name either, so a bean that
-    // happens to share the stand-in field's name isn't preferred, as a named injection point would be.
-    val descriptor = object : DependencyDescriptor(point, false, false) {
-        override fun getDependencyName(): String? = null
-    }
+    // Optional and not eager, so nothing is created just to learn its type. The stand-in field is named like
+    // the stores' own parameters on purpose: with several beans and no primary, Spring falls back to the one
+    // whose name matches, and this has to pick the same bean the stores get.
+    val descriptor = DependencyDescriptor(point, false, false)
     return try {
         type.cast(beanFactory.resolveDependency(descriptor, null))
     } catch (e: NoUniqueBeanDefinitionException) {
@@ -340,7 +339,10 @@ private fun <T : Any> injectedBean(beanFactory: ConfigurableListableBeanFactory,
 private fun beanNamesIncludingAncestors(beanFactory: ListableBeanFactory, type: Class<*>): List<String> =
     BeanFactoryUtils.beanNamesForTypeIncludingAncestors(beanFactory, type, true, false).toList()
 
-/** Stand-in injection points, so DICE can ask Spring which manager it would inject without injecting one. */
+/**
+ * Stand-in injection points, so DICE can ask Spring which manager it would inject without injecting one.
+ * Each field is named exactly like the parameter DICE's stores declare; keep the two names in step.
+ */
 @Suppress("unused")
 private class ManagerInjectionPoints {
     @JvmField var persistenceManager: PersistenceManager? = null

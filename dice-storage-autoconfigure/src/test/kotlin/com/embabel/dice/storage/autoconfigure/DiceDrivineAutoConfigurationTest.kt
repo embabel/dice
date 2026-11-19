@@ -251,6 +251,26 @@ class DiceDrivineAutoConfigurationTest {
     }
 
     @Test
+    fun `with two host PersistenceManagers and no primary DICE's schema follows the one named like the stores' parameter`() {
+        // Spring falls back to the bean named after the parameter, so the stores get `persistenceManager`.
+        runnerWithCollector
+            .withPropertyValues(*datasource("neo"), *datasource("other"), "host.named=other", "host.unnamed=neo")
+            .withUserConfiguration(HostManagersNamedLikeParameters::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                val repository = ctx.getBean<PropositionRepository>()
+                assertThat(repository).extracting("persistenceManager").isSameAs(ctx.getBean("persistenceManager"))
+                val dice = diceCatalogs(ctx)
+                assertThat(dice).isNotEmpty()
+                dice.forEach { (name, catalog) ->
+                    assertThat(catalog.target).describedAs(name).isEqualTo(DatabaseTarget.Named(setOf("other")))
+                }
+                assertThat(SchemaTargets.resolve(dice.values.toList(), ctx.getBean<DatabaseRegistry>()).databases)
+                    .containsExactly("other")
+            }
+    }
+
+    @Test
     fun `with one datasource DICE's schema targets stay as they were`() {
         runnerWithCollector.withPropertyValues(*datasource("neo")).run { ctx ->
             assertThat(ctx).hasNotFailed()
@@ -634,6 +654,38 @@ class DiceDrivineAutoConfigurationTest {
         open fun hostGraphObjectManager(
             factory: GraphObjectManagerFactory,
             @Value("\${host.datasource}") datasource: String,
+        ): StatelessGraphObjectManager = factory.stateless(datasource)
+    }
+
+    /**
+     * A host with two of each manager and neither primary. One of each is named like DICE's store parameters,
+     * on `host.named`; the others sit on `host.unnamed`.
+     */
+    @Configuration(proxyBeanMethods = false)
+    open class HostManagersNamedLikeParameters {
+
+        @Bean
+        open fun persistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.named}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
+
+        @Bean
+        open fun otherPersistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.unnamed}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
+
+        @Bean
+        open fun graphObjectManager(
+            factory: GraphObjectManagerFactory,
+            @Value("\${host.named}") datasource: String,
+        ): StatelessGraphObjectManager = factory.stateless(datasource)
+
+        @Bean
+        open fun otherGraphObjectManager(
+            factory: GraphObjectManagerFactory,
+            @Value("\${host.unnamed}") datasource: String,
         ): StatelessGraphObjectManager = factory.stateless(datasource)
     }
 
