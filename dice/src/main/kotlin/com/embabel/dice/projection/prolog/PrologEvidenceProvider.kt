@@ -57,7 +57,8 @@ import java.time.ZoneOffset
  * that answer, then matches each declared input to the projected facts. Keeping this out of Prolog itself
  * means the same declarations still work if the engine behind this becomes a Datalog one. Declarations are
  * tried in the order they were added; the first that proves the answer and finds a recorded fact with source
- * ids for every input is the one cited. Guards such as `X \= Y` run with the clause but are never cited. An
+ * ids for every input is the one cited. Guards such as `X \= Y` run with the clause but are never cited; inputs
+ * and guards run in the order they were added, interleaved, so a guard added before an input runs before it. An
  * answer no declaration can trace is left out, and so is one whose facts carry no source ids.
  *
  * **Recursive rules are not supported.** A rule that calls itself, such as a chain of managers, can't be
@@ -222,7 +223,7 @@ class PrologEvidenceProvider private constructor(
     private fun trace(declaration: ParsedDeclaration, filled: Struct): List<CitableFact>? {
         if (declaration.inputs.isEmpty()) return null
         val query = Tuple.wrapIfNeeded(
-            listOf(Struct.of("=", declaration.head, filled)) + declaration.inputs + declaration.guards
+            listOf(Struct.of("=", declaration.head, filled)) + declaration.body
         ) as Struct
 
         for (proof in engine.solveTerm(query)) {
@@ -280,8 +281,9 @@ class PrologEvidenceProvider private constructor(
 
     private class CitableFact(val fact: PrologFact, val ids: List<String>)
 
-    // A declaration whose head, inputs and guards share one set of variables, as they would in a single clause.
-    private class ParsedDeclaration(val head: Struct, val inputs: List<Term>, val guards: List<Term>)
+    // A declaration whose head, inputs and guards share one set of variables, as they would in a single clause. The
+    // body holds the inputs and guards in the order they were added, which is the order they run in.
+    private class ParsedDeclaration(val head: Struct, val body: List<Term>, val inputs: List<Term>)
 
     companion object {
 
@@ -321,9 +323,8 @@ class PrologEvidenceProvider private constructor(
                 return term.apply(Substitution.of(renaming))
             }
             val head = join(declaration.head) as? Struct ?: return null
-            val inputs = declaration.inputs.map { join(it) ?: return null }
-            val guards = declaration.guards.map { join(it) ?: return null }
-            return ParsedDeclaration(head, inputs, guards)
+            val parts = declaration.body.map { (join(it.text) ?: return null) to it.isInput }
+            return ParsedDeclaration(head, parts.map { it.first }, parts.filter { it.second }.map { it.first })
         }
 
         // The text a caller sees for one answer: the goal as written with each variable's value put in its place,

@@ -25,8 +25,11 @@ import java.util.Objects
  * The [head] is the clause's head with its variables, such as `can_help(X, Topic)`. Each input is a fact the
  * clause reads, written in the head's variables, such as `expert_in(X, Topic)`. Each guard is a test the clause
  * also runs, such as `X \= Y`; it narrows the answers but is never cited as a fact. A rule with several clauses
- * gets one declaration per clause. Inputs and guards keep the order they were added in, and each `with` method
- * returns a copy.
+ * gets one declaration per clause. Each `with` method returns a copy.
+ *
+ * Inputs and guards run in the order they were added, interleaved, just as the goals in a clause's body do. A guard
+ * added before an input runs before it, so a test such as `var(Y)` sees `Y` before the input binds it; a guard added
+ * after an input sees what that input bound.
  *
  * The inputs are declared rather than traced from the engine, so the same declaration works whichever engine
  * runs the rule. A rule that calls itself, such as a chain of managers, can't be declared this way.
@@ -49,15 +52,25 @@ import java.util.Objects
 class RuleDeclaration private constructor(
     /** The clause's head, such as `can_help(X, Topic)`. */
     val head: String,
-    inputs: List<String>,
-    guards: List<String>,
+    body: List<BodyGoal>,
 ) {
 
+    // Inputs then guards. Only of() calls this, with both empty; keeping it means of() reaches the class through the
+    // same accessor as before, so the published API listing doesn't change.
+    private constructor(head: String, inputs: List<String>, guards: List<String>) :
+        this(head, inputs.map { BodyGoal(it, isInput = true) } + guards.map { BodyGoal(it, isInput = false) })
+
+    /** One goal of the clause's body: an input when [isInput], otherwise a guard. */
+    internal data class BodyGoal(val text: String, val isInput: Boolean)
+
+    /** The inputs and guards together, in the order they were added, which is the order they run in. */
+    internal val body: List<BodyGoal> = Collections.unmodifiableList(ArrayList(body))
+
     /** The facts the clause reads, such as `expert_in(X, Topic)`, in the order added. */
-    val inputs: List<String> = Collections.unmodifiableList(ArrayList(inputs))
+    val inputs: List<String> = Collections.unmodifiableList(this.body.filter { it.isInput }.map { it.text })
 
     /** The tests the clause runs that are not facts, such as `X \= Y`, in the order added. */
-    val guards: List<String> = Collections.unmodifiableList(ArrayList(guards))
+    val guards: List<String> = Collections.unmodifiableList(this.body.filterNot { it.isInput }.map { it.text })
 
     private val shape = GoalShape.parse(head)
 
@@ -78,29 +91,34 @@ class RuleDeclaration private constructor(
     val arity: Int get() = shape.arity
 
     /**
-     * Returns a copy with [input] added after the inputs already there.
+     * Returns a copy with [input] added after the inputs and guards already there.
      *
      * @param input a fact the clause reads, such as `expert_in(X, Topic)`. Trimmed before it is stored.
      * @return the updated declaration
      * @throws IllegalArgumentException if [input] is not a lower-case name followed by its arguments in brackets,
      * such as a test like `X \= Y`, which belongs in [withGuard]
      */
-    fun withInput(input: String): RuleDeclaration = RuleDeclaration(head, inputs + input.trim(), guards)
+    fun withInput(input: String): RuleDeclaration =
+        RuleDeclaration(head, body + BodyGoal(input.trim(), isInput = true))
 
     /**
-     * Returns a copy with [guard] added after the guards already there.
+     * Returns a copy with [guard] added after the inputs and guards already there.
      *
      * @param guard a test the clause runs, such as `X \= Y`. Trimmed before it is stored.
      * @return the updated declaration
      * @throws IllegalArgumentException if [guard] is blank or ends with a period
      */
-    fun withGuard(guard: String): RuleDeclaration = RuleDeclaration(head, inputs, guards + guard.trim())
+    fun withGuard(guard: String): RuleDeclaration =
+        RuleDeclaration(head, body + BodyGoal(guard.trim(), isInput = false))
 
-    /** Two declarations are equal when their heads, inputs and guards are equal, in the same order. */
+    /**
+     * Two declarations are equal when their heads are equal and they added the same inputs and guards in the same
+     * order, since the order is the order they run in.
+     */
     override fun equals(other: Any?): Boolean =
-        other is RuleDeclaration && head == other.head && inputs == other.inputs && guards == other.guards
+        other is RuleDeclaration && head == other.head && body == other.body
 
-    override fun hashCode(): Int = Objects.hash(head, inputs, guards)
+    override fun hashCode(): Int = Objects.hash(head, body)
 
     /** Returns the predicate, the arity and how many inputs and guards there are. */
     override fun toString(): String =

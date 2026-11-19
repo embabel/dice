@@ -233,6 +233,32 @@ class PrologEvidenceProviderTest {
         }
 
         @Test
+        fun `a guard added before an input runs before it`() {
+            // var(Y) only holds while Y is still unbound, so it has to run before pair(X, Y) binds it.
+            val rules = "r(X) :- var(Y), pair(X, Y)."
+            val declaration = RuleDeclaration.of("r(X)").withGuard("var(Y)").withInput("pair(X, Y)")
+            val facts = listOf(fact("pair", "alice", "kotlin", confidence = 0.9, ids = listOf("prop-p")))
+
+            val derived = only(provider(facts, rules).withDeclaration(declaration).conclusions(RuleGoal.of("r(X)")))
+
+            assertEquals("r('alice')", derived.conclusion)
+            assertEquals(listOf("prop-p"), derived.inputIds)
+        }
+
+        @Test
+        fun `a guard added after an input runs after it`() {
+            // nonvar(Y) only holds once pair(X, Y) has bound Y, so it has to run after the input.
+            val rules = "r(X) :- pair(X, Y), nonvar(Y)."
+            val declaration = RuleDeclaration.of("r(X)").withInput("pair(X, Y)").withGuard("nonvar(Y)")
+            val facts = listOf(fact("pair", "alice", "kotlin", confidence = 0.9, ids = listOf("prop-p")))
+
+            val derived = only(provider(facts, rules).withDeclaration(declaration).conclusions(RuleGoal.of("r(X)")))
+
+            assertEquals("r('alice')", derived.conclusion)
+            assertEquals(listOf("prop-p"), derived.inputIds)
+        }
+
+        @Test
         fun `inputs are matched to facts by quoteAtom-normalised arguments, which can merge ids`() {
             val facts = listOf(
                 fact("expert_in", "Alice-Smith", "K8s", confidence = 0.9, ids = listOf("prop-a")),
