@@ -59,6 +59,7 @@ class GateApplierTest {
     private val fresh = proposition("p-new", entity = "e-alice")
     private val storedA = proposition("p-stored-a", confidence = 0.6)
     private val storedARevised = storedA.copy(confidence = 0.8, reinforceCount = 1)
+    private val storedAWithSecondSource = storedA.copy(confidence = 0.8, grounding = listOf("chunk-1", "chunk-2"))
     private val storedB = proposition("p-stored-b", confidence = 0.6)
     private val storedBRevised = storedB.copy(confidence = 0.7, reinforceCount = 1)
     private val contradictedOriginal = proposition("p-orig", status = PropositionStatus.CONTRADICTED, confidence = 0.2)
@@ -237,10 +238,41 @@ class GateApplierTest {
         )
 
         GateApplier.of(pipeline)
-            .withContext { r -> GateContext(revisionResult = r, trustScore = 0.3) }
+            .withContext { _, r -> GateContext(revisionResult = r, trustScore = 0.3) }
             .apply(chunk(listOf(fresh), listOf(result)))
 
         assertEquals(listOf(GateContext(revisionResult = result, trustScore = 0.3)), contexts)
+    }
+
+    @Test
+    fun `context factory receives the claim being gated with each revision result`() {
+        val claims = mutableListOf<Proposition>()
+        val results = mutableListOf<RevisionResult?>()
+        val merged = RevisionResult.Merged(storedA, storedARevised)
+        val contradicted = RevisionResult.Contradicted(contradictedOriginal, contradictingNew)
+
+        applier(rejecting())
+            .withContext { claim, r -> claims += claim; results += r; GateContext(revisionResult = r) }
+            .apply(chunk(listOf(storedA, contradictingNew), listOf(merged, contradicted)))
+
+        assertEquals(listOf(storedARevised, contradictingNew), claims)
+        assertEquals(listOf<RevisionResult?>(merged, contradicted), results)
+    }
+
+    @Test
+    fun `context factory gives each claim its own context when no revision ran`() {
+        val trusted = fresh.copy(metadata = mapOf(TRUST_SCORE to 0.9))
+        val doubtful = general.copy(metadata = mapOf(TRUST_SCORE to 0.2))
+        val reviewed = mutableListOf<ResultVerdict>()
+
+        val gated = GateApplier.of(ExtractionGatePipeline(listOf(TrustGate(0.5))))
+            .withReviewSink { reviewed += it }
+            .withContext { claim, r -> GateContext(revisionResult = r, trustScore = claim.metadata[TRUST_SCORE] as Double?) }
+            .apply(chunk(listOf(trusted, doubtful), emptyList()))
+
+        assertEquals(listOf(trusted), gated.admitted.propositionsToPersist())
+        assertEquals(listOf(doubtful), reviewed.single().propositions)
+        assertEquals(listOf(true, false), gated.verdicts.map { it.isAdmitted })
     }
 
     @Test
@@ -434,25 +466,89 @@ class GateApplierTest {
     }
 
     @Test
-    fun `replays are not gated and are kept when the result that changed the same stored id is rejected`() {
+    fun `replays follow a reviewed changer of the same stored id so withheld evidence is not written`() {
         val listener = RecordingDiceEventListener()
         val reviewed = mutableListOf<ResultVerdict>()
-        val replay = RevisionResult.Merged(storedA, storedA)
-        val changer = RevisionResult.Reinforced(storedA, storedARevised)
+        val changer = RevisionResult.Merged(storedA, storedAWithSecondSource)
+        val replay = RevisionResult.Merged(storedAWithSecondSource, storedAWithSecondSource)
+        val pipeline = ExtractionGatePipeline(listOf(gateFor(storedA.id, GateDecision.RouteToReview("second source"))))
+
+        val gated = GateApplier.of(pipeline)
+            .withReviewSink { reviewed += it }
+            .withListener(listener)
+            .apply(chunk(listOf(storedA), listOf(changer, replay)))
+
+        assertTrue(gated.admitted.propositionsToPersist().isEmpty())
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+        assertEquals(1, reviewed.size)
+        assertSame(changer, reviewed.single().revisionResult)
+        assertSame(changer, gated.verdicts.single().revisionResult)
+        // Only the changer emits; the replay sends nothing of its own.
+        assertEquals(1, listener.count())
+        assertInstanceOf(PropositionRoutedToReview::class.java, listener.events.single())
+    }
+
+    @Test
+    fun `replays follow a rejected changer of the same stored id even when the replay comes first`() {
+        val listener = RecordingDiceEventListener()
+        val changer = RevisionResult.Merged(storedA, storedAWithSecondSource)
+        val replay = RevisionResult.Merged(storedAWithSecondSource, storedAWithSecondSource)
 
         val gated = applier(rejecting(storedA.id))
-            .withReviewSink { reviewed += it }
             .withListener(listener)
             .apply(chunk(listOf(storedA), listOf(replay, changer)))
 
-        assertEquals(listOf(replay), gated.admitted.revisionResults)
-        // The replay re-saves the stored fact unchanged, never the rejected revision.
-        assertEquals(listOf(storedA), gated.admitted.propositionsToPersist())
-        assertEquals(1, gated.verdicts.size)
+        assertTrue(gated.admitted.propositionsToPersist().isEmpty())
+        assertTrue(gated.admitted.revisionResults.isEmpty())
         assertSame(changer, gated.verdicts.single().revisionResult)
-        assertTrue(reviewed.isEmpty())
-        // Only the rejected changer emits; the replay emits nothing.
-        assertEquals(listOf(storedARevised), listener.events.map { (it as PropositionRejected).proposition })
+        assertEquals(listOf(storedAWithSecondSource), listener.events.map { (it as PropositionRejected).proposition })
+    }
+
+    @Test
+    fun `replays follow a rejected Reinforced changer and drop the unchanged stored copy too`() {
+        val replay = RevisionResult.Merged(storedA, storedA)
+        val changer = RevisionResult.Reinforced(storedA, storedARevised)
+
+        val gated = applier(rejecting(storedA.id)).apply(chunk(listOf(storedA), listOf(replay, changer)))
+
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+        assertTrue(gated.admitted.propositionsToPersist().isEmpty())
+    }
+
+    @Test
+    fun `replays follow a rejected Contradicted result that changed the same stored id`() {
+        val stored = proposition("p-orig")
+        val replay = RevisionResult.Reinforced(stored, stored)
+        val contradicted = RevisionResult.Contradicted(contradictedOriginal, contradictingNew)
+
+        val gated = applier(rejecting(contradictingNew.id))
+            .apply(chunk(listOf(contradictingNew), listOf(contradicted, replay)))
+
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+        assertTrue(gated.admitted.propositionsToPersist().isEmpty())
+    }
+
+    @Test
+    fun `replays follow an admitted changer so both stay and the revised copy is written once`() {
+        val changer = RevisionResult.Merged(storedA, storedAWithSecondSource)
+        val replay = RevisionResult.Merged(storedAWithSecondSource, storedAWithSecondSource)
+
+        val gated = applier(rejecting()).apply(chunk(listOf(storedA), listOf(changer, replay)))
+
+        assertEquals(listOf(changer, replay), gated.admitted.revisionResults)
+        assertEquals(listOf(storedAWithSecondSource), gated.admitted.propositionsToPersist())
+        assertSame(changer, gated.verdicts.single().revisionResult)
+    }
+
+    @Test
+    fun `replays with no changer of their stored id in the chunk are kept when another result is rejected`() {
+        val replay = RevisionResult.Reinforced(storedB, storedB)
+        val changer = RevisionResult.Merged(storedA, storedAWithSecondSource)
+
+        val gated = applier(rejecting(storedA.id)).apply(chunk(listOf(storedA, storedB), listOf(changer, replay)))
+
+        assertEquals(listOf(replay), gated.admitted.revisionResults)
+        assertEquals(listOf(storedB), gated.admitted.propositionsToPersist())
     }
 
     // --- Ruling: events ---
@@ -625,6 +721,10 @@ class GateApplierTest {
         }
     }
 
+    private companion object {
+        const val TRUST_SCORE = "dice.trust.score"
+    }
+
     private fun applier(pipeline: ExtractionGatePipeline): GateApplier = GateApplier.of(pipeline)
 
     /** A pipeline whose single gate rejects the propositions with the given ids and passes the rest. */
@@ -640,6 +740,10 @@ class GateApplierTest {
     private fun recording(seen: MutableList<Proposition>): ExtractionGatePipeline = ExtractionGatePipeline(
         listOf(ExtractionGate { p, _ -> seen += p; GateEvaluation("seen", p, GateDecision.Persist) }),
     )
+
+    /** A gate that gives [decision] for the proposition with [id] and passes the rest. */
+    private fun gateFor(id: String, decision: GateDecision) =
+        ExtractionGate { p, _ -> GateEvaluation("by-id", p, if (p.id == id) decision else GateDecision.Persist) }
 
     /** A gate that always gives [decision]. */
     private fun gate(name: String, decision: GateDecision) = ExtractionGate { p, _ -> GateEvaluation(name, p, decision) }

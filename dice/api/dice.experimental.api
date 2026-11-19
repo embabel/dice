@@ -1633,7 +1633,7 @@ public final class com/embabel/dice/proposition/gate/GateApplier$Companion {
 }
 
 public abstract interface class com/embabel/dice/proposition/gate/GateContextFactory {
-	public abstract fun contextFor (Lcom/embabel/dice/proposition/revision/RevisionResult;)Lcom/embabel/dice/proposition/gate/GateContext;
+	public abstract fun contextFor (Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/proposition/revision/RevisionResult;)Lcom/embabel/dice/proposition/gate/GateContext;
 }
 
 public final class com/embabel/dice/proposition/gate/GatedChunk {

@@ -23,6 +23,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.revision.RevisionResult
 import org.jetbrains.annotations.ApiStatus
 import java.util.Collections
+import java.util.IdentityHashMap
 
 /**
  * Where the host sends a result its gates routed to review.
@@ -46,8 +47,10 @@ fun interface ReviewSink {
 /**
  * Builds the context the gates see for one result.
  *
- * The default gives `GateContext(revisionResult = result)`. A host that also wants a trust
- * score or its own metadata in front of the gates supplies its own factory.
+ * It is handed the claim the gates are about to judge, so a host can read that claim's own
+ * metadata, such as a trust score, even when no revision ran. The default gives
+ * `GateContext(revisionResult = result)`. A host that wants a trust score or its own metadata in
+ * front of the gates supplies its own factory.
  *
  * EXPERIMENTAL. The API may change before 1.0.
  */
@@ -57,10 +60,11 @@ fun interface GateContextFactory {
     /**
      * Builds the gate context for one result.
      *
+     * @param claim The proposition the gates are about to judge for this result.
      * @param result The revision result being gated, or null when the chunk had no revision.
      * @return The context handed to every gate for that result.
      */
-    fun contextFor(result: RevisionResult?): GateContext
+    fun contextFor(claim: Proposition, result: RevisionResult?): GateContext
 }
 
 /**
@@ -103,8 +107,8 @@ class ResultVerdict(
  *
  * EXPERIMENTAL. The API may change before 1.0.
  *
- * @property admitted The chunk to persist. It holds only admitted results and replays; a failed
- *   chunk comes back as it was.
+ * @property admitted The chunk to persist. It holds only admitted results and the replays that
+ *   followed them; a failed chunk comes back as it was.
  * @property verdicts One verdict per gated result, in chunk order. Replays get none.
  */
 @ApiStatus.Experimental
@@ -148,8 +152,13 @@ class GatedChunk(
  * never gated itself, so its lowered confidence cannot sink the result. Whatever the pipeline
  * decides for that claim applies to everything the result would write. Reject and review drop
  * the whole result; Demote and SkipProjection keep it and leave the decision on the verdict for
- * the host to act on. Replays (a merge or reinforcement that changed nothing) are kept as they
- * are, with no verdict. When the chunk had no revision, each proposition is its own result.
+ * the host to act on. When the chunk had no revision, each proposition is its own result.
+ *
+ * Replays (a merge or reinforcement that changed nothing) are never gated themselves and get no
+ * verdict, sink call or event. A replay can start from the copy another result in the same chunk
+ * just produced, so it follows that result: when a result that changed the same stored
+ * proposition is rejected or reviewed, the replay is dropped with it, or it would write the
+ * evidence the gates held back. A replay with no such result in the chunk is kept.
  *
  * With a listener set, each proposition of a rejected result gets a [PropositionRejected] event
  * and each proposition of a reviewed one a [PropositionRoutedToReview], carrying the decision's
@@ -198,7 +207,7 @@ class GateApplier private constructor(
     /**
      * Returns an applier that builds each gate context with [factory].
      *
-     * @param factory Builds the context for each result.
+     * @param factory Builds the context for each result from the claim being gated and its revision result.
      * @return A new applier; this one is unchanged.
      */
     fun withContext(factory: GateContextFactory): GateApplier = GateApplier(pipeline, reviewSink, listener, factory)
@@ -223,21 +232,24 @@ class GateApplier private constructor(
     }
 
     private fun applyToRevisions(chunk: ChunkPropositionResult.Success): GatedChunk {
+        // Decide every non-replay result first, because a replay can come before the result it
+        // follows and has to know that result's verdict.
         val verdicts = mutableListOf<ResultVerdict>()
-        val keptResults = mutableListOf<RevisionResult>()
+        val dropped = Collections.newSetFromMap(IdentityHashMap<RevisionResult, Boolean>())
         val droppedIds = mutableSetOf<String>()
+        val droppedStoredIds = mutableSetOf<String>()
         for (revision in chunk.revisionResults) {
-            if (revision.isReplay) {
-                keptResults += revision
-                continue
-            }
+            if (revision.isReplay) continue
             val verdict = judge(revision, gatedClaim(revision), written(revision))
             verdicts += verdict
-            if (verdict.isAdmitted) {
-                keptResults += revision
-            } else {
+            if (!verdict.isAdmitted) {
+                dropped += revision
                 extractedId(revision)?.let { droppedIds += it }
+                changedStoredId(revision)?.let { droppedStoredIds += it }
             }
+        }
+        val keptResults = chunk.revisionResults.filter { revision ->
+            if (revision.isReplay) replayedStoredId(revision) !in droppedStoredIds else revision !in dropped
         }
         // With no revision results left, propositionsToPersist() would fall back to every
         // extracted proposition, so the list has to be emptied as well.
@@ -248,7 +260,7 @@ class GateApplier private constructor(
 
     /** Asks the pipeline about [claim], then reports and routes the result by the decision. */
     private fun judge(revision: RevisionResult?, claim: Proposition, written: List<Proposition>): ResultVerdict {
-        val gated = pipeline.evaluate(claim, contextFactory.contextFor(revision))
+        val gated = pipeline.evaluate(claim, contextFactory.contextFor(claim, revision))
         val verdict = ResultVerdict(revision, written, listOf(gated), gated.finalDecision)
         when (val decision = verdict.decision) {
             is GateDecision.Reject -> {
@@ -265,7 +277,7 @@ class GateApplier private constructor(
 
     companion object {
 
-        private val DEFAULT_CONTEXT = GateContextFactory { GateContext(revisionResult = it) }
+        private val DEFAULT_CONTEXT = GateContextFactory { _, result -> GateContext(revisionResult = result) }
 
         /**
          * An applier for [pipeline] with no review sink, no listener and the default gate context.
@@ -292,6 +304,24 @@ class GateApplier private constructor(
             is RevisionResult.Reinforced -> listOf(revision.revised)
             is RevisionResult.Contradicted -> listOf(revision.original, revision.new)
             is RevisionResult.Generalized -> listOf(revision.proposition)
+        }
+
+        /**
+         * The stored proposition a non-replay result changes: the one a merge or reinforcement
+         * started from, or the one a contradiction demotes. Null for results that add a new one.
+         */
+        private fun changedStoredId(revision: RevisionResult): String? = when (revision) {
+            is RevisionResult.Merged -> revision.original.id
+            is RevisionResult.Reinforced -> revision.original.id
+            is RevisionResult.Contradicted -> revision.original.id
+            is RevisionResult.New, is RevisionResult.Generalized -> null
+        }
+
+        /** The stored proposition a replay re-saves. Only merges and reinforcements can be replays. */
+        private fun replayedStoredId(revision: RevisionResult): String? = when (revision) {
+            is RevisionResult.Merged -> revision.original.id
+            is RevisionResult.Reinforced -> revision.original.id
+            else -> null
         }
 
         /**

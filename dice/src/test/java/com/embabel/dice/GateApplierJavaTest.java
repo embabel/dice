@@ -51,7 +51,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * lambdas for the gate, the review sink, the event listener and the context factory.
  *
  * Contract, as the tests below read it:
- * - E1: a gate and a review sink written as Java lambdas plug straight into the applier.
+ * - E1: a gate, a review sink and a context factory written as Java lambdas plug straight into the
+ *   applier, and the factory is handed each claim it builds a context for.
  * - E2: a reviewed result reaches the sink once and is left out of the chunk to persist.
  * - E3: a rejected result is dropped, reported on the verdict and sent to the listener.
  * - E4: an admitted result stays in the chunk to persist.
@@ -83,6 +84,7 @@ class GateApplierJavaTest {
     void appliesLambdaGateAndSinkToARevisedChunk() {
         List<ResultVerdict> inbox = new ArrayList<>();
         List<DiceEvent> events = new ArrayList<>();
+        List<Proposition> claims = new ArrayList<>();
         ChunkPropositionResult.Success chunk = new ChunkPropositionResult.Success(
                 "c", suggested, resolutions,
                 List.of(kept, reviewed, rejected),
@@ -95,7 +97,10 @@ class GateApplierJavaTest {
         GateApplier applier = GateApplier.of(new ExtractionGatePipeline(List.of(byId)))
                 .withReviewSink(inbox::add)
                 .withListener(events::add)
-                .withContext(result -> new GateContext(result));
+                .withContext((claim, result) -> {
+                    claims.add(claim);
+                    return new GateContext(result);
+                });
 
         GatedChunk gated = applier.apply(chunk);
 
@@ -119,6 +124,9 @@ class GateApplierJavaTest {
         assertEquals(List.of(kept), gated.getAdmitted().propositionsToPersist());
         assertEquals(3, gated.getVerdicts().size());
         assertTrue(gated.getVerdicts().get(0).isAdmitted());
+
+        // E1: the context factory saw each claim it was building a context for.
+        assertEquals(List.of(kept, reviewed, rejected), claims);
     }
 
     @Test
