@@ -1,7 +1,8 @@
 [[features-graph-storage]]
 === Graph-backed storage
 
-*Activation*: `embabel.dice.store.type=graph`
+*Activation*: Drivine is configured, meaning the application has a Drivine `PersistenceManager` bean.
+No DICE property is needed.
 
 *Availability*: `dice-storage` and `dice-storage-autoconfigure`, from DICE {dice-version}. Costs a
 Neo4j instance.
@@ -27,19 +28,18 @@ Neo4j.
 
 ==== How to enable
 
-[source,yaml]
-----
-embabel:
-  dice:
-    store:
-      type: graph
-----
+Configure Drivine and DICE picks it up. Give Drivine a data source under `database.datasources` (its
+`type` and connection settings choose the database), then expose a `PersistenceManager` and a
+`StatelessGraphObjectManager` bean for it from Drivine's factories. <<how-to-choose-a-backend>> walks
+through both. DICE's auto-configuration runs after Drivine's, so it sees those beans when it decides.
 
-Plus Drivine's Neo4j connection configuration.
+Without a `PersistenceManager` bean, DICE uses its in-memory stores. The deprecated
+`embabel.dice.store.type` property can still force `in-memory` while Drivine is present; see
+<<reference-configuration-properties>>.
 
 ==== What you get
 
-With `type=graph`, `DiceStorageAutoConfiguration` provides:
+When Drivine is configured, `DiceStorageAutoConfiguration` provides:
 
 [cols="1,2", options="header"]
 |===

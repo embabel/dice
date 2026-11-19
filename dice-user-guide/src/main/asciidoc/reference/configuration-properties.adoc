@@ -13,8 +13,12 @@ Read by `dice-storage-autoconfigure`.
 
 | `embabel.dice.store.type`
 | `String`
-| `in-memory`
-| Backend kind: `graph` (Drivine/Neo4j) or `in-memory`.
+| unset
+| *Deprecated.* Leave it unset and DICE detects the backend: its Drivine stores when the application
+  has a Drivine `PersistenceManager` bean, its in-memory stores otherwise. A set value is still
+  honoured for now. `in-memory` forces the in-memory stores even when Drivine is configured. `graph`
+  uses the Drivine stores and fails startup if Drivine isn't configured. Any other value fails
+  startup. Setting it at all logs a deprecation warning.
 
 | `embabel.dice.store.decay.enabled`
 | `boolean`
@@ -140,7 +144,8 @@ Read by `dice`, bound by `LlmSourceAnalyzer`. Configures the text-to-graph sourc
 ==== Properties DICE does not own
 
 An LLM provider must be configured, and that configuration belongs to embabel-agent, not to DICE.
-Neo4j connection settings belong to Drivine. DICE reads neither.
+Neo4j connection settings belong to Drivine. DICE reads neither. It only checks whether Drivine is
+configured, and uses its Drivine stores if so.
 
 ==== A complete example
 
@@ -149,7 +154,6 @@ Neo4j connection settings belong to Drivine. DICE reads neither.
 embabel:
   dice:
     store:
-      type: graph
       decay:
         enabled: true
         interval-ms: 3600000

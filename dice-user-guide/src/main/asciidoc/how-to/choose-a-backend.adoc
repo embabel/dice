@@ -3,42 +3,86 @@
 
 *Prerequisites*: `dice-storage-autoconfigure` on the classpath.
 
-Backend selection is a property. The code you write against `PropositionRepository` does not change.
+You don't choose the backend with a property. It follows from what your application sets up: when
+Drivine is configured, DICE uses its Drivine stores, and when it isn't, DICE uses its in-memory
+stores. The code you write against `PropositionRepository` is the same either way.
 
-[cols="1,1,3", options="header"]
+Drivine counts as configured when your application has a Drivine `PersistenceManager` bean. Which
+database that bean talks to is decided by Drivine's own configuration, not by DICE.
+
+[cols="1,2,3", options="header"]
 |===
-| Backend | `embabel.dice.store.type` | Choose it when
+| Backend | How you get it | Choose it when
 
 | In-memory
-| `in-memory` (default)
+| The default. Leave Drivine unconfigured.
 | Development, tests, single-process applications, and anything where losing the store on restart is
   acceptable. Needs an `Ai` bean for embeddings.
 
 | JSON file
-| — (wire `JsonFilePropositionRepository` yourself)
+| Define a `JsonFilePropositionRepository` bean yourself.
 | You want survival across restarts with no infrastructure at all. Not for concurrent writers.
 
 | Graph (Drivine/Neo4j)
-| `graph`
+| Configure Drivine: a data source, plus a `PersistenceManager` and a `StatelessGraphObjectManager`
+  bean for it.
 | Production. Durable, concurrent, with native graph traversal, a vector index, and decay applied in
   the database.
 |===
 
 ==== Switching to the graph backend
 
+Drivine's Spring Boot starter (`drivine4j-spring-boot-starter`) already comes in with
+`dice-storage-autoconfigure`, so there is nothing to add to your build. What switches DICE over is
+giving Drivine a connection.
+
+First, declare a data source. This is Drivine's configuration, and its `type` and connection
+settings pick the database:
+
 [source,yaml]
 ----
-embabel:
-  dice:
-    store:
-      type: graph
+database:
+  datasources:
+    neo:
+      type: NEO4J
+      host: localhost
+      port: 7687
+      username: neo4j
+      password: ${NEO4J_PASSWORD}
+      database-name: neo4j
 ----
 
-Plus Drivine's own Neo4j connection configuration. Nothing else in your application changes: the
+Then expose a `PersistenceManager` and a `StatelessGraphObjectManager` for that data source. Drivine's
+starter registers the factories they come from once a data source exists:
+
+[source,java]
+----
+@Configuration
+public class DrivineConfig {
+
+    @Bean
+    PersistenceManager persistenceManager(PersistenceManagerFactory factory) {
+        return factory.get("neo");
+    }
+
+    @Bean
+    StatelessGraphObjectManager graphObjectManager(GraphObjectManagerFactory factory) {
+        return factory.stateless("neo");
+    }
+}
+----
+
+Nothing else in your application changes. Once the `PersistenceManager` bean exists, the
 auto-configuration swaps `PropositionRepository`, `ChunkHistoryStore`, `DecayManager`,
 `ProjectionRecordStore` and `CollectorRecordStore` for their Drivine equivalents, and registers the
 schema catalogues that create the constraints and, when an embedding model is available, the vector
-index. See <<features-vector-index>> for models added after startup.
+index. See <<features-vector-index>> for models added after startup. Take the Drivine beans away and
+DICE goes back to its in-memory stores.
+
+If your configuration still sets `embabel.dice.store.type`, you can remove it. It is deprecated, and
+<<reference-configuration-properties>> lists what each value still does.
+
+See <<features-graph-storage>> for the full activation detail.
 
 See <<features-graph-storage>> for the full activation detail.
 
