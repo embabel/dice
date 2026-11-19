@@ -261,15 +261,27 @@ data class Memory @JvmOverloads constructor(
     }
 
     /**
-     * IDs of propositions that were eagerly loaded into the description.
-     * Used to deduplicate results from subsequent tool calls.
+     * The ids of the facts the last [contribution] put in the prompt, or null if this Memory has
+     * not rendered one yet. The tool leaves these out of its results so the LLM isn't told the
+     * same thing twice.
      *
-     * Taken from the first selection, so a fact the budget left out of the prompt can still
-     * come back from the tool.
+     * It is written once per [contribution] call, as a whole new set, so a tool call on another
+     * thread sees either the old set or the new one. Copies made by the `with...` methods start
+     * with null, because a copy has not shown anything yet.
      */
-    private val eagerPropositionIds: Set<String> by lazy {
-        loadEagerSelection().selected.map { it.id }.toSet()
-    }
+    @Volatile
+    private var renderedIds: Set<String>? = null
+
+    /**
+     * The ids the tool should leave out: exactly what the prompt showed, so a fact the budget
+     * left out of the prompt can still come back from the tool.
+     *
+     * Before any [contribution], it works out which facts the prompt would show, the same
+     * read-only way [eagerSelection] does. That doesn't mark anything as accessed and isn't
+     * kept, so the next call works it out again.
+     */
+    private fun eagerPropositionIds(): Set<String> =
+        renderedIds ?: eagerSelection().selected.map { it.id }.toSet()
 
     /**
      * Merges the eager sources, picks what fits the budget, and marks only the picked facts as
@@ -354,6 +366,7 @@ data class Memory @JvmOverloads constructor(
             )
         }
         val eagerMemories = selection.selected
+        renderedIds = eagerMemories.map { it.id }.toSet()
 
         return buildString {
             appendLine("Reference: $name")
@@ -514,7 +527,7 @@ data class Memory @JvmOverloads constructor(
         val query = (params["query"] as? String ?: params["topic"] as? String)
             ?.trim()?.takeIf { it.isNotBlank() }
         val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
-        val retriever = MemoryRetriever(repository, provenanceResolver, topic, eagerPropositionIds, contextBudget)
+        val retriever = MemoryRetriever(repository, provenanceResolver, topic, eagerPropositionIds(), contextBudget)
         return if (query == null) {
             retriever.listAll(baseQuery(), limit.coerceAtLeast(defaultLimit))
         } else {

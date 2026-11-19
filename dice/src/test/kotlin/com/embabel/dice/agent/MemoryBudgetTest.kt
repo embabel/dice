@@ -281,19 +281,6 @@ class MemoryBudgetTest {
             assertFalse(result.contains(biologist.text), result)
         }
 
-        @Test
-        fun `the tool dedupe set is the first selection and stays cached`() {
-            store(lisbon, biologist, cats, tea)
-            val memory = eagerMemory().withContextBudget(tokens(60))
-            memory.call("{}")
-
-            // A new top fact would lead the next selection, but the cached dedupe set is still lisbon and biologist.
-            store(fact("oslo", "User grew up in Oslo", 0.99))
-            val result = callTool(memory, "{}")
-
-            assertTrue(result.contains("User grew up in Oslo"), result)
-            assertFalse(result.contains(lisbon.text), result)
-        }
 
         @Test
         fun `a tool search over budget is trimmed and ends with the left out line`() {
@@ -353,6 +340,100 @@ class MemoryBudgetTest {
 
             assertTrue(result.startsWith("All memories (4):"), result)
             assertFalse(result.contains("left out"), result)
+        }
+    }
+
+    @Nested
+    inner class RenderedDedupe {
+
+        // Both texts are 20 characters, so a 20-token budget fits exactly one of them.
+        // The shown fact was accessed earlier, so a ranking by oldest access picks it first.
+        private val shown = fact("shown", "User lives in Lisbon", 0.95)
+            .copy(lastAccessed = longAgo)
+        private val other = fact("other", "User grew up in Oslo", 0.90)
+            .copy(lastAccessed = longAgo.plusSeconds(86_400))
+
+        private val oldestAccessedFirst: Comparator<Proposition> = compareBy { it.lastAccessed }
+
+        private fun oneFact(): Memory = eagerMemory()
+            .withContextBudget(tokens(20).withRanking(oldestAccessedFirst))
+
+        @Test
+        fun `the tool excludes the facts contribution showed and not the ones a later selection would pick`() {
+            store(shown, other)
+            val memory = oneFact()
+
+            val contribution = memory.contribution()
+            assertTrue(contribution.contains("1. ${shown.text}"), contribution)
+            assertFalse(contribution.contains(other.text), contribution)
+
+            // The header repeats the query, so look for the fact on a result line.
+            val search = callTool(memory, """{"query": "${other.text}"}""")
+            assertTrue(search.lines().any { it.startsWith("- ") && it.endsWith(other.text) }, search)
+
+            val list = callTool(memory, "{}")
+            assertFalse(list.contains(shown.text), list)
+            assertTrue(list.contains(other.text), list)
+        }
+
+        @Test
+        fun `a tool call before any contribution excludes a read only selection and touches nothing`() {
+            store(shown, other)
+            val memory = oneFact()
+
+            val first = callTool(memory, "{}")
+            val second = callTool(memory, "{}")
+
+            listOf(first, second).forEach {
+                assertFalse(it.contains(shown.text), it)
+                assertTrue(it.contains(other.text), it)
+            }
+            assertEquals(longAgo, lastAccessed(shown))
+            assertEquals(longAgo.plusSeconds(86_400), lastAccessed(other))
+        }
+
+        @Test
+        fun `before any contribution the dedupe set is worked out fresh on each tool call`() {
+            store(lisbon, biologist, cats, tea)
+            val memory = eagerMemory().withContextBudget(tokens(60))
+            memory.call("{}")
+
+            // A new top fact now leads the selection, so it is the one the tool leaves out.
+            store(fact("oslo", "User grew up in Oslo", 0.99))
+            val result = callTool(memory, "{}")
+
+            assertFalse(result.contains("User grew up in Oslo"), result)
+            assertFalse(result.contains(lisbon.text), result)
+            assertTrue(result.contains(biologist.text), result)
+        }
+
+        @Test
+        fun `after contribution the dedupe set stays what was rendered even when the facts change`() {
+            store(lisbon, biologist, cats, tea)
+            val memory = eagerMemory().withContextBudget(tokens(60))
+            memory.contribution()
+
+            store(fact("oslo", "User grew up in Oslo", 0.99))
+            val result = callTool(memory, "{}")
+
+            assertTrue(result.contains("User grew up in Oslo"), result)
+            assertFalse(result.contains(lisbon.text), result)
+            assertFalse(result.contains(biologist.text), result)
+        }
+
+        @Test
+        fun `a copy made after contribution has rendered nothing and uses its own read only selection`() {
+            store(lisbon, biologist, cats, tea)
+            val memory = eagerMemory().withContextBudget(tokens(60))
+            memory.contribution()
+            store(fact("oslo", "User grew up in Oslo", 0.99))
+
+            val copy = memory.withTopic("the user & context")
+            val result = callTool(copy, "{}")
+
+            assertFalse(result.contains("User grew up in Oslo"), result)
+            assertFalse(result.contains(lisbon.text), result)
+            assertTrue(result.contains(biologist.text), result)
         }
     }
 
