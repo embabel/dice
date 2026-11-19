@@ -62,23 +62,16 @@ class DrivineChunkHistoryStore(
      * Most-recently-processed chunk for the source. A bare `@NodeFragment` has no generated query
      * DSL, so the "latest by processedAt" pick is a small parameterized Cypher returning the id;
      * the node itself is then loaded via the high-level API (correct temporal deserialization).
-     * Two records with the same time give the one whose window ends further on.
      */
     @Transactional(readOnly = true)
     override fun getLastBookmark(key: BookmarkKey): AnalysisBookmark? {
         val latestId = persistenceManager.maybeGetOne(
-            cypherQuery(
+            QuerySpecification
+                .withStatement(
                     "MATCH (c:ProcessedChunk {contextId: \$contextId, sourceId: \$sourceId}) " +
-                        "RETURN c.id AS id " +
-                        "ORDER BY ${InstantText.sortKey("c.processedAt")} DESC, c.processedAt DESC, c.endIndex DESC, c.id DESC LIMIT 1"
+                        "RETURN c.id AS id ORDER BY c.processedAt DESC LIMIT 1"
                 )
-                .bind(
-                    mapOf(
-                        "contextId" to key.contextId.value,
-                        "sourceId" to key.sourceId,
-                        InstantText.PATTERN_PARAMETER to InstantText.PATTERN,
-                    ),
-                )
+                .bind(mapOf("contextId" to key.contextId.value, "sourceId" to key.sourceId))
                 .transform(String::class.java)
         ) ?: return null
         val node = graphObjectManager.load<ProcessedChunkNode>(latestId) ?: return null
@@ -88,7 +81,8 @@ class DrivineChunkHistoryStore(
     @Transactional
     override fun clearByContext(contextId: ContextId) {
         persistenceManager.execute(
-            cypherQuery("MATCH (c:ProcessedChunk {contextId: \$contextId}) DETACH DELETE c")
+            QuerySpecification
+                .withStatement("MATCH (c:ProcessedChunk {contextId: \$contextId}) DETACH DELETE c")
                 .bind(mapOf("contextId" to contextId.value))
         )
     }
@@ -106,7 +100,7 @@ class DrivineChunkHistoryStore(
     @Transactional
     override fun clearAll() {
         persistenceManager.execute(
-            cypherQuery("MATCH (c:ProcessedChunk) DETACH DELETE c"),
+            QuerySpecification.withStatement("MATCH (c:ProcessedChunk) DETACH DELETE c"),
         )
     }
 
