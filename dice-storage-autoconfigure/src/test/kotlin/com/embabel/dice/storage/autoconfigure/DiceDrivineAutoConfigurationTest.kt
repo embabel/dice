@@ -40,6 +40,7 @@ import org.drivine.schema.SchemaTargets
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+import org.springframework.beans.factory.support.BeanDefinitionOverrideException
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.beans.factory.getBean
 import org.springframework.boot.autoconfigure.AutoConfiguration
@@ -317,6 +318,17 @@ class DiceDrivineAutoConfigurationTest {
     }
 
     @Test
+    fun `forcing in-memory leaves out the step that decides about DICE's managers`() {
+        runner
+            .withPropertyValues(*datasource("neo"), "embabel.dice.store.type=in-memory")
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.containsBeanDefinition(DiceDrivineManagerRegistrar.BEAN_NAME)).isFalse()
+                assertThat(ctx).doesNotHaveBean(PersistenceManager::class.java)
+            }
+    }
+
+    @Test
     fun `without a Drivine datasource nothing is created and the stores stay in-memory`() {
         runner.run { ctx ->
             assertThat(ctx).hasNotFailed()
@@ -363,6 +375,54 @@ class DiceDrivineAutoConfigurationTest {
                     assertThat(catalog.target).describedAs(name).isEqualTo(DatabaseTarget.Named(setOf("other")))
                 }
             }
+        }
+    }
+
+    @Test
+    fun `a host auto-configuration with both managers ordered only before DICE's storage keeps its own`() {
+        // Sorted by name, the host lands after DICE's Drivine auto-configuration, so DICE is parsed first
+        // and can't see the host's managers yet. Its bean names are the ones hosts on main use.
+        assertParsedAfterDiceDrivine(HostManagersBeforeStorage::class.java)
+        runner
+            .withConfiguration(AutoConfigurations.of(HostManagersBeforeStorage::class.java))
+            .withPropertyValues(*datasource("neo"), "host.datasource=neo")
+            .run { ctx -> assertUsesHostManagers(ctx, HostManagersBeforeStorage::class.java) }
+    }
+
+    @Test
+    fun `a host auto-configuration with both managers ordered after DICE's Drivine one keeps its own`() {
+        assertParsedAfterDiceDrivine(HostManagersAfterDiceDrivine::class.java)
+        runner
+            .withConfiguration(AutoConfigurations.of(HostManagersAfterDiceDrivine::class.java))
+            .withPropertyValues(*datasource("neo"), "host.datasource=neo")
+            .run { ctx -> assertUsesHostManagers(ctx, HostManagersAfterDiceDrivine::class.java) }
+    }
+
+    @Test
+    fun `a host auto-configuration with only a PersistenceManager fails startup asking for both managers or neither`() {
+        runner
+            .withConfiguration(AutoConfigurations.of(HostPersistenceManagerBeforeStorage::class.java))
+            .withPropertyValues(*datasource("neo"), "host.datasource=neo")
+            .run { ctx ->
+                assertAskedForBothOrNeither(ctx, "'persistenceManager'")
+                var cause: Throwable? = ctx.startupFailure
+                while (cause != null) {
+                    assertThat(cause).isNotInstanceOf(BeanDefinitionOverrideException::class.java)
+                    cause = cause.cause
+                }
+            }
+    }
+
+    @Test
+    fun `with no host managers anywhere DICE builds both and its Drivine stores get them`() {
+        runner.withPropertyValues(*datasource("neo")).run { ctx ->
+            assertThat(ctx).hasNotFailed()
+            assertThat(ctx.containsBeanDefinition("persistenceManager")).isTrue()
+            assertThat(ctx.containsBeanDefinition("statelessGraphObjectManager")).isTrue()
+            val repository = ctx.getBean<PropositionRepository>()
+            assertThat(repository).isInstanceOf(DrivinePropositionRepository::class.java)
+            assertThat(repository).extracting("persistenceManager").isSameAs(ctx.getBean<PersistenceManager>())
+            assertThat(repository).extracting("graphObjectManager").isSameAs(ctx.getBean<StatelessGraphObjectManager>())
         }
     }
 
@@ -433,6 +493,39 @@ class DiceDrivineAutoConfigurationTest {
             .hasMessageContaining("both")
             .hasMessageContaining("neither")
             .hasMessageContaining("database.datasources")
+    }
+
+    /** Checks [host] really is parsed after DICE's Drivine auto-configuration, which is what makes it hard. */
+    private fun assertParsedAfterDiceDrivine(host: Class<*>) {
+        val ordered = Configurations.getClasses(
+            AutoConfigurations.of(
+                DrivineAutoConfiguration::class.java,
+                DiceDrivineAutoConfiguration::class.java,
+                DiceStorageAutoConfiguration::class.java,
+                host,
+            ),
+        )
+        assertThat(ordered.indexOf(host)).isGreaterThan(ordered.indexOf(DiceDrivineAutoConfiguration::class.java))
+        assertThat(ordered.indexOf(host)).isLessThan(ordered.indexOf(DiceStorageAutoConfiguration::class.java))
+    }
+
+    /** Checks the context started on [host]'s two managers alone and DICE's Drivine stores were given them. */
+    private fun assertUsesHostManagers(ctx: AssertableApplicationContext, host: Class<*>) {
+        assertThat(ctx).hasNotFailed()
+        assertThat(ctx).hasSingleBean(PersistenceManager::class.java)
+        assertThat(ctx).hasSingleBean(StatelessGraphObjectManager::class.java)
+        val factory = ctx.sourceApplicationContext.beanFactory
+        listOf("persistenceManager", "graphObjectManager").forEach { name ->
+            assertThat(factory.getType(factory.getBeanDefinition(name).factoryBeanName!!))
+                .describedAs("%s comes from the host", name)
+                .isEqualTo(host)
+        }
+        assertThat(ctx.containsBeanDefinition("statelessGraphObjectManager")).isFalse()
+        val repository = ctx.getBean<PropositionRepository>()
+        assertThat(repository).isInstanceOf(DrivinePropositionRepository::class.java)
+        assertThat(repository).extracting("persistenceManager").isSameAs(ctx.getBean("persistenceManager"))
+        assertThat(repository).extracting("graphObjectManager").isSameAs(ctx.getBean("graphObjectManager"))
+        assertThat(ctx.getBean<ChunkHistoryStore>()).isInstanceOf(DrivineChunkHistoryStore::class.java)
     }
 
     /** Checks the catalog bean [name] targets [datasource] alone, and that Drivine would apply it nowhere else. */
@@ -578,6 +671,54 @@ class DiceDrivineAutoConfigurationTest {
 
         @Bean
         open fun declaredSchemaSource(): DeclaredSchemaSource = FixedDeclaredSchemaSource()
+    }
+
+    /**
+     * A host's own auto-configuration with both managers, ordered before DICE's storage the way
+     * `StoreBackendCheck` tells hosts to, and with no order against DICE's Drivine auto-configuration.
+     */
+    @AutoConfiguration(before = [DiceStorageAutoConfiguration::class])
+    open class HostManagersBeforeStorage {
+
+        @Bean
+        open fun persistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.datasource}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
+
+        @Bean
+        open fun graphObjectManager(
+            factory: GraphObjectManagerFactory,
+            @Value("\${host.datasource}") datasource: String,
+        ): StatelessGraphObjectManager = factory.stateless(datasource)
+    }
+
+    /** The same host auto-configuration, ordered explicitly after DICE's Drivine one. */
+    @AutoConfiguration(after = [DiceDrivineAutoConfiguration::class], before = [DiceStorageAutoConfiguration::class])
+    open class HostManagersAfterDiceDrivine {
+
+        @Bean
+        open fun persistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.datasource}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
+
+        @Bean
+        open fun graphObjectManager(
+            factory: GraphObjectManagerFactory,
+            @Value("\${host.datasource}") datasource: String,
+        ): StatelessGraphObjectManager = factory.stateless(datasource)
+    }
+
+    /** A host auto-configuration that defines only the PersistenceManager. */
+    @AutoConfiguration(before = [DiceStorageAutoConfiguration::class])
+    open class HostPersistenceManagerBeforeStorage {
+
+        @Bean
+        open fun persistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.datasource}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
     }
 
     /** A host that still writes the two beans itself, as hosts had to before. */

@@ -25,12 +25,18 @@ import org.drivine.schema.SchemaCatalog
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.BeanFactory
 import org.springframework.beans.factory.BeanFactoryAware
+import org.springframework.beans.factory.BeanDefinitionStoreException
 import org.springframework.beans.factory.BeanFactoryUtils
+import org.springframework.beans.factory.ListableBeanFactory
 import org.springframework.beans.factory.NoUniqueBeanDefinitionException
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition
 import org.springframework.beans.factory.config.BeanPostProcessor
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory
 import org.springframework.beans.factory.config.DependencyDescriptor
+import org.springframework.beans.factory.support.AbstractBeanDefinition
+import org.springframework.beans.factory.support.BeanDefinitionRegistry
+import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor
+import org.springframework.beans.factory.support.RootBeanDefinition
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionMessage
 import org.springframework.boot.autoconfigure.condition.ConditionOutcome
@@ -61,13 +67,16 @@ import org.springframework.core.type.AnnotatedTypeMetadata
  * defines just one stops startup with a message asking for both or neither. This is the same way Spring
  * Boot steps aside from a whole persistence setup when the application brings its own.
  *
+ * That decision waits until every bean is registered, so it sees managers from a host auto-configuration
+ * that happens to be read after this one, and that never collides with them.
+ *
  * With several datasources, DICE's schema (its constraints and indexes) goes only to the one its
  * stores use, rather than to every datasource Drivine knows. With one, it is left as declared.
  *
  * It runs after Drivine's auto-configuration, so the factories are already registered when it looks
  * for them, and before DICE's storage auto-configuration, which picks the Drivine stores when it
- * finds a `PersistenceManager`. With `embabel.dice.store.type=in-memory` it does nothing, since DICE
- * won't use Drivine at all.
+ * finds a `PersistenceManager` or sees that DICE is going to decide about one. With
+ * `embabel.dice.store.type=in-memory` it does nothing, since DICE won't use Drivine at all.
  */
 @AutoConfiguration(after = [DrivineAutoConfiguration::class], before = [DiceStorageAutoConfiguration::class])
 @ConditionalOnClass(PersistenceManagerFactory::class)
@@ -79,8 +88,10 @@ class DiceDrivineAutoConfiguration {
 
     private val logger = LoggerFactory.getLogger(DiceDrivineAutoConfiguration::class.java)
 
-    @Bean
-    @Conditional(HostDefinesNeitherManager::class)
+    /**
+     * DICE's PersistenceManager, for the chosen datasource. It becomes a bean only when the host defines
+     * neither manager; [DiceDrivineManagerRegistrar] decides that and registers this method as its factory.
+     */
     fun persistenceManager(
         factory: PersistenceManagerFactory,
         registry: DatabaseRegistry,
@@ -91,8 +102,7 @@ class DiceDrivineAutoConfiguration {
         return factory.get(datasource)
     }
 
-    @Bean
-    @Conditional(HostDefinesNeitherManager::class)
+    /** DICE's StatelessGraphObjectManager, made only alongside [persistenceManager]. */
     fun statelessGraphObjectManager(
         factory: GraphObjectManagerFactory,
         registry: DatabaseRegistry,
@@ -101,33 +111,70 @@ class DiceDrivineAutoConfiguration {
         // The same resolved name as the PersistenceManager above: Drivine opens one connection per name in a
         // transaction, so the two only share a transaction when they were asked for exactly the same name.
         factory.stateless(DrivineDatasource.choose(registry, properties))
+
+    private companion object {
+
+        // Static, so Spring can run it before anything else here is created, which a registry post-processor needs.
+        @JvmStatic
+        @Bean(DiceDrivineManagerRegistrar.BEAN_NAME)
+        private fun diceDrivineManagerRegistrar(): DiceDrivineManagerRegistrar = DiceDrivineManagerRegistrar()
+    }
 }
 
 /**
- * Lets DICE build its Drivine managers only when the host defines neither of them, and stops startup when
- * the host defines just one.
+ * Registers DICE's two Drivine managers when the host defines neither of them, and stops startup when the
+ * host defines just one.
  *
- * Both present means the host has its own setup, so DICE builds nothing and doesn't look at them. Just one
- * would leave DICE building the other beside it, which is how saves and dedup end up on two databases, so
- * that is a startup error. Beans in parent contexts count, as they do for injection; DICE's own two
- * managers, declared in this context, don't.
+ * It runs once every bean definition is in, auto-configurations read after DICE's included, so a host's
+ * managers are seen whatever order their auto-configuration has. Both present means the host has its own
+ * setup, so DICE registers nothing and doesn't look at them. Just one would leave DICE building the other
+ * beside it, which is how saves and dedup end up on two databases, so that is a startup error. Beans in
+ * parent contexts count, as they do for injection. Only definitions are read; nothing is created to answer.
  */
-internal class HostDefinesNeitherManager : SpringBootCondition() {
+internal class DiceDrivineManagerRegistrar : BeanDefinitionRegistryPostProcessor {
 
-    override fun getMatchOutcome(context: ConditionContext, metadata: AnnotatedTypeMetadata): ConditionOutcome {
-        val message = ConditionMessage.forCondition("DICE Drivine managers")
-        val beanFactory = context.beanFactory
-            ?: return ConditionOutcome.noMatch(message.because("there is no bean factory to look in"))
-        val persistenceManagers = hostBeans(beanFactory, PersistenceManager::class.java)
-        val graphObjectManagers = hostBeans(beanFactory, StatelessGraphObjectManager::class.java)
-        return when {
-            persistenceManagers.isEmpty() && graphObjectManagers.isEmpty() ->
-                ConditionOutcome.match(message.because("the application defines neither manager"))
-            persistenceManagers.isNotEmpty() && graphObjectManagers.isNotEmpty() ->
-                ConditionOutcome.noMatch(message.because("the application defines both managers"))
-            else -> error(onlyOne(persistenceManagers, graphObjectManagers))
+    override fun postProcessBeanDefinitionRegistry(registry: BeanDefinitionRegistry) {
+        val beanFactory = registry as? ListableBeanFactory
+            ?: error("DICE can't look for Drivine managers in a ${registry.javaClass.name}, which can't list its beans.")
+        val persistenceManagers = beanNamesIncludingAncestors(beanFactory, PersistenceManager::class.java).toSet()
+        val graphObjectManagers = beanNamesIncludingAncestors(beanFactory, StatelessGraphObjectManager::class.java).toSet()
+        when {
+            persistenceManagers.isEmpty() && graphObjectManagers.isEmpty() -> registerDiceManagers(registry, beanFactory)
+            persistenceManagers.isNotEmpty() && graphObjectManagers.isNotEmpty() -> Unit
+            // Wrapped like any other failure Spring reports at startup, with the reason as the root cause.
+            else -> throw BeanDefinitionStoreException(
+                "DICE can't decide about its Drivine managers",
+                IllegalStateException(onlyOne(persistenceManagers, graphObjectManagers)),
+            )
         }
     }
+
+    override fun postProcessBeanFactory(beanFactory: ConfigurableListableBeanFactory) = Unit
+
+    /** Registers the two managers as DiceDrivineAutoConfiguration's methods, as if they were declared `@Bean`. */
+    private fun registerDiceManagers(registry: BeanDefinitionRegistry, beanFactory: ListableBeanFactory) {
+        val configuration = beanFactory
+            .getBeanNamesForType(DiceDrivineAutoConfiguration::class.java, true, false)
+            .singleOrNull()
+            ?: error("DICE's Drivine auto-configuration isn't registered exactly once, so DICE can't build its managers.")
+        registry.registerBeanDefinition(
+            PERSISTENCE_MANAGER,
+            managerDefinition(configuration, PERSISTENCE_MANAGER, PersistenceManager::class.java),
+        )
+        registry.registerBeanDefinition(
+            GRAPH_OBJECT_MANAGER,
+            managerDefinition(configuration, GRAPH_OBJECT_MANAGER, StatelessGraphObjectManager::class.java),
+        )
+    }
+
+    private fun managerDefinition(configuration: String, method: String, type: Class<*>) =
+        RootBeanDefinition().apply {
+            factoryBeanName = configuration
+            setUniqueFactoryMethodName(method)
+            // The method's parameters are injected, as they are for any @Bean method.
+            autowireMode = AbstractBeanDefinition.AUTOWIRE_CONSTRUCTOR
+            setTargetType(type)
+        }
 
     private fun onlyOne(persistenceManagers: Set<String>, graphObjectManagers: Set<String>): String {
         val (defined, missing, names) = if (persistenceManagers.isNotEmpty()) {
@@ -141,13 +188,21 @@ internal class HostDefinesNeitherManager : SpringBootCondition() {
             "build them from database.datasources."
     }
 
-    /** The application's beans of [type], parent contexts included, leaving out the ones DICE declares here. */
-    private fun hostBeans(beanFactory: ConfigurableListableBeanFactory, type: Class<*>): Set<String> =
-        beanNamesIncludingAncestors(beanFactory, type).filterNot { name ->
-            beanFactory.containsBeanDefinition(name) &&
-                (beanFactory.getBeanDefinition(name) as? AnnotatedBeanDefinition)
-                    ?.factoryMethodMetadata?.declaringClassName == DiceDrivineAutoConfiguration::class.java.name
-        }.toSet()
+    companion object {
+        /** The registrar's bean name, which DICE's storage conditions look for. */
+        const val BEAN_NAME = "diceDrivineManagerRegistrar"
+
+        // The names DICE's managers had when they were @Bean methods, which hosts may refer to.
+        private const val PERSISTENCE_MANAGER = "persistenceManager"
+        private const val GRAPH_OBJECT_MANAGER = "statelessGraphObjectManager"
+
+        /**
+         * Whether DICE will decide about its Drivine managers in [beanFactory] once every bean is registered.
+         * When it will, a PersistenceManager exists by the time beans are created, or startup has stopped.
+         */
+        fun declaredIn(beanFactory: ConfigurableListableBeanFactory): Boolean =
+            beanFactory.containsBeanDefinition(BEAN_NAME)
+    }
 }
 
 /**
@@ -282,7 +337,7 @@ private fun <T : Any> injectedBean(beanFactory: ConfigurableListableBeanFactory,
 }
 
 /** Every bean name of [type] in this context and its parents, without creating anything to find them. */
-private fun beanNamesIncludingAncestors(beanFactory: ConfigurableListableBeanFactory, type: Class<*>): List<String> =
+private fun beanNamesIncludingAncestors(beanFactory: ListableBeanFactory, type: Class<*>): List<String> =
     BeanFactoryUtils.beanNamesForTypeIncludingAncestors(beanFactory, type, true, false).toList()
 
 /** Stand-in injection points, so DICE can ask Spring which manager it would inject without injecting one. */

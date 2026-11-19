@@ -89,8 +89,8 @@ import org.springframework.transaction.PlatformTransactionManager
  * wins. Graph beans are declared before their in-memory counterparts so the fallback resolves by
  * registration order.
  *
- * This runs after Drivine's own auto-configuration, so its `PersistenceManager` is already registered
- * when the backend is decided.
+ * This runs after Drivine's own auto-configuration and DICE's Drivine one, so a `PersistenceManager` is
+ * already registered, or DICE has said it will build one, when the backend is decided.
  *
  * Schema (indexes/constraints) is declared as [SchemaCatalog] beans; Drivine's `SchemaManager`
  * (registered by the starter) applies them idempotently on startup — no runner here.
@@ -505,7 +505,10 @@ internal annotation class ConditionalOnDrivineStores
  * left to [StoreBackendCheck], which runs once everything is registered.
  *
  * With the property unset, the lookup sees Drivine's own auto-configuration (which runs before DICE's)
- * and anything the application declares itself.
+ * and anything the application declares itself. It also matches when DICE's own Drivine auto-configuration
+ * is in, though the managers it may build aren't registered yet: it decides about them once every bean is
+ * registered, and either a PersistenceManager is there by the time beans are created or startup stops
+ * asking for both managers or neither.
  */
 internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
 
@@ -524,10 +527,13 @@ internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
         }
         val beanFactory = context.beanFactory
             ?: return ConditionOutcome.noMatch(message.because("there is no bean factory to look in"))
-        return if (StoreBackend.drivineConfigured(beanFactory)) {
-            ConditionOutcome.match(message.found("Drivine bean").items(PersistenceManager::class.java.simpleName))
-        } else {
-            ConditionOutcome.noMatch(message.didNotFind("Drivine bean").items(PersistenceManager::class.java.simpleName))
+        return when {
+            StoreBackend.drivineConfigured(beanFactory) ->
+                ConditionOutcome.match(message.found("Drivine bean").items(PersistenceManager::class.java.simpleName))
+            DiceDrivineManagerRegistrar.declaredIn(beanFactory) ->
+                ConditionOutcome.match(message.because("DICE's Drivine auto-configuration provides the Drivine managers"))
+            else ->
+                ConditionOutcome.noMatch(message.didNotFind("Drivine bean").items(PersistenceManager::class.java.simpleName))
         }
     }
 }
