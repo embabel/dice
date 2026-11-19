@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.embabel.dice.examples</groupId>
+        <artifactId>dice-examples</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>examples-backend-swap</artifactId>
+    <name>DICE Examples - Backend Swap</name>
+    <description>The same code on the in-memory store and on Neo4j, switched by one property</description>
+
+    <dependencies>
+        <!-- Brings up the Embabel Agent platform, which supplies the Ai bean the stores are built with. -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-starter</artifactId>
+        </dependency>
+        <!-- Picks the proposition store from embabel.dice.store.type. Brings Drivine for the graph store. -->
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-storage-autoconfigure</artifactId>
+            <version>${dice.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jspecify</groupId>
+            <artifactId>jspecify</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.embabel.dice.examples</groupId>
+            <artifactId>examples-common</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Checks that example.dice.backends has no dependency cycle. -->
+        <dependency>
+            <groupId>org.springframework.modulith</groupId>
+            <artifactId>spring-modulith-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            Starts Neo4j in Docker for the graph store's tests. Spring Boot manages the version,
+            and in Testcontainers 2 the artifact names carry the testcontainers- prefix.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-neo4j</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
