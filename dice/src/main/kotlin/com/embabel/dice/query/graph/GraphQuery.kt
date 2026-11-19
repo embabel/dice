@@ -283,4 +283,46 @@ class GraphQuery(
             temporal = prop.temporal,
         )
     }
+
+    /**
+     * Factories so Java code can build a query. The constructor takes a Kotlin `ContextId`, which
+     * Java can't create or pass, so these take the context id as a plain string instead. Use
+     * [withAuthorityResolver] afterwards to swap in a different authority resolver.
+     */
+    companion object {
+
+        /**
+         * Builds a query that looks across every context in the store.
+         *
+         * @param store the store to query
+         * @return a query over the whole store
+         */
+        @JvmStatic
+        fun of(store: PropositionStore): GraphQuery = GraphQuery(store)
+
+        /**
+         * Builds a query that only sees one context.
+         *
+         * @param store the store to query
+         * @param contextId the context to stay inside. Blank values are rejected.
+         * @return a query confined to that context
+         * @throws IllegalArgumentException if [contextId] is blank
+         */
+        @JvmStatic
+        fun of(store: PropositionStore, contextId: String): GraphQuery =
+            GraphQuery(store, ContextId(contextId))
+
+        /**
+         * Builds a query that only sees one context and never walks more than [maxDepth] hops.
+         *
+         * @param store the store to query
+         * @param contextId the context to stay inside. Blank values are rejected.
+         * @param maxDepth the most hops any walk may take; must be at least 1
+         * @return a query confined to that context with that hop limit
+         * @throws IllegalArgumentException if [contextId] is blank or [maxDepth] is less than 1
+         */
+        @JvmStatic
+        fun of(store: PropositionStore, contextId: String, maxDepth: Int): GraphQuery =
+            GraphQuery(store, ContextId(contextId), maxDepth)
+    }
 }
