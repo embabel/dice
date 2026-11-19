@@ -29,7 +29,6 @@ import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.query.graph.GraphNeighborhood
 import com.embabel.dice.query.graph.GraphQuery
 import com.embabel.dice.temporal.TemporalMetadata
-import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -59,13 +58,7 @@ import java.time.Instant
  * is bypassed.
  */
 @SpringBootTest(classes = [TestApplication::class])
-class DrivineGraphQueryParityIntegrationTest {
-
-    companion object {
-        @JvmStatic
-        @DynamicPropertySource
-        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
-    }
+abstract class DrivineGraphQueryParityCases {
 
     @Autowired
     private lateinit var repository: DrivinePropositionRepository
@@ -92,7 +85,7 @@ class DrivineGraphQueryParityIntegrationTest {
     @BeforeEach
     fun seed() {
         repository.clearAll()
-        persistenceManager.execute(QuerySpecification.withStatement("MATCH (s:Source) DETACH DELETE s"))
+        persistenceManager.execute(cypherQuery("MATCH (s:Source) DETACH DELETE s"))
 
         // A source proposition so eBc.sourceIds resolves to a real abstraction source.
         src = edge("Sydney is in Australia", listOf("sydney", "australia"))
@@ -123,7 +116,7 @@ class DrivineGraphQueryParityIntegrationTest {
     @AfterEach
     fun cleanUp() {
         repository.clearAll()
-        persistenceManager.execute(QuerySpecification.withStatement("MATCH (s:Source) DETACH DELETE s"))
+        persistenceManager.execute(cypherQuery("MATCH (s:Source) DETACH DELETE s"))
     }
 
     @Test
@@ -335,5 +328,15 @@ class DrivineGraphQueryParityIntegrationTest {
         override fun findAll(): List<Proposition> = byId.values.toList()
         override fun delete(id: String): Boolean = byId.remove(id) != null
         override fun count(): Int = byId.size
+    }
+}
+
+/** Runs the [DrivineGraphQueryParityCases] on Neo4j. */
+class DrivineGraphQueryParityIntegrationTest : DrivineGraphQueryParityCases() {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
     }
 }
