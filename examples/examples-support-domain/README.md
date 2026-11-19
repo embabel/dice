@@ -35,3 +35,14 @@ start. `SupportDesk.chat(chatId, text)` is the only entry point they call.
 | Test | Behaviour |
 |---|---|
 | `ModularityTests.verifiesModuleStructure` | Spring Modulith finds no dependency cycle and no use of another module's internals. |
+| `TwoChatTests.printsEveryStoredFactAndItsConfidenceFadesOverThirtyDays` | Each stored fact is printed with its confidence, importance and decay, and its effective confidence 30 days on is lower than today. |
+| `TwoChatTests.theFirstChatTagsTheCustomerAndThePlan` | Chat 1, the customer saying Acme is on Pro, gives facts that mention a `Customer` and a `Plan`. |
+| `TwoChatTests.theSecondChatTagsTheContactAndThePlan` | Chat 2, admin Dana saying Acme moved back to Basic, gives facts that mention a `Contact` and a `Plan`. |
+| `TwoChatTests.acmeIsTheSameEntityInBothChats` | "Acme" in both chats resolves to the same entity id. |
+| `TwoChatTests.everyFactNamesItsChatInProvenanceAndGrounding` | Every fact names the chat it came from, in its provenance and in its grounding. |
+| `TwoChatTests.keepsTheScoresTheModelGaveEachFact` | Confidence, importance and decay are the values the model gave. |
+| `TwoChatTests.storesTheProAndTheBasicClaimsSideBySide` | With no reviser, the Pro claim and the Basic claim are both kept. The corrections-history example shows revision. |
+| `TwoChatTests.sendsEachChatToTheScriptedModelOnce` | Each chat reaches the scripted model once; no real model is called. |
+| `VocabularyTests.theModelIsShownNoSupportTypes` | With a schema that names no types, the prompt lists none of Customer, Contact or Plan. |
+| `VocabularyTests.theFactIsStillStored` | The fact is still stored without a schema. |
+| `VocabularyTests.theMentionsCarryNoneOfTheSupportTypes` | Without the schema, its mentions carry none of the three support types. |
