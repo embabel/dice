@@ -113,8 +113,11 @@ class ExtractionRunStoreAutoConfigurationTest {
 
     @Test
     fun `without the graph backend neither store is registered`() {
-        // Both conditions are required, so the flag alone buys a non-graph host nothing.
-        runner
+        // Both conditions are required, so the flag alone buys a non-graph host nothing. This
+        // context has no Drivine stubs at all, because a PersistenceManager on its own now selects
+        // the graph backend.
+        ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
             .withPropertyValues("embabel.dice.extraction.runs.enabled=true")
             .run { ctx ->
                 assertThat(ctx).doesNotHaveBean(ExtractionRunStore::class.java)

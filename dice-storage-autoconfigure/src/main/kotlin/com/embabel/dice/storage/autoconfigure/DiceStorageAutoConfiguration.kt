@@ -42,6 +42,7 @@ import com.embabel.dice.storage.ExtractionRunSchema
 import com.embabel.dice.storage.GraphDecayManager
 import com.embabel.dice.storage.LineageSchema
 import com.embabel.dice.storage.diceStorageCatalog
+import org.drivine.autoconfigure.DrivineAutoConfiguration
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.RangeIndexSpec
@@ -50,13 +51,24 @@ import org.drivine.schema.SimilarityFunction
 import org.drivine.schema.UniquenessConstraintSpec
 import org.drivine.schema.VectorIndexSpec
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.BeanFactoryUtils
+import org.springframework.beans.factory.ListableBeanFactory
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.boot.autoconfigure.AutoConfiguration
+import org.springframework.boot.autoconfigure.condition.ConditionMessage
+import org.springframework.boot.autoconfigure.condition.ConditionOutcome
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.boot.autoconfigure.condition.SpringBootCondition
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Conditional
+import org.springframework.context.annotation.ConditionContext
+import org.springframework.context.annotation.ConfigurationCondition
+import org.springframework.context.annotation.Import
+import org.springframework.core.env.Environment
+import org.springframework.core.type.AnnotatedTypeMetadata
 import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.transaction.PlatformTransactionManager
@@ -65,25 +77,32 @@ import org.springframework.transaction.PlatformTransactionManager
  * Auto-configures the Dice proposition store and its lineage record stores (projection records and
  * the collector audit trail).
  *
- * `embabel.dice.store.type=graph` selects the Drivine/Neo4j backend; anything else (default) uses the
- * in-memory backend. Every bean is `@ConditionalOnMissingBean`, so an application's own bean always
- * wins. Graph beans are declared before their in-memory counterparts so the flip resolves by
+ * The backend follows from what the application has set up. If Drivine is configured (its
+ * `PersistenceManager` bean exists), the Drivine/Neo4j stores are wired; otherwise the in-memory
+ * stores are. No property is needed. The old `embabel.dice.store.type` switch is deprecated but still
+ * respected: `in-memory` forces the in-memory stores, and `graph` insists on Drivine (see
+ * [StoreBackendCheck]). Every bean is `@ConditionalOnMissingBean`, so an application's own bean always
+ * wins. Graph beans are declared before their in-memory counterparts so the fallback resolves by
  * registration order.
+ *
+ * This runs after Drivine's own auto-configuration, so its `PersistenceManager` is already registered
+ * when the backend is decided.
  *
  * Schema (indexes/constraints) is declared as [SchemaCatalog] beans; Drivine's `SchemaManager`
  * (registered by the starter) applies them idempotently on startup — no runner here.
  */
-@AutoConfiguration
+@AutoConfiguration(after = [DrivineAutoConfiguration::class])
 @EnableConfigurationProperties(DiceStoreProperties::class)
+@Import(StoreBackendCheck::class)
 class DiceStorageAutoConfiguration {
 
     private val logger = LoggerFactory.getLogger(DiceStorageAutoConfiguration::class.java)
 
-    // ---- Graph backend (embabel.dice.store.type=graph) ----
+    // ---- Graph backend (when Drivine is configured) ----
 
     @Bean
     @ConditionalOnBean(Ai::class)
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnMissingBean(PropositionRepository::class)
     fun drivinePropositionRepository(
         graphObjectManager: StatelessGraphObjectManager,
@@ -145,7 +164,7 @@ class DiceStorageAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnMissingBean(ChunkHistoryStore::class)
     fun drivineChunkHistoryStore(
         graphObjectManager: StatelessGraphObjectManager,
@@ -154,7 +173,7 @@ class DiceStorageAutoConfiguration {
 
     @Bean
     @ConditionalOnBean(PropositionRepository::class)
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnMissingBean(DecayManager::class)
     fun graphDecayManager(
         repository: PropositionRepository,
@@ -162,14 +181,14 @@ class DiceStorageAutoConfiguration {
     ): DecayManager = GraphDecayManager(repository, persistenceManager)
 
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnMissingBean(ProjectionRecordStore::class)
     fun drivineProjectionRecordStore(
         persistenceManager: PersistenceManager,
     ): ProjectionRecordStore = DrivineProjectionRecordStore(persistenceManager)
 
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnMissingBean(CollectorRecordStore::class)
     fun drivineCollectorRecordStore(
         persistenceManager: PersistenceManager,
@@ -178,8 +197,8 @@ class DiceStorageAutoConfiguration {
     /**
      * The durable extraction-run header store.
      *
-     * Two conditions, both required. The graph backend has to be selected
-     * (`embabel.dice.store.type=graph`), and extraction runs have to be turned on with
+     * Two conditions, both required. The graph backend has to be in use (Drivine is
+     * configured), and extraction runs have to be turned on with
      * `embabel.dice.extraction.runs.enabled=true`. The property defaults to off, so an upgrading
      * host gets none of this until it asks.
      *
@@ -190,7 +209,7 @@ class DiceStorageAutoConfiguration {
      * with no run labels in it.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnProperty(
         prefix = "embabel.dice.extraction.runs",
         name = ["enabled"],
@@ -213,7 +232,7 @@ class DiceStorageAutoConfiguration {
      * record lineage.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnProperty(
         prefix = "embabel.dice.extraction.runs",
         name = ["enabled"],
@@ -242,7 +261,7 @@ class DiceStorageAutoConfiguration {
      * Leaving it off keeps every one of them out of the catalog the schema manager sees.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnProperty(
         prefix = "embabel.dice.extraction.runs",
         name = ["enabled"],
@@ -262,16 +281,16 @@ class DiceStorageAutoConfiguration {
      * duplicates; the range indexes back the lineage lookups. Both live in [LineageSchema].
      */
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     fun lineageStorageSchema(): DiceStorageSchema = LineageSchema
 
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     fun lineageRecordSchema(): SchemaCatalog = diceStorageCatalog(listOf(LineageSchema))
 
     @Bean
     @ConditionalOnBean(Ai::class)
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     fun propositionConstraintSchema(): SchemaCatalog = SchemaCatalog.of(
         UniquenessConstraintSpec(label = "Proposition", property = "id"),
         UniquenessConstraintSpec(label = "Mention", property = "id"),
@@ -291,7 +310,7 @@ class DiceStorageAutoConfiguration {
 
     @Bean
     @ConditionalOnBean(Ai::class)
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnProperty(
         prefix = "embabel.dice.store.vector-index",
         name = ["enabled"],
@@ -347,7 +366,7 @@ class DiceStorageAutoConfiguration {
      */
     @Bean
     @ConditionalOnBean(Ai::class)
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnProperty(
         prefix = "embabel.dice.store.vector-index",
         name = ["enabled"],
@@ -437,5 +456,103 @@ class DiceDecaySchedulingConfiguration(
             )
         )
         logger.debug("Decay tick result: {}", result)
+    }
+}
+
+/**
+ * How DICE decides between its Drivine stores and its in-memory ones.
+ *
+ * Drivine counts as configured when its `PersistenceManager` bean exists, which is exactly what the
+ * Drivine stores need to be built. The deprecated `embabel.dice.store.type` property can still force
+ * the in-memory stores; any other value only adds checks (see [StoreBackendCheck]).
+ */
+internal object StoreBackend {
+    const val TYPE_PROPERTY = "${DicePropertyPrefixes.STORE}.type"
+    const val GRAPH = "graph"
+    const val IN_MEMORY = "in-memory"
+
+    /** The property's value, trimmed and lower-cased, or null when it isn't set or is blank. */
+    fun requested(environment: Environment): String? =
+        environment.getProperty(TYPE_PROPERTY)?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+
+    fun drivineConfigured(beanFactory: ListableBeanFactory): Boolean =
+        BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
+            beanFactory, PersistenceManager::class.java, true, false,
+        ).isNotEmpty()
+}
+
+/**
+ * Registers a bean only when DICE should use its Drivine stores: Drivine is configured and the
+ * deprecated property doesn't force `in-memory`. Every Drivine-backed bean in this module carries it,
+ * so all of them switch together.
+ */
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
+@Retention(AnnotationRetention.RUNTIME)
+@MustBeDocumented
+@Conditional(OnDrivineStores::class)
+internal annotation class ConditionalOnDrivineStores
+
+/**
+ * The check behind [ConditionalOnDrivineStores]. It runs while beans are being registered, so it sees
+ * the `PersistenceManager` that Drivine's auto-configuration (which runs before DICE's) or the
+ * application itself has declared.
+ */
+internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
+
+    override fun getConfigurationPhase(): ConfigurationCondition.ConfigurationPhase =
+        ConfigurationCondition.ConfigurationPhase.REGISTER_BEAN
+
+    override fun getMatchOutcome(context: ConditionContext, metadata: AnnotatedTypeMetadata): ConditionOutcome {
+        val message = ConditionMessage.forCondition(ConditionalOnDrivineStores::class.java)
+        if (StoreBackend.requested(context.environment) == StoreBackend.IN_MEMORY) {
+            return ConditionOutcome.noMatch(
+                message.because("${StoreBackend.TYPE_PROPERTY}=${StoreBackend.IN_MEMORY} forces the in-memory stores"),
+            )
+        }
+        val beanFactory = context.beanFactory
+            ?: return ConditionOutcome.noMatch(message.because("there is no bean factory to look in"))
+        return if (StoreBackend.drivineConfigured(beanFactory)) {
+            ConditionOutcome.match(message.found("Drivine bean").items(PersistenceManager::class.java.simpleName))
+        } else {
+            ConditionOutcome.noMatch(message.didNotFind("Drivine bean").items(PersistenceManager::class.java.simpleName))
+        }
+    }
+}
+
+/**
+ * Applies the rules for the deprecated `embabel.dice.store.type` property once, at startup.
+ *
+ * Unset, it does nothing. Set, it logs one deprecation warning, then refuses to start if the value
+ * is unknown, or if it is `graph` and Drivine isn't configured. Failing loudly here beats quietly
+ * falling back to in-memory stores the operator didn't ask for.
+ */
+internal class StoreBackendCheck(environment: Environment, beanFactory: ListableBeanFactory) {
+
+    init {
+        val requested = StoreBackend.requested(environment)
+        if (requested != null) {
+            LoggerFactory.getLogger(StoreBackendCheck::class.java).warn(
+                "{} is deprecated and will be removed. DICE now uses its Drivine stores when Drivine is " +
+                    "configured and its in-memory stores otherwise, so the property can go. Keep " +
+                    "'{}' only to force the in-memory stores while Drivine is present.",
+                StoreBackend.TYPE_PROPERTY,
+                StoreBackend.IN_MEMORY,
+            )
+            when (requested) {
+                StoreBackend.IN_MEMORY -> Unit
+                StoreBackend.GRAPH -> check(StoreBackend.drivineConfigured(beanFactory)) {
+                    "${StoreBackend.TYPE_PROPERTY}=${StoreBackend.GRAPH} asks for DICE's Drivine stores, but " +
+                        "Drivine isn't configured: there is no Drivine PersistenceManager bean. Add Drivine's " +
+                        "Spring Boot starter and its data source settings, or remove the property (it is " +
+                        "deprecated) and DICE will use its in-memory stores."
+                }
+                else -> throw IllegalStateException(
+                    "${StoreBackend.TYPE_PROPERTY}=${environment.getProperty(StoreBackend.TYPE_PROPERTY)} isn't " +
+                        "a value DICE knows. The allowed values are '${StoreBackend.GRAPH}' and " +
+                        "'${StoreBackend.IN_MEMORY}', and the property is deprecated: remove it and DICE picks " +
+                        "its stores from whether Drivine is configured.",
+                )
+            }
+        }
     }
 }

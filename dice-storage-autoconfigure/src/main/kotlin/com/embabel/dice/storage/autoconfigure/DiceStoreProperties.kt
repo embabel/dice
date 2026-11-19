@@ -17,17 +17,30 @@ package com.embabel.dice.storage.autoconfigure
 
 import com.embabel.dice.proposition.Proposition
 import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.boot.context.properties.DeprecatedConfigurationProperty
 import org.springframework.boot.context.properties.NestedConfigurationProperty
 
 /**
  * Configuration for the Dice proposition store.
  *
- * `embabel.dice.store.type` selects the backend: `graph` (Drivine/Neo4j) or `in-memory` (default).
+ * The backend needs no setting: DICE uses its Drivine/Neo4j stores when Drivine is configured and its
+ * in-memory stores otherwise. [type] is the old switch, kept so existing configuration still works.
  */
 @ConfigurationProperties(prefix = "embabel.dice.store")
 data class DiceStoreProperties(
-    /** Backend kind: `graph` or `in-memory`. */
-    var type: String = "in-memory",
+    /**
+     * Deprecated: leave it unset and DICE picks the backend from whether Drivine is configured.
+     *
+     * Still respected for now. Empty (the default) means pick automatically. `in-memory` forces the
+     * in-memory stores even when Drivine is configured. `graph` uses the Drivine stores and stops
+     * startup if Drivine isn't configured. Any other value stops startup. Setting it logs a
+     * deprecation warning.
+     */
+    @get:DeprecatedConfigurationProperty(
+        reason = "DICE picks its stores from whether Drivine is configured",
+        since = "0.5.0",
+    )
+    var type: String = "",
 
     @NestedConfigurationProperty
     var decay: Decay = Decay(),
