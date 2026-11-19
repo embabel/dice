@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.embabel.dice.examples</groupId>
+        <artifactId>dice-examples</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>examples-mcp-desktop</artifactId>
+    <name>DICE Examples - MCP Desktop</name>
+    <description>DICE memory served as MCP tools that a desktop client can call</description>
+
+    <dependencies>
+        <!-- Brings up the Embabel Agent platform and its MCP server over streamable HTTP. -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-starter-mcpserver</artifactId>
+        </dependency>
+        <!-- Turns the DICE memory in this application into MCP tools. -->
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-mcp-autoconfigure</artifactId>
+            <version>${dice.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jspecify</groupId>
+            <artifactId>jspecify</artifactId>
+        </dependency>
+        <!-- The placeholder model the platform needs before it will start. Used by the app itself, so compile scope. -->
+        <dependency>
+            <groupId>com.embabel.dice.examples</groupId>
+            <artifactId>examples-common</artifactId>
+        </dependency>
+
+        <!-- Checks that the application's package keeps to Spring Modulith's rules. -->
+        <dependency>
+            <groupId>org.springframework.modulith</groupId>
+            <artifactId>spring-modulith-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Makes the app runnable with spring-boot:run or java -jar. -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
