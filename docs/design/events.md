@@ -84,6 +84,15 @@ events:
   previous and new status and an optional reason. As a hot-path optimization, saving an
   already-`ACTIVE` proposition is reported as `PropositionPersisted` rather than a status change, so
   a revival back to active reads as a persist.
+- **`PropositionPinned`** and **`PropositionUnpinned`**: calling `pin` or `unpin` on the
+  event-emitting repository emits one of these, carrying the saved fact, but only when the pinned
+  flag actually changes. Pinning a fact that is already pinned, or unpinning one that isn't, saves
+  nothing and emits nothing.
+
+`GateApplier`, the opt-in step that applies gate verdicts to a chunk before you persist it, emits
+**`PropositionRejected`** for each proposition of a rejected result and
+**`PropositionRoutedToReview`** for each proposition of a result sent to review, but only when you
+give it a listener.
 
 Wrapping a projector in the event-emitting decorator emits **`ProjectionBatchCompleted`** with
 success / skip / failure counts after each batch.
@@ -106,10 +115,11 @@ every emitter in the system today, and what each one puts out:
 
 ```mermaid
 flowchart LR
-    REPO["EventEmittingPropositionRepository<br/>(store decorator)"] -->|"PropositionPersisted<br/>PropositionStatusChanged"| L((DiceEventListener))
+    REPO["EventEmittingPropositionRepository<br/>(store decorator)"] -->|"PropositionPersisted<br/>PropositionStatusChanged<br/>PropositionPinned<br/>PropositionUnpinned"| L((DiceEventListener))
     PROJ["EventEmittingProjector<br/>(projection decorator)"] -->|ProjectionBatchCompleted| L
     PIPE["PropositionPipeline<br/>(revision reconciliation)"] -->|"PropositionDiscovered<br/>PropositionMerged<br/>PropositionReinforced<br/>PropositionContradicted<br/>PropositionGeneralized<br/>PropositionRoutedToReview<br/>ExtractionBatchCompleted<br/>UngroundedMentionsFound"| L
     GATE["ObservableGate<br/>(admission gate decorator)"] -->|"PropositionRejected<br/>PropositionRoutedToReview<br/>PropositionProjectionSkipped<br/>PropositionDemoted"| L
+    APPLY["GateApplier<br/>(applies gate verdicts to a chunk)"] -->|"PropositionRejected<br/>PropositionRoutedToReview"| L
     COLLECTOR["DefaultCollectorRunner<br/>(reclamation sweep)"] -->|PropositionStatusChanged| L
     DREAM["ContradictionResolutionPass<br/>(dream-loop consolidation)"] -->|PropositionRoutedToReview| L
     T2G["MultiPassKnowledgeGraphBuilder<br/>(text2graph entity resolution)"] -->|NewEntity| L
@@ -126,6 +136,8 @@ Source locations for each emitter: `EventEmittingPropositionRepository`
 (`dice/src/main/kotlin/com/embabel/dice/pipeline/PropositionPipeline.kt:269-280,499`),
 `ObservableGate`
 (`dice/src/main/kotlin/com/embabel/dice/proposition/gate/ObservableGate.kt:72-88`),
+`GateApplier`
+(`dice/src/main/kotlin/com/embabel/dice/proposition/gate/GateApplier.kt`),
 `DefaultCollectorRunner`
 (`dice/src/main/kotlin/com/embabel/dice/projection/memory/DefaultCollectorRunner.kt:291`),
 `ContradictionResolutionPass`
