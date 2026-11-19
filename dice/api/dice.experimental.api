@@ -1618,6 +1618,47 @@ public abstract interface class com/embabel/dice/proposition/extraction/Protecte
 	public abstract fun getHandle ()Ljava/lang/String;
 }
 
+public final class com/embabel/dice/proposition/gate/GateApplier {
+	public static final field Companion Lcom/embabel/dice/proposition/gate/GateApplier$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/gate/ExtractionGatePipeline;Lcom/embabel/dice/proposition/gate/ReviewSink;Lcom/embabel/dice/common/DiceEventListener;Lcom/embabel/dice/proposition/gate/GateContextFactory;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun apply (Lcom/embabel/dice/pipeline/ChunkPropositionResult;)Lcom/embabel/dice/proposition/gate/GatedChunk;
+	public static final fun of (Lcom/embabel/dice/proposition/gate/ExtractionGatePipeline;)Lcom/embabel/dice/proposition/gate/GateApplier;
+	public final fun withContext (Lcom/embabel/dice/proposition/gate/GateContextFactory;)Lcom/embabel/dice/proposition/gate/GateApplier;
+	public final fun withListener (Lcom/embabel/dice/common/DiceEventListener;)Lcom/embabel/dice/proposition/gate/GateApplier;
+	public final fun withReviewSink (Lcom/embabel/dice/proposition/gate/ReviewSink;)Lcom/embabel/dice/proposition/gate/GateApplier;
+}
+
+public final class com/embabel/dice/proposition/gate/GateApplier$Companion {
+	public final fun of (Lcom/embabel/dice/proposition/gate/ExtractionGatePipeline;)Lcom/embabel/dice/proposition/gate/GateApplier;
+}
+
+public abstract interface class com/embabel/dice/proposition/gate/GateContextFactory {
+	public abstract fun contextFor (Lcom/embabel/dice/proposition/revision/RevisionResult;)Lcom/embabel/dice/proposition/gate/GateContext;
+}
+
+public final class com/embabel/dice/proposition/gate/GatedChunk {
+	public fun <init> (Lcom/embabel/dice/pipeline/ChunkPropositionResult;Ljava/util/List;)V
+	public final fun getAdmitted ()Lcom/embabel/dice/pipeline/ChunkPropositionResult;
+	public final fun getVerdicts ()Ljava/util/List;
+	public final fun rejected ()Ljava/util/List;
+	public final fun reviewed ()Ljava/util/List;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/proposition/gate/ResultVerdict {
+	public fun <init> (Lcom/embabel/dice/proposition/revision/RevisionResult;Ljava/util/List;Ljava/util/List;Lcom/embabel/dice/proposition/gate/GateDecision;)V
+	public final fun getDecision ()Lcom/embabel/dice/proposition/gate/GateDecision;
+	public final fun getGated ()Ljava/util/List;
+	public final fun getPropositions ()Ljava/util/List;
+	public final fun getRevisionResult ()Lcom/embabel/dice/proposition/revision/RevisionResult;
+	public final fun isAdmitted ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class com/embabel/dice/proposition/gate/ReviewSink {
+	public abstract fun review (Lcom/embabel/dice/proposition/gate/ResultVerdict;)V
+}
+
 public final class com/embabel/dice/provenance/SourceIdentityBounds {
 	public static final field INSTANCE Lcom/embabel/dice/provenance/SourceIdentityBounds;
 	public static final field MAX_CHUNK_ID_LENGTH I
