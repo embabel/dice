@@ -23,6 +23,8 @@ import com.embabel.dice.storage.DrivinePropositionRepository
 import com.embabel.dice.storage.GraphDecayManager
 import com.embabel.dice.storage.TestApplication
 import com.embabel.dice.storage.cypherQuery
+import org.drivine.connection.DatabaseRegistry
+import org.drivine.connection.NativeDriverSource
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
@@ -33,8 +35,12 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import javax.sql.DataSource
 
 /**
  * The decay sweep on Drivine's SQLite backend. SQLite has one writer at a time, so a sweep written
@@ -54,6 +60,9 @@ class SqliteGraphDecayIntegrationTest {
 
     @Autowired
     private lateinit var persistenceManager: PersistenceManager
+
+    @Autowired
+    private lateinit var registry: DatabaseRegistry
 
     @AfterEach
     fun cleanUp() {
@@ -85,6 +94,44 @@ class SqliteGraphDecayIntegrationTest {
 
         val refreshed = persistenceManager.query(
             cypherQuery("MATCH (p:Proposition {id: ''}) WHERE p.decayUpdatedAt IS NOT NULL RETURN p.id")
+                .transform(String::class.java),
+        )
+        assertEquals(1, refreshed.size)
+    }
+
+    /**
+     * Another connection holds the file's write lock for a moment. The sweep's page waits for it, up
+     * to the busy timeout, and then writes, instead of failing at once and leaving the page stale.
+     */
+    @Test
+    fun `a sweep waits for another writer and then refreshes its page`() {
+        val context = ContextId("decay-contended-ctx")
+        val saved = repository.save(ghost("The ghost waits its turn", context))
+        val dataSource = (registry.connectionProvider("neo") as NativeDriverSource<*>).nativeDriver as DataSource
+        dataSource.connection.use { it.createStatement().execute("CREATE TABLE IF NOT EXISTS decay_holder (x INTEGER)") }
+        val holding = CountDownLatch(1)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val writer = executor.submit {
+                dataSource.connection.use { connection ->
+                    connection.autoCommit = false
+                    connection.createStatement().execute("INSERT INTO decay_holder (x) VALUES (1)")
+                    holding.countDown()
+                    Thread.sleep(1500)
+                    connection.commit()
+                }
+            }
+            assertTrue(holding.await(10, TimeUnit.SECONDS), "the other writer never took the lock")
+
+            GraphDecayManager(repository, persistenceManager).materialize(context)
+
+            writer.get(10, TimeUnit.SECONDS)
+        } finally {
+            executor.shutdownNow()
+        }
+        val refreshed = persistenceManager.query(
+            cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) WHERE p.decayUpdatedAt IS NOT NULL RETURN p.id")
+                .bind(mapOf("id" to saved.id))
                 .transform(String::class.java),
         )
         assertEquals(1, refreshed.size)

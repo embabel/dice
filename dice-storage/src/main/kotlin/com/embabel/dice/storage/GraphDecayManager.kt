@@ -19,7 +19,9 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.DecayManager
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
+import org.drivine.manager.DelegatingPersistenceManager
 import org.drivine.manager.PersistenceManager
+import org.drivine.transaction.Transactions
 import org.drivine.model.Stamps
 import org.drivine.query.QuerySpecification
 import java.time.Instant
@@ -42,7 +44,7 @@ import java.time.Instant
  * an enclosing one — `DecayManager` opens none, and callers must not wrap it in `@Transactional`.)
  *
  * Drivine's SQL stores have no `IN TRANSACTIONS`, so there the sweep pages through the propositions
- * by id and commits each page on its own, with the same trade-off. On SQLite this matters more:
+ * by id and commits each page in a transaction of its own, with the same trade-off. On SQLite this matters more:
  * a write holds the whole file, and one long sweep would keep every save waiting until it ended.
  */
 class GraphDecayManager(
@@ -81,8 +83,13 @@ class GraphDecayManager(
     }
 
     /**
-     * The sweep a page of [batchRows] propositions at a time, in id order, each page written in a
-     * statement of its own. Every page is computed at the same `now`.
+     * The sweep a page of [batchRows] propositions at a time, in id order. Every page is computed at
+     * the same `now`.
+     *
+     * Each page is read and written in one Drivine transaction of its own. On SQLite that transaction
+     * takes the file's write lock as it begins, waiting for another writer up to the busy timeout. A
+     * page written as a bare statement reads first and asks for the lock after, and SQLite refuses
+     * that at once while another connection writes, leaving the page and every later one stale.
      */
     private fun sweepByPage(condition: String?, params: Map<String, Any>) {
         val scope = condition?.let { "$it AND " } ?: ""
@@ -93,14 +100,26 @@ class GraphDecayManager(
         val pageUpdate = "MATCH (p:Proposition) WHERE ${scope}p.id IN \$ids\n$DECAY_EXPRESSION"
         var after: String? = null
         while (true) {
-            val ids = persistenceManager.query(
-                cypherQuery(pageQuery).bind(params + mapOf("after" to after)).transform(String::class.java),
-            )
-            if (ids.isEmpty()) return
-            persistenceManager.execute(cypherQuery(pageUpdate).bind(params + mapOf("ids" to ids)))
+            val from = after
+            val ids = inPageTransaction {
+                val page = persistenceManager.query(
+                    cypherQuery(pageQuery).bind(params + mapOf("after" to from)).transform(String::class.java),
+                )
+                if (page.isNotEmpty()) persistenceManager.execute(cypherQuery(pageUpdate).bind(params + mapOf("ids" to page)))
+                page
+            }
             if (ids.size < batchRows) return
             after = ids.last()
         }
+    }
+
+    /**
+     * Runs [page] in a Drivine transaction, when the persistence manager is Drivine's own and so
+     * carries its transaction state. Otherwise each statement commits on its own.
+     */
+    private fun <T> inPageTransaction(page: () -> T): T {
+        val holder = (persistenceManager as? DelegatingPersistenceManager)?.contextHolder ?: return page()
+        return Transactions(holder).transaction { page() }
     }
 
     private companion object {
