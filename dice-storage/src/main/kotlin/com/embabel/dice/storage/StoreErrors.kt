@@ -16,6 +16,7 @@
 package com.embabel.dice.storage
 
 import org.neo4j.driver.exceptions.Neo4jException
+import java.sql.SQLException
 
 /**
  * Tells a uniqueness constraint violation apart from every other kind of failure, by the driver's
@@ -37,7 +38,13 @@ import org.neo4j.driver.exceptions.Neo4jException
  * Drivine writes to SQLite from inside a SQL function of its own, and SQLite reports any failure
  * there as `SQLITE_ERROR`, keeping only the message the function failed with. The driver starts
  * every message with its code's name in brackets, so for `SQLITE_ERROR` the code the write really
- * failed with is read from the bracketed name that opens the quoted exception, and nowhere else.
+ * failed with is the first bracketed name quoted after the error's own, however the quote is worded.
+ * Where no code is quoted at all, as on an exception that kept only SQLite's own text, a uniqueness
+ * failure is told by the text SQLite gives every one of them, `UNIQUE constraint failed`.
+ *
+ * Drivine's SQLite schema grammar has a check of its own, but it looks for that text in any
+ * message of the chain and is meant for telling why a constraint could not be made. A trigger that
+ * quotes the text would pass it, so the quoted code, where there is one, decides here.
  */
 internal object StoreErrors {
 
@@ -51,8 +58,11 @@ internal object StoreErrors {
 
     private val SQLITE_UNIQUENESS_CODES = setOf("SQLITE_CONSTRAINT_UNIQUE", "SQLITE_CONSTRAINT_PRIMARYKEY")
 
-    /** The code of the driver exception a `SQLITE_ERROR` message quotes, right after its own text. */
-    private val NESTED_SQLITE_CODE = Regex("""^\[SQLITE_ERROR][^(]*\(org\.sqlite\.SQLiteException: \[([A-Z_]+)]""")
+    /** A SQLite result code's name in brackets, as the driver starts each message with one. */
+    private val QUOTED_SQLITE_CODE = Regex("""\[(SQLITE_[A-Z_]+)]""")
+
+    /** What SQLite says of every UNIQUE or PRIMARY KEY failure. */
+    private const val SQLITE_UNIQUENESS_TEXT = "UNIQUE constraint failed"
 
     /**
      * Walks the cause chain looking for a Neo4j or SQLite exception that carries a uniqueness code.
@@ -84,19 +94,31 @@ internal object StoreErrors {
         val seen = mutableSetOf<Throwable>()
         while (current != null && seen.add(current)) {
             val code = sqliteResultCode(current)
-            val inner = if (code == SQLITE_ERROR) current.message?.let(NESTED_SQLITE_CODE::find)?.groupValues?.get(1) else null
+            val inner = if (code == SQLITE_ERROR) quotedCode(current) else null
             if (code?.startsWith(SQLITE_READONLY) == true || inner?.startsWith(SQLITE_READONLY) == true) return true
             current = current.cause
         }
         return false
     }
 
+    /**
+     * A SQLite exception whose own code is a uniqueness failure, or a `SQLITE_ERROR`, or an
+     * exception of another JDBC driver's or wrapper's, whose quoted code is one. With no code quoted,
+     * SQLite's own text for a uniqueness failure decides.
+     */
     private fun isSqliteUniquenessFailure(error: Throwable): Boolean {
-        val code = sqliteResultCode(error) ?: return false
+        val code = sqliteResultCode(error)
         if (code in SQLITE_UNIQUENESS_CODES) return true
-        if (code != SQLITE_ERROR) return false
-        val inner = error.message?.let(NESTED_SQLITE_CODE::find)?.groupValues?.get(1) ?: return false
-        return inner in SQLITE_UNIQUENESS_CODES
+        if (code != SQLITE_ERROR && (code != null || error !is SQLException)) return false
+        quotedCode(error)?.let { return it in SQLITE_UNIQUENESS_CODES }
+        return error.message.orEmpty().contains(SQLITE_UNIQUENESS_TEXT)
+    }
+
+    /** The first result code [error]'s message quotes after any it opens with, or null when it quotes none. */
+    private fun quotedCode(error: Throwable): String? {
+        val message = error.message ?: return null
+        val own = QUOTED_SQLITE_CODE.matchAt(message, 0)
+        return QUOTED_SQLITE_CODE.find(message, own?.range?.last?.plus(1) ?: 0)?.groupValues?.get(1)
     }
 
     /** The extended result code on a SQLite driver exception, or null for any other exception. */

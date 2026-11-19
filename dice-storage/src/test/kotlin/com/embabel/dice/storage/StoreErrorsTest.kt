@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test
 import org.neo4j.driver.exceptions.ClientException
 import org.sqlite.SQLiteErrorCode
 import org.sqlite.SQLiteException
+import java.sql.SQLException
 
 /**
  * Proves [StoreErrors.isUniquenessViolation] answers off the driver's own code, Neo4j's status code
@@ -115,6 +116,45 @@ class StoreErrorsTest {
         )
 
         assertFalse(StoreErrors.isUniquenessViolation(error))
+    }
+
+    @Test
+    fun `a uniqueness code quoted without the driver's exception name answers true`() {
+        val error = SQLiteException(
+            "[SQLITE_ERROR] SQL error or missing database ([SQLITE_CONSTRAINT_UNIQUE] A UNIQUE constraint failed " +
+                "(UNIQUE constraint failed: index 'uq'))",
+            SQLiteErrorCode.SQLITE_ERROR,
+        )
+
+        assertTrue(StoreErrors.isUniquenessViolation(error))
+    }
+
+    @Test
+    fun `SQLite's uniqueness message on an exception with no code answers true`() {
+        val error = SQLException("UNIQUE constraint failed: index 'uq'")
+
+        assertTrue(StoreErrors.isUniquenessViolation(RuntimeException("save failed", error)))
+    }
+
+    @Test
+    fun `SQLite's uniqueness message after another quoted code answers false`() {
+        val error = SQLiteException(
+            "[SQLITE_ERROR] SQL error or missing database ([SQLITE_CONSTRAINT_TRIGGER] A RAISE function within a " +
+                "trigger fired (rejected: UNIQUE constraint failed))",
+            SQLiteErrorCode.SQLITE_ERROR,
+        )
+
+        assertFalse(StoreErrors.isUniquenessViolation(error))
+    }
+
+    @Test
+    fun `a read-only refusal quoted without the driver's exception name is recognised`() {
+        val error = SQLiteException(
+            "[SQLITE_ERROR] SQL error or missing database ([SQLITE_READONLY] Attempt to write a readonly database)",
+            SQLiteErrorCode.SQLITE_ERROR,
+        )
+
+        assertTrue(StoreErrors.isSqliteReadOnlyRefusal(error))
     }
 
     @Test
