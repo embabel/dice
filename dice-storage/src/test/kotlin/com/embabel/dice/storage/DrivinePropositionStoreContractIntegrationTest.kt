@@ -16,6 +16,7 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.conformance.AbstractPropositionStoreContractTest
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
@@ -24,6 +25,7 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.storage.model.PropositionView
 import org.drivine.StaleObjectException
+import org.drivine.connection.DatabaseType
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.load
@@ -33,10 +35,16 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.springframework.aop.framework.ProxyFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.TransactionStatus
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
+import org.springframework.transaction.interceptor.TransactionInterceptor
 
 /**
  * Runs the [AbstractPropositionStoreContractTest] suite against
@@ -55,6 +63,12 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
 
     @Autowired
     private lateinit var graphObjectManager: StatelessGraphObjectManager
+
+    @Autowired
+    private lateinit var embeddingService: EmbeddingService
+
+    @Autowired
+    private lateinit var transactionManager: PlatformTransactionManager
 
     override fun store(): PropositionStore = repository
 
@@ -81,6 +95,36 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
 
         assertEquals(1, clusters.size)
         assertEquals(setOf(first.id, second.id), setOf(clusters.single().anchor.id) + clusters.single().similar.map { it.match.id })
+    }
+
+    /**
+     * Through Spring's transaction advice, as the bean has it. On SQLite a transaction of its own
+     * would hold the file's write lock through every anchor's search, so a standalone pass opens
+     * none. Every other backend reads in one read-only transaction of its own.
+     */
+    @Test
+    fun `findClusters opens a read-only transaction everywhere but SQLite`() {
+        fun ghost(text: String, context: String) = Proposition(
+            contextId = ContextId(context),
+            text = text,
+            mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
+            confidence = 0.9,
+        )
+        repository.save(ghost("The ghost hums in the cellar", "opened-a"))
+        repository.save(ghost("The ghost hums in the cellar", "opened-b"))
+        val recording = OpenedTransactionRecorder(transactionManager)
+        val clustering = ProxyFactory(
+            DrivinePropositionRepository(graphObjectManager, persistenceManager, embeddingService, recording),
+        ).apply {
+            isProxyTargetClass = true
+            addAdvice(TransactionInterceptor(recording, AnnotationTransactionAttributeSource()))
+        }.proxy as DrivinePropositionRepository
+
+        val clusters = clustering.findClusters(similarityThreshold = 0.95, topK = 10, query = PropositionQuery())
+
+        assertEquals(1, clusters.size)
+        val expected = if (persistenceManager.type == DatabaseType.SQLITE) emptyList() else listOf(true)
+        assertEquals(expected, recording.opened)
     }
 
     @Test
@@ -144,4 +188,16 @@ class DrivinePropositionStoreContractIntegrationTest : DrivinePropositionStoreCo
         @DynamicPropertySource
         fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
     }
+}
+
+/** Passes every call on, and records whether each transaction that actually began was read-only. */
+private class OpenedTransactionRecorder(private val delegate: PlatformTransactionManager) : PlatformTransactionManager {
+    val opened = mutableListOf<Boolean>()
+
+    override fun getTransaction(definition: TransactionDefinition?): TransactionStatus =
+        delegate.getTransaction(definition).also { if (it.isNewTransaction) opened += definition?.isReadOnly == true }
+
+    override fun commit(status: TransactionStatus) = delegate.commit(status)
+
+    override fun rollback(status: TransactionStatus) = delegate.rollback(status)
 }

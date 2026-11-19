@@ -169,6 +169,20 @@ class DrivinePropositionRepository(
      */
     private val dedupLocks: Array<Any> = Array(DEDUP_STRIPES) { Any() }
 
+    /**
+     * True on SQLite, where a transaction holds the file's write lock from its first statement until
+     * it ends, and no other transaction can write meanwhile. So inside a caller's transaction:
+     * - A save takes no stripe. It already runs alone, and taking the stripe as well could deadlock:
+     *   the caller's transaction would hold the write lock and wait for the stripe, while a
+     *   standalone save held the stripe and waited for the write lock.
+     * - [touchAccessed] joins the caller's transaction. One of its own could not commit before the
+     *   caller's ends, and the caller is waiting for it.
+     */
+    private val callerTransactionHoldsWriteLock: Boolean by lazy { persistenceManager.type == DatabaseType.SQLITE }
+
+    /** Reads in one read-only transaction, the caller's when there is one (see [findClusters]). */
+    private val readOnlyTransaction = TransactionTemplate(transactionManager).apply { isReadOnly = true }
+
     override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
 
     override val luceneSyntaxNotes: String get() = "no lucene support"
@@ -179,6 +193,8 @@ class DrivinePropositionRepository(
      * duplicate rows. The stripe lock is held across the transaction COMMIT — the find-then-insert
      * runs inside [txTemplate], which commits before the lock is released — so a concurrent sibling
      * on the same stripe cannot read pre-commit and slip a duplicate past the existence check.
+     * On SQLite a save inside a caller's transaction takes no stripe: that transaction already holds
+     * the file's write lock, which does the same job.
      *
      * Propositions with blank text have nothing to dedup on and are persisted directly.
      *
@@ -212,6 +228,9 @@ class DrivinePropositionRepository(
             return doPersist(proposition)
         }
         val contextId = proposition.contextId.value
+        if (callerTransactionHoldsWriteLock) {
+            return findOrPersist(proposition, contextId, text)
+        }
         return synchronized(lockFor(contextId, text)) {
             // A uniqueness race has already aborted the caller's transaction by the time we could
             // react, so recovery cannot commit here. Preserve atomicity and let it propagate.
@@ -1133,8 +1152,23 @@ class DrivinePropositionRepository(
      * a later id, as the in-memory store pairs them. That reads every pair above the threshold, so
      * its cost and memory grow with the square of the number of candidates.
      */
-    @Transactional(readOnly = true)
+    // SUPPORTS for SQLite, which takes the file's write lock for a read-only transaction too, and
+    // would hold it through every anchor's search. Standalone, each statement there reads on its
+    // own; a caller's transaction is joined. Every other backend reads in one read-only transaction,
+    // its own or the caller's, so the candidates and their neighbours come from one state.
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
     override fun findClusters(
+        similarityThreshold: ZeroToOne,
+        topK: Int,
+        query: PropositionQuery,
+    ): List<Cluster<Proposition>> =
+        if (persistenceManager.type == DatabaseType.SQLITE) {
+            clustersOf(similarityThreshold, topK, query)
+        } else {
+            readOnlyTransaction.execute { clustersOf(similarityThreshold, topK, query) }.orEmpty()
+        }
+
+    private fun clustersOf(
         similarityThreshold: ZeroToOne,
         topK: Int,
         query: PropositionQuery,
@@ -1236,18 +1270,30 @@ class DrivinePropositionRepository(
     override fun count(): Int = graphObjectManager.count<PropositionView>().toInt()
 
     /**
-     * Batch `SET` in one round trip instead of the SPI default's per-id find-then-save. Runs in its
-     * own [Propagation.REQUIRES_NEW] transaction: callers commonly invoke this from inside a
-     * `readOnly = true` query transaction (e.g. Memory's eager load), which cannot itself take a write.
-     * Empty [ids] is a no-op — no need to open a transaction for nothing.
+     * Batch `SET` in one round trip instead of the SPI default's per-id find-then-save. Runs in a
+     * transaction of its own: callers commonly invoke this from inside a `readOnly = true` query
+     * transaction (e.g. Memory's eager load), which cannot itself take a write. On SQLite it joins a
+     * caller's transaction instead: that transaction holds the file's write lock, so one of the
+     * touch's own could not commit until the caller's ended. SQLite's read-only transactions still
+     * take writes. Empty [ids] is a no-op — no need to open a transaction for nothing.
      */
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    // SUPPORTS and read-only so a read-only caller's transaction can be joined at all: Spring refuses
+    // a read-write participant in one. A failed touch never marks the caller's transaction: elsewhere
+    // it runs in a transaction of its own, as it always has.
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true, noRollbackFor = [Throwable::class])
     override fun touchAccessed(ids: Collection<String>) {
         if (ids.isEmpty()) return
-        persistenceManager.execute(
-            cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now, ${Stamps.setClause("p")}")
-                .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
-        )
+        val touch = {
+            persistenceManager.execute(
+                cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now, ${Stamps.setClause("p")}")
+                    .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
+            )
+        }
+        if (callerTransactionHoldsWriteLock && TransactionSynchronizationManager.isActualTransactionActive()) {
+            touch()
+        } else {
+            txTemplate.executeWithoutResult { touch() }
+        }
     }
 
     /**
