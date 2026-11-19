@@ -1230,8 +1230,12 @@ class DrivinePropositionRepository(
      * cosine `2*t - 1` for a stored `t`; that threshold now means something stricter and should be
      * retuned.
      *
-     * A SQL store has no vector index procedure to call. There Drivine measures each candidate
-     * against the others itself, which gives the same pairs and the same scores.
+     * A SQL store has no vector index procedure to call, so Drivine searches among the candidates
+     * itself. Every backend scores a pair the same way, but the pairs can differ. On Neo4j, and on
+     * Postgres or Oracle once a vector index is made, each search asks an index for its nearest few
+     * across the whole store and keeps the candidates among them, so a candidate crowded out by
+     * other propositions is missed, and Oracle's index search is approximate. SQLite, and Postgres
+     * or Oracle with no vector index, measure every pair of the candidates exactly.
      */
     // SUPPORTS: on SQLite a transaction of its own would hold the file's write lock through every
     // anchor's search. Standalone, each statement reads on its own; a caller's transaction is joined.
