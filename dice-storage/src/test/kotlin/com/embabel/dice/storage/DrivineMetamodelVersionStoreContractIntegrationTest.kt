@@ -26,13 +26,22 @@ import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 
 /**
- * Runs the [AbstractMetamodelVersionStoreContractTest] suite against
- * [DrivineMetamodelVersionStore] on a real graph store: Neo4j here, SQLite in the `sqlite` package. This is the half that catches the graph backend
+ * Runs the [AbstractMetamodelVersionStoreContractTest] suite against the Neo4j-backed
+ * [DrivineMetamodelVersionStore] (testcontainer). This is the half that catches the graph backend
  * disagreeing with the in-memory reference on the upsert rules, which is easy to do: they live in a
  * Cypher `MERGE` there and in a list index here.
+ *
+ * Uses the shared [Neo4jTestContainer]; see that class for why Drivine's built-in testcontainer
+ * is bypassed.
  */
 @SpringBootTest(classes = [TestApplication::class])
-abstract class DrivineMetamodelVersionStoreContractCases : AbstractMetamodelVersionStoreContractTest() {
+class DrivineMetamodelVersionStoreContractIntegrationTest : AbstractMetamodelVersionStoreContractTest() {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
+    }
 
     @Autowired
     private lateinit var graphStore: DrivineMetamodelVersionStore
@@ -45,17 +54,7 @@ abstract class DrivineMetamodelVersionStoreContractCases : AbstractMetamodelVers
     @AfterEach
     fun cleanUp() {
         listOf("MetamodelVersion", "MetamodelSchemaCounter").forEach { label ->
-            persistenceManager.execute(cypherQuery("MATCH (n:$label) DETACH DELETE n"))
+            persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }
-    }
-}
-
-/** Runs the [DrivineMetamodelVersionStoreContractCases] on the shared Neo4j testcontainer. */
-class DrivineMetamodelVersionStoreContractIntegrationTest : DrivineMetamodelVersionStoreContractCases() {
-
-    companion object {
-        @JvmStatic
-        @DynamicPropertySource
-        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
     }
 }

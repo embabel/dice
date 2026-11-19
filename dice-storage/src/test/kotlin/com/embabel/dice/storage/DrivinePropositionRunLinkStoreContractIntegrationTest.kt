@@ -51,7 +51,7 @@ import org.springframework.boot.test.context.SpringBootTest
  */
 @SpringBootTest(classes = [TestApplication::class])
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-abstract class DrivinePropositionRunLinkStoreContractCases : AbstractPropositionRunLinkStoreContractTest() {
+class DrivinePropositionRunLinkStoreContractIntegrationTest : AbstractPropositionRunLinkStoreContractTest() {
 
     @Autowired
     private lateinit var linkStore: DrivinePropositionRunLinkStore
@@ -83,7 +83,7 @@ abstract class DrivinePropositionRunLinkStoreContractCases : AbstractProposition
     @BeforeEach
     fun clearLinks() {
         persistenceManager.execute(
-            cypherQuery(
+            QuerySpecification.withStatement(
                 "MATCH ()-[r:${ExtractionRunSchema.PRODUCED_BY_RUN_REL}]->() DELETE r",
             ),
         )
@@ -96,7 +96,7 @@ abstract class DrivinePropositionRunLinkStoreContractCases : AbstractProposition
 
     private fun wipe() {
         (ExtractionRunSchema.LABELS + listOf("Proposition", "Mention", "Source")).forEach { label ->
-            persistenceManager.execute(cypherQuery("MATCH (n:$label) DETACH DELETE n"))
+            persistenceManager.execute(QuerySpecification.withStatement("MATCH (n:$label) DETACH DELETE n"))
         }
     }
 
@@ -160,7 +160,7 @@ abstract class DrivinePropositionRunLinkStoreContractCases : AbstractProposition
 
     /** How many `PRODUCED_BY_RUN` edges join this claim to this run, counted in the graph itself. */
     private fun edgeCount(propositionId: String, runId: String): Long = persistenceManager.getOne(
-        cypherQuery(
+        QuerySpecification.withStatement(
             """
             MATCH (p:Proposition {id: ${'$'}propositionId})
                   -[r:${ExtractionRunSchema.PRODUCED_BY_RUN_REL}]->
@@ -171,6 +171,3 @@ abstract class DrivinePropositionRunLinkStoreContractCases : AbstractProposition
             .transform(Long::class.java),
     )
 }
-
-/** Runs the [DrivinePropositionRunLinkStoreContractCases] on Neo4j. */
-class DrivinePropositionRunLinkStoreContractIntegrationTest : DrivinePropositionRunLinkStoreContractCases()

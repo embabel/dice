@@ -10,12 +10,6 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
-- `dice-storage` marks the stores' hand-written statements as Cypher. On Drivine's SQL stores a
-  statement without a language runs as SQL. The store conformance suites pass on SQLite as they
-  do on Neo4j. A save that drops metadata keys sets the stale keys to null in place of
-  `REMOVE p[k]`, which needed Neo4j 5.24. Each save makes one extra read, which returns only the
-  stale keys. **Compatibility: behavioral.**
-
 - A `VectorSearchRequest` must name a context. `forText` and the Kotlin block throw
   `IllegalArgumentException` when the filter has none. Before, such a request was accepted and a
   store that implements `FilteredVectorSearch` could search every context with it. To search
