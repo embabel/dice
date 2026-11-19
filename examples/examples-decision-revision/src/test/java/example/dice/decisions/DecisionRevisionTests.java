@@ -15,6 +15,7 @@
  */
 package example.dice.decisions;
 
+import com.embabel.dice.proposition.EntityMention;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.revision.RevisionResult;
@@ -33,6 +34,8 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.annotation.DirtiesContext;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
@@ -46,6 +49,9 @@ import static org.assertj.core.api.Assertions.within;
  *
  * <p>The model's replies are recorded. Every Team and Enterprise plan fact is extracted with
  * confidence 0.6, so the confidence of the first fact moves by exact amounts.
+ *
+ * <p>The last two tests ask the reviser directly, against a store of their own, about a
+ * message told twice and about fresh support for a fact that has sat unused for a month.
  */
 @SpringBootTest
 @Import(ScriptedModel.class)
@@ -70,6 +76,7 @@ class DecisionRevisionTests {
     @Autowired RevisionDesk desk;
     @Autowired InMemoryPropositionRepository facts;
     @Autowired ScriptedChatModel model;
+    @Autowired DecisionReviser reviser;
 
     /** The prompts the last message sent to the model. */
     private List<String> prompts = List.of();
@@ -235,6 +242,66 @@ class DecisionRevisionTests {
                 .contains("Storing it as new");
     }
 
+    @Test
+    @Order(7)
+    void hearingAMessageTheFactAlreadyHoldsAgainLeavesTheFactAsItIs() {
+
+        // The Team plan fact as turn 2 left it: both messages folded in, confidence and decay
+        // already moved once.
+        var merged = Proposition.draft(RevisionDesk.ACCOUNT, TEAM, 0.78)
+                .withMentions(List.of(acme()))
+                .withGrounding(List.of("message-1", "message-2"))
+                .withDecay(0.07)
+                .withReinforceCount(1)
+                .toProposition();
+        // Turn 2's fact told again, so its only evidence is a message the fact already holds.
+        var replay = Proposition.draft(RevisionDesk.ACCOUNT, USES_TEAM, 0.6)
+                .withMentions(List.of(acme()))
+                .withGrounding(List.of("message-2"))
+                .toProposition();
+
+        var result = reviser.revise(replay, storeHolding(merged));
+
+        assertThat(result).isInstanceOf(RevisionResult.Merged.class);
+        var revised = ((RevisionResult.Merged) result).getRevised();
+        assertThat(revised.getConfidence()).isCloseTo(0.78, within(EXACT));
+        assertThat(revised.getDecay()).isCloseTo(0.07, within(EXACT));
+        assertThat(revised.getReinforceCount()).isEqualTo(1);
+        assertThat(revised).isEqualTo(merged);
+    }
+
+    @Test
+    @Order(8)
+    void newEvidenceForAFactAtTheConfidenceCapStillRestartsItsDecay() {
+
+        var monthAgo = Instant.now().minus(Duration.ofDays(30));
+        // Untouched for a month, so most of its confidence has decayed away.
+        var old = Proposition.draft(RevisionDesk.ACCOUNT, TEAM, 0.99)
+                .withMentions(List.of(acme()))
+                .withGrounding(List.of("message-1"))
+                .withDecay(0.1)
+                .withCreated(monthAgo)
+                .withContentRevised(monthAgo)
+                .withMetadataRevised(monthAgo)
+                .withLastAccessed(monthAgo)
+                .toProposition();
+        assertThat(old.effectiveConfidence()).isLessThan(0.01);
+        var incoming = Proposition.draft(RevisionDesk.ACCOUNT, USES_TEAM, 0.6)
+                .withMentions(List.of(acme()))
+                .withGrounding(List.of("message-2"))
+                .toProposition();
+
+        var result = reviser.revise(incoming, storeHolding(old));
+
+        assertThat(result).isInstanceOf(RevisionResult.Merged.class);
+        var revised = ((RevisionResult.Merged) result).getRevised();
+        var now = Instant.now();
+        assertThat(revised.getConfidence()).isCloseTo(0.99, within(EXACT));
+        assertThat(Duration.between(revised.getLastAccessed(), now).abs()).isLessThan(Duration.ofMinutes(1));
+        assertThat(Duration.between(revised.getContentRevised(), now).abs()).isLessThan(Duration.ofMinutes(1));
+        assertThat(revised.effectiveConfidence()).isCloseTo(0.99, within(0.001));
+    }
+
     /**
      * Tells the desk one message and keeps the prompts it sent to the model.
      */
@@ -251,6 +318,18 @@ class DecisionRevisionTests {
      */
     private List<String> decisionPrompts() {
         return prompts.stream().filter(prompt -> prompt.contains(ANY_DECISION)).toList();
+    }
+
+    /** Acme as a resolved customer, so facts that name it find each other as candidates. */
+    private static EntityMention acme() {
+        return new EntityMention("Acme", "Customer", "acme-customer");
+    }
+
+    /** A store of its own, so a test outside the story leaves the story's facts alone. */
+    private static InMemoryPropositionRepository storeHolding(Proposition fact) {
+        var store = new InMemoryPropositionRepository();
+        store.save(fact);
+        return store;
     }
 
     private Proposition stored(String id) {

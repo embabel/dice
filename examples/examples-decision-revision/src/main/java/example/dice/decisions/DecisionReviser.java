@@ -36,6 +36,7 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -240,26 +241,73 @@ public class DecisionReviser implements PropositionReviser {
     /**
      * The stored fact after a duplicate: it gains the new fact's evidence, its confidence rises
      * by three tenths of the new fact's up to 0.99 and never falls, and it decays more slowly.
+     * Evidence it already holds changes nothing.
      */
     private static Proposition merge(Proposition original, Proposition incoming) {
+        var evidence = evidenceNotYetHeld(original, incoming);
+        if (evidence == null) {
+            return original;
+        }
         double confidence = Math.max(original.getConfidence(),
                 Math.min(original.getConfidence() + 0.3 * incoming.getConfidence(), 0.99));
-        return original.absorbEvidence(incoming).toDraft()
-                .withConfidence(confidence)
-                .withDecay(original.getDecay() * 0.7)
-                .toProposition();
+        return strengthen(original, evidence, confidence, original.getDecay() * 0.7);
     }
 
     /**
      * The stored fact after support: it gains the new fact's evidence, its confidence rises by
      * a tenth of the new fact's up to 0.95 and never falls, and it decays a little more slowly.
+     * Evidence it already holds changes nothing.
      */
     private static Proposition reinforce(Proposition original, Proposition incoming) {
+        var evidence = evidenceNotYetHeld(original, incoming);
+        if (evidence == null) {
+            return original;
+        }
         double confidence = Math.max(original.getConfidence(),
                 Math.min(original.getConfidence() + 0.1 * incoming.getConfidence(), 0.95));
-        return original.absorbEvidence(incoming).toDraft()
+        return strengthen(original, evidence, confidence, original.getDecay() * 0.85);
+    }
+
+    /**
+     * The new fact's evidence as the stored fact should take it in, or null when the stored fact
+     * already holds every message, provenance entry and source it names. That is a replay, such
+     * as the same message told twice, and it must not count as support a second time.
+     *
+     * <p>Evidence that names no source at all is still taken as new, since there is nothing to
+     * tell it apart from what is held. The stored fact's own id is left out of the sources, so a
+     * fact never lists itself as one. This is how DICE's built-in reviser decides it too.
+     */
+    private static @Nullable Proposition evidenceNotYetHeld(Proposition original, Proposition incoming) {
+        boolean namesNoSource = incoming.getGrounding().isEmpty()
+                && incoming.getProvenanceEntries().isEmpty()
+                && incoming.getSourceIds().isEmpty();
+        var sourceIds = incoming.getSourceIds().stream()
+                .filter(id -> !id.equals(original.getId()))
+                .toList();
+        // Only the evidence is read from this copy. Level 0 lets it drop every source id.
+        var evidence = incoming.toDraft().withSourceIds(sourceIds).withLevel(0).toProposition();
+        boolean alreadyHeld = original.getGrounding().containsAll(evidence.getGrounding())
+                && original.getProvenanceEntries().containsAll(evidence.getProvenanceEntries())
+                && original.getSourceIds().containsAll(evidence.getSourceIds());
+        return alreadyHeld && !namesNoSource ? null : evidence;
+    }
+
+    /**
+     * The stored fact with new evidence folded in, its support counted once more, and its new
+     * confidence and decay. Its revision and last-used times are set to now, because decay is
+     * measured from them: a fact that just got fresh support starts fading again from today,
+     * even when its confidence was already at the cap and did not move.
+     */
+    private static Proposition strengthen(Proposition original, Proposition evidence, double confidence,
+            double decay) {
+        var now = Instant.now();
+        return original.absorbEvidence(evidence).toDraft()
+                .withReinforceCount(original.getReinforceCount() + 1)
                 .withConfidence(confidence)
-                .withDecay(original.getDecay() * 0.85)
+                .withDecay(decay)
+                .withContentRevised(now)
+                .withMetadataRevised(now)
+                .withLastAccessed(now)
                 .toProposition();
     }
 
