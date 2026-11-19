@@ -93,6 +93,7 @@
         <module>dice-metamodel</module>
         <module>dice-store-conformance</module>
         <module>dice-mcp-autoconfigure</module>
+        <module>dice-dependencies</module>
     </modules>
 
     <properties>
