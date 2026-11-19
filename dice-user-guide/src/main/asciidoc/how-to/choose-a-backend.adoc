@@ -84,8 +84,6 @@ If your configuration still sets `embabel.dice.store.type`, you can remove it. I
 
 See <<features-graph-storage>> for the full activation detail.
 
-See <<features-graph-storage>> for the full activation detail.
-
 ==== What changes when you switch
 
 [cols="1,1,1", options="header"]
