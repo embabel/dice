@@ -29,6 +29,12 @@
             <groupId>com.embabel.dice</groupId>
             <artifactId>dice-storage-autoconfigure</artifactId>
         </dependency>
+
+        <!-- DICE compiles against this as provided; a host taking the starter gets it here, so DICE's stores load -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-rag-core</artifactId>
+        </dependency>
     </dependencies>
 
 </project>

@@ -23,12 +23,19 @@ import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.storage.DrivineChunkHistoryStore
 import com.embabel.dice.storage.DrivinePropositionRepository
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.assertj.core.api.Assertions.assertThat
 import org.drivine.autoconfigure.DrivineAutoConfiguration
+import org.drivine.connection.DatabaseRegistry
 import org.drivine.manager.GraphObjectManagerFactory
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.PersistenceManagerFactory
 import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.mapper.SubtypeRegistry
+import org.drivine.schema.DatabaseTarget
+import org.drivine.schema.RangeIndexSpec
+import org.drivine.schema.SchemaCatalog
+import org.drivine.schema.SchemaTargets
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
@@ -39,6 +46,7 @@ import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.context.annotation.Configurations
 import org.springframework.boot.context.annotation.ImportCandidates
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
+import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 
@@ -148,13 +156,42 @@ class DiceDrivineAutoConfigurationTest {
 
     @Test
     fun `a host PersistenceManager on the default alias gets a StatelessGraphObjectManager on the first datasource`() {
+        // Drivine keys a transaction's connections by the name a manager was asked for, so the two must use
+        // the same name, not merely the same database: "default" and "neo" would open two connections.
         runner
             .withPropertyValues(*datasource("neo"), *datasource("other"), "host.datasource=default")
             .withUserConfiguration(HostPersistenceManager::class.java)
             .run { ctx ->
                 assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<PersistenceManager>().database).isEqualTo("default")
+                assertThat(ctx.getBean<StatelessGraphObjectManager>().database).isEqualTo("default")
                 assertThat(ctx.getBean<StatelessGraphObjectManager>())
-                    .isSameAs(ctx.getBean<GraphObjectManagerFactory>().stateless("neo"))
+                    .isSameAs(ctx.getBean<GraphObjectManagerFactory>().stateless("default"))
+            }
+    }
+
+    @Test
+    fun `a host StatelessGraphObjectManager on the default alias gets a PersistenceManager under the same name`() {
+        runner
+            .withPropertyValues(*datasource("neo"), "host.datasource=default")
+            .withUserConfiguration(HostGraphObjectManager::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<StatelessGraphObjectManager>().database).isEqualTo("default")
+                assertThat(ctx.getBean<PersistenceManager>().database).isEqualTo("default")
+            }
+    }
+
+    @Test
+    fun `a host StatelessGraphObjectManager built on the PersistenceManager bean shares DICE's one`() {
+        // The host's manager needs DICE's PersistenceManager, so DICE can't ask it for its name first.
+        runner
+            .withPropertyValues(*datasource("neo"))
+            .withUserConfiguration(HostGraphObjectManagerOnPersistenceManager::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<PersistenceManager>().database).isEqualTo("neo")
+                assertThat(ctx.getBean<StatelessGraphObjectManager>().database).isEqualTo("neo")
             }
     }
 
@@ -229,6 +266,51 @@ class DiceDrivineAutoConfigurationTest {
     }
 
     @Test
+    fun `with several datasources DICE's schema goes only to the one its stores use`() {
+        runnerWithCollector
+            .withPropertyValues(*datasource("neo"), *datasource("other"), "embabel.dice.store.datasource=other")
+            .withUserConfiguration(HostSchema::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                val dice = diceCatalogs(ctx)
+                assertThat(dice).containsKeys("propositionConstraintSchema", "lineageRecordSchema", "collectorTraceSchema")
+                dice.forEach { (name, catalog) ->
+                    assertThat(catalog.target).describedAs(name).isEqualTo(DatabaseTarget.Named(setOf("other")))
+                }
+                assertThat(SchemaTargets.resolve(dice.values.toList(), ctx.getBean<DatabaseRegistry>()).databases)
+                    .containsExactly("other")
+                assertThat(ctx.getBean<SchemaCatalog>("hostSchema").target).isEqualTo(DatabaseTarget.All)
+            }
+    }
+
+    @Test
+    fun `with several datasources and a host PersistenceManager on the default alias DICE's schema goes to the first`() {
+        runnerWithCollector
+            .withPropertyValues(*datasource("neo"), *datasource("other"), "host.datasource=default")
+            .withUserConfiguration(HostPersistenceManager::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                val dice = diceCatalogs(ctx)
+                assertThat(dice).isNotEmpty()
+                dice.forEach { (name, catalog) ->
+                    assertThat(catalog.target).describedAs(name).isEqualTo(DatabaseTarget.Named(setOf("neo")))
+                }
+                assertThat(SchemaTargets.resolve(dice.values.toList(), ctx.getBean<DatabaseRegistry>()).databases)
+                    .containsExactly("neo")
+            }
+    }
+
+    @Test
+    fun `with one datasource DICE's schema targets stay as they were`() {
+        runnerWithCollector.withPropertyValues(*datasource("neo")).run { ctx ->
+            assertThat(ctx).hasNotFailed()
+            val dice = diceCatalogs(ctx)
+            assertThat(dice).isNotEmpty()
+            dice.forEach { (name, catalog) -> assertThat(catalog.target).describedAs(name).isEqualTo(DatabaseTarget.All) }
+        }
+    }
+
+    @Test
     fun `forcing in-memory with several datasources starts with no Drivine beans from DICE`() {
         runner
             .withPropertyValues(*datasource("neo"), *datasource("other"), "embabel.dice.store.type=in-memory")
@@ -282,6 +364,14 @@ class DiceDrivineAutoConfigurationTest {
         assertThat(registered).contains(DiceDrivineAutoConfiguration::class.java.name)
     }
 
+    private val runnerWithCollector = runner.withConfiguration(
+        AutoConfigurations.of(CollectorAutoConfiguration::class.java),
+    )
+
+    /** The schema catalogs DICE's own auto-configurations declared, by bean name. */
+    private fun diceCatalogs(ctx: ApplicationContext): Map<String, SchemaCatalog> =
+        ctx.getBeansOfType(SchemaCatalog::class.java).filterKeys { it != "hostSchema" }
+
     /** A Neo4j datasource under [name], enough for Drivine to register it without connecting. */
     private fun datasource(name: String): Array<String> = arrayOf(
         "database.datasources.$name.type=NEO4J",
@@ -324,6 +414,25 @@ class DiceDrivineAutoConfigurationTest {
             factory: GraphObjectManagerFactory,
             @Value("\${host.datasource}") datasource: String,
         ): StatelessGraphObjectManager = factory.stateless(datasource)
+    }
+
+    /** A host that builds its StatelessGraphObjectManager on whatever PersistenceManager the context has. */
+    @Configuration(proxyBeanMethods = false)
+    open class HostGraphObjectManagerOnPersistenceManager {
+
+        @Bean
+        open fun hostGraphObjectManager(
+            persistenceManager: PersistenceManager,
+            subtypeRegistry: SubtypeRegistry,
+        ): StatelessGraphObjectManager = StatelessGraphObjectManager(persistenceManager, ObjectMapper(), subtypeRegistry)
+    }
+
+    /** A host with schema of its own, which DICE leaves where the host put it. */
+    @Configuration(proxyBeanMethods = false)
+    open class HostSchema {
+
+        @Bean
+        open fun hostSchema(): SchemaCatalog = SchemaCatalog.of(RangeIndexSpec("HostThing", "id"))
     }
 
     /** A host that still writes the two beans itself, as hosts had to before. */

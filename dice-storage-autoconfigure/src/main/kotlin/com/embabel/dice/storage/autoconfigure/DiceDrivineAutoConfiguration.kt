@@ -21,9 +21,15 @@ import org.drivine.manager.GraphObjectManagerFactory
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.PersistenceManagerFactory
 import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.schema.SchemaCatalog
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.BeanCreationException
+import org.springframework.beans.factory.BeanCurrentlyInCreationException
+import org.springframework.beans.factory.BeanFactory
+import org.springframework.beans.factory.BeanFactoryAware
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.config.BeanPostProcessor
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
@@ -36,6 +42,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.ConditionContext
+import org.springframework.context.annotation.Import
 import org.springframework.core.type.AnnotatedTypeMetadata
 
 /**
@@ -48,12 +55,17 @@ import org.springframework.core.type.AnnotatedTypeMetadata
  * `embabel.dice.store.datasource` when there are several. Several with none named, or a name that
  * isn't there, stops startup and lists the ones that are.
  *
- * The two always share a database: DICE saves through one and deduplicates, deletes and decays
- * through the other, so on two databases its reads and writes would drift apart. A host that defines only its own
- * `PersistenceManager` gets a `StatelessGraphObjectManager` on that manager's datasource, and the
- * property can't move it elsewhere: naming a different one stops startup. A host that defines only
- * a `StatelessGraphObjectManager` gets a `PersistenceManager` when there is just one datasource; with
- * several, Drivine doesn't say which one that manager uses, so startup stops and asks for both.
+ * The two always share a database, under the same name: DICE saves through one and deduplicates,
+ * deletes and decays through the other, and Drivine gives a transaction one connection per name it is
+ * asked for, so "default" and the datasource it stands for would be two connections that neither see
+ * each other's writes nor commit together. A host that defines only its own `PersistenceManager` gets a
+ * `StatelessGraphObjectManager` under exactly the name the host used, and the property can't move it
+ * elsewhere: naming a different datasource stops startup. A host that defines only a
+ * `StatelessGraphObjectManager` gets a `PersistenceManager` under that manager's name when there is just
+ * one datasource; with several, startup stops and asks for both.
+ *
+ * With several datasources, DICE's schema (its constraints and indexes) goes only to the one its
+ * stores use, rather than to every datasource Drivine knows. With one, it is left as declared.
  *
  * It runs after Drivine's auto-configuration, so the factories are already registered when it looks
  * for them, and before DICE's storage auto-configuration, which picks the Drivine stores when it
@@ -65,6 +77,7 @@ import org.springframework.core.type.AnnotatedTypeMetadata
 @ConditionalOnBean(PersistenceManagerFactory::class, DatabaseRegistry::class)
 @Conditional(NotForcedInMemory::class)
 @EnableConfigurationProperties(DiceDrivineProperties::class)
+@Import(DiceSchemaTargeting::class)
 class DiceDrivineAutoConfiguration {
 
     private val logger = LoggerFactory.getLogger(DiceDrivineAutoConfiguration::class.java)
@@ -87,8 +100,12 @@ class DiceDrivineAutoConfiguration {
                 "which one it uses. DICE needs both on the same database, so define both beans yourself."
         }
         val datasource = DrivineDatasource.choose(registry, properties)
-        logger.info("DICE's Drivine stores use datasource '{}'", datasource)
-        return factory.get(datasource)
+        // A host StatelessGraphObjectManager on this datasource decides the name, so both join one connection.
+        val key = hostGraphObjectManagers.singleOrNull()?.let(::databaseKeyOf)
+            ?.takeIf { registry.resolveDatabaseName(it) == datasource }
+            ?: datasource
+        logger.info("DICE's Drivine stores use datasource '{}'", key)
+        return factory.get(key)
     }
 
     @Bean
@@ -118,8 +135,21 @@ class DiceDrivineAutoConfiguration {
                     "or make the two agree."
             }
         }
-        return factory.stateless(datasource)
+        // The name exactly as the PersistenceManager was given it, not the datasource it resolves to:
+        // Drivine opens a connection per name within a transaction.
+        return factory.stateless(manager.database)
     }
+
+    /**
+     * The name a host StatelessGraphObjectManager was built for, or null when it is itself built on the
+     * PersistenceManager being made here, in which case the two already share it.
+     */
+    private fun databaseKeyOf(beanName: String): String? =
+        try {
+            beanFactory.getBean(beanName, StatelessGraphObjectManager::class.java).database
+        } catch (e: BeanCreationException) {
+            if (e.contains(BeanCurrentlyInCreationException::class.java)) null else throw e
+        }
 
     /** The application's own StatelessGraphObjectManager beans, leaving out the one this class may register. */
     private fun hostGraphObjectManagers(): List<String> =
@@ -128,6 +158,64 @@ class DiceDrivineAutoConfiguration {
                 (beanFactory.getBeanDefinition(name) as? AnnotatedBeanDefinition)
                     ?.factoryMethodMetadata?.declaringClassName == DiceDrivineAutoConfiguration::class.java.name
         }
+}
+
+/**
+ * Points DICE's schema catalogs at the one datasource its stores use, when Drivine has several.
+ *
+ * A catalog goes to every datasource unless told otherwise, so with a second database configured,
+ * DICE's constraints and indexes would land there too. This narrows each catalog one of DICE's
+ * auto-configurations declares to the datasource behind the context's PersistenceManager, the one
+ * DICE's stores are built on. The host's own catalogs are left alone, and so is everything when there
+ * is just one datasource.
+ */
+internal class DiceSchemaTargeting : BeanPostProcessor, BeanFactoryAware {
+
+    private val logger = LoggerFactory.getLogger(DiceSchemaTargeting::class.java)
+
+    private lateinit var beanFactory: ConfigurableListableBeanFactory
+
+    override fun setBeanFactory(beanFactory: BeanFactory) {
+        this.beanFactory = beanFactory as ConfigurableListableBeanFactory
+    }
+
+    override fun postProcessAfterInitialization(bean: Any, beanName: String): Any {
+        if (bean !is SchemaCatalog || !declaredByDice(beanName)) return bean
+        val registry = beanFactory.getBeanProvider(DatabaseRegistry::class.java).getIfAvailable() ?: return bean
+        if (registry.databaseNames.size <= 1) return bean
+        val datasource = diceDatasource(registry)
+        if (datasource == null) {
+            logger.warn(
+                "Can't tell which of Drivine's datasources ({}) DICE's stores use, so schema catalog '{}' still goes to all of them",
+                describe(registry.databaseNames), beanName,
+            )
+            return bean
+        }
+        // The resolved name, not "default": Drivine matches a catalog's target against registered names.
+        return bean.forDatabase(datasource)
+    }
+
+    private fun declaredByDice(beanName: String): Boolean =
+        beanFactory.containsBeanDefinition(beanName) &&
+            (beanFactory.getBeanDefinition(beanName) as? AnnotatedBeanDefinition)
+                ?.factoryMethodMetadata?.declaringClassName in DICE_SCHEMA_SOURCES
+
+    private companion object {
+        /** The auto-configurations whose SchemaCatalog beans are DICE's own schema. */
+        val DICE_SCHEMA_SOURCES = setOf(
+            DiceStorageAutoConfiguration::class.java.name,
+            CollectorAutoConfiguration::class.java.name,
+            MetamodelAutoConfiguration::class.java.name,
+        )
+    }
+
+    /** The registered datasource behind the PersistenceManager DICE's stores get, or null when that can't be told. */
+    private fun diceDatasource(registry: DatabaseRegistry): String? {
+        val manager = beanFactory.getBeanProvider(PersistenceManager::class.java).getIfUnique() ?: return null
+        // A PersistenceManager that isn't Drivine's own may not have a name at all.
+        val key: String? = manager.database
+        return key?.let(registry::resolveDatabaseName)
+    }
 }
 
 /**
