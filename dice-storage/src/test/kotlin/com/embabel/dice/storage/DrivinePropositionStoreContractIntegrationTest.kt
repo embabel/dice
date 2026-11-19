@@ -23,6 +23,8 @@ import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.storage.model.PropositionView
 import org.drivine.StaleObjectException
 import org.drivine.manager.PersistenceManager
@@ -375,6 +377,35 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         assertEquals(1, host.queryForObject("SELECT count(*) FROM host_rows", Int::class.java))
     }
 
+    /**
+     * The replay check reads a stored match and then its evidence. If another writer updates the
+     * match, its confidence and its evidence, between those reads, the check does not answer with
+     * the old node and the new evidence: what it returns is one version the store has held.
+     */
+    @Test
+    fun `a replay never answers with a node and evidence from two different versions`() {
+        val first = ProvenanceEntry(locator = UriLocator("https://example.com/first"), chunkId = "first")
+        val second = ProvenanceEntry(locator = UriLocator("https://example.com/second"), chunkId = "second")
+        val stored = repository.save(ghost("The ghost turns the key", context = "replay-c").copy(provenanceEntries = listOf(first)))
+        val reinforcing = DrivinePropositionRepository(
+            graphObjectManager,
+            WritingOnEvidenceReadPersistenceManager(persistenceManager, stored.id) {
+                repository.save(stored.copy(confidence = 0.4, provenanceEntries = listOf(first, second)))
+            },
+            embeddingService,
+            transactionManager,
+        )
+
+        val replayed = reinforcing.save(ghost("The ghost turns the key", context = "replay-c").copy(provenanceEntries = listOf(first)))
+
+        val held = repository.findById(stored.id)!!
+        assertEquals(stored.id, replayed.id)
+        assertEquals(
+            Triple(held.confidence, held.reinforceCount, held.provenanceEntries.toSet()),
+            Triple(replayed.confidence, replayed.reinforceCount, replayed.provenanceEntries.toSet()),
+        )
+    }
+
     private fun readOnly() = TransactionTemplate(transactionManager).apply { isReadOnly = true }
 
     private fun ghost(text: String, context: String = "ghost-ctx") = Proposition(
@@ -496,5 +527,25 @@ private class TouchRefusingPersistenceManager(private val delegate: PersistenceM
     override fun execute(spec: QuerySpecification<*>) {
         check(spec.parameters.keys != setOf("ids", "now")) { "touch refused" }
         delegate.execute(spec)
+    }
+}
+
+/**
+ * Passes every call on. The first time the evidence of [watchedId] is read, it runs [write] first,
+ * as another save could between the node read and this one.
+ */
+private class WritingOnEvidenceReadPersistenceManager(
+    private val delegate: PersistenceManager,
+    private val watchedId: String,
+    private val write: () -> Unit,
+) : PersistenceManager by delegate {
+    private var written = false
+
+    override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+        if (!written && spec.parameters.keys == setOf("ids") && (spec.parameters["ids"] as? Collection<*>)?.contains(watchedId) == true) {
+            written = true
+            write()
+        }
+        return delegate.query(spec)
     }
 }

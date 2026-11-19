@@ -290,26 +290,43 @@ class DrivinePropositionRepository(
         if (proposition.text.isBlank()) return null
         val existingId = findDuplicateId(proposition.contextId.value, proposition.text, proposition.id) ?: return null
         if (existsById(proposition.id)) return null
-        val existing = findById(existingId) ?: return null
-        // Loaded by id, so a writer may have moved it since the lookup. Then it is no match.
-        if (existing.contextId != proposition.contextId || existing.text != proposition.text) return null
+        val existing = loadUnchanged(existingId, proposition.contextId, proposition.text) ?: return null
         // As the merge does, before the novelty check can drop an entry that names a source the
         // stored one disagrees with.
         validateSourceIdentities(proposition.provenanceEntries)
         val held = existing.provenanceEntries.toHashSet()
-        if (!proposition.provenanceEntries.all(held::contains)) return null
-        // The node and its evidence are two reads. A move between them shows here as another
-        // context, and then it is no match. A move away and back between the reads is not seen.
-        return existing.takeIf { stillIn(existingId, proposition.contextId, proposition.text) }
+        return existing.takeIf { proposition.provenanceEntries.all(held::contains) }
     }
 
-    /** Whether the proposition [id] is still in [contextId] with [text]. */
-    private fun stillIn(id: String, contextId: ContextId, text: String): Boolean =
-        persistenceManager.maybeGetOne(
-            cypherQuery("MATCH (p:Proposition {id: \$id}) WHERE p.contextId = \$contextId AND p.text = \$text RETURN p.id")
+    /**
+     * The proposition [id] with its evidence, as one version of it, while it is in [contextId] with
+     * [text]. The node and its evidence are two reads, so the node's stamp is read again after the
+     * evidence: a write between them changes it, and the load is tried once more. Null when the
+     * proposition left [contextId], changed its text, or changed again on the second try.
+     */
+    private fun loadUnchanged(id: String, contextId: ContextId, text: String): Proposition? {
+        repeat(REPLAY_LOADS) {
+            val loaded = loadStamped(id) ?: return null
+            if (loaded.proposition.contextId != contextId || loaded.proposition.text != text) return null
+            val now = stampIn(id, contextId, text) ?: return null
+            if (now.stamp == loaded.stamp) return loaded.proposition
+        }
+        return null
+    }
+
+    /** The stamp [id] carries while it is in [contextId] with [text], or null when it is not. */
+    private fun stampIn(id: String, contextId: ContextId, text: String): CurrentStamp? =
+        persistenceManager.query(
+            cypherQuery(
+                "MATCH (p:Proposition {id: \$id}) WHERE p.contextId = \$contextId AND p.text = \$text " +
+                    "RETURN {stamp: p.${Stamps.QUOTED}} AS row",
+            )
                 .bind(mapOf("id" to id, "contextId" to contextId.value, "text" to text))
-                .transform(String::class.java),
-        ) != null
+                .transform(Map::class.java),
+        ).firstOrNull()?.let { CurrentStamp(it["stamp"] as String?) }
+
+    /** A node's stamp as read, which may itself be null. */
+    private data class CurrentStamp(val stamp: String?)
 
     private fun findOrPersist(
         proposition: Proposition,
@@ -1896,6 +1913,9 @@ class DrivinePropositionRepository(
 
         /** Stripe count for save-time dedup locks. */
         private const val DEDUP_STRIPES = 64
+
+        /** How many times the replay check loads a match before it gives up on a steady read. */
+        private const val REPLAY_LOADS = 2
 
         /**
          * Propositions embedded and written per committed batch in [reembedAll]: bounds both the
