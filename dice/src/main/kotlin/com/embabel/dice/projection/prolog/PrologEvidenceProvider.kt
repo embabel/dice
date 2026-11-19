@@ -58,10 +58,12 @@ import java.time.ZoneOffset
  * such as `'2024'`, stays an atom. A lone `_` in a declared input or guard gets its own variable name before the
  * clause runs, so the fact it matched is known and only that fact is cited.
  *
- * **Matching is by normalised atom.** Facts are written to Prolog through [PrologFact.quoteAtom], which lower-cases
- * and replaces anything outside `a-z`, `0-9` and `_`. Only the comparison of an input with the recorded facts uses
- * that normalisation, so two facts whose arguments only differ in case or punctuation, such as `Alice-Smith` and
- * `alice smith`, are the same fact here and both are cited.
+ * **Citations need atom arguments.** Facts are written to Prolog through [PrologFact.quoteAtom], which lower-cases
+ * and replaces anything outside `a-z`, `0-9` and `_`, so every projected argument is an atom in that form. An input
+ * cites a recorded fact only when each of its arguments is an atom spelled exactly as that normalised form: a number
+ * such as `2024`, a compound term such as `f(a)`, or an atom such as `'Foo Bar'` that only normalises to `foo_bar`
+ * cites nothing, because the proof can't have used the projected fact. Two recorded facts whose arguments only differ
+ * in case or punctuation, such as `Alice-Smith` and `alice smith`, are the same projected fact and both are cited.
  *
  * **Confidence** is the weakest input: each matched fact counts at the highest decayed confidence among its source
  * propositions found in the repository (an invalidated one counts at 0.0), or its own confidence when none is found
@@ -105,13 +107,16 @@ class PrologEvidenceProvider private constructor(
     private val theoryHash: String = sha256Hex(theory).take(16)
     private val engine: PrologEngine = PrologEngine.fromTheory(theory)
 
-    // Facts that can be cited, keyed by predicate and normalised arguments. Facts with no usable ids are left out.
+    // Facts that can be cited, keyed by predicate and each argument's atom text as the projection wrote it to
+    // Prolog. Facts with no usable ids are left out.
     private val citableFacts: Map<FactKey, List<CitableFact>> = projection.facts
         .mapNotNull { fact ->
             val ids = fact.sourcePropositionIds.filter { it.isNotBlank() }
             if (ids.isEmpty()) null else CitableFact(fact, ids)
         }
-        .groupBy { FactKey(it.fact.predicate, it.fact.args.map(PrologFact::quoteAtom)) }
+        .groupBy { citable ->
+            FactKey(citable.fact.predicate, citable.fact.args.map { PrologFact.quoteAtom(it).removeSurrounding("'") })
+        }
 
     /**
      * Returns a copy that also traces answers through [declaration], tried after the declarations already there.
@@ -186,18 +191,26 @@ class PrologEvidenceProvider private constructor(
         val inputs = declaration.inputs.map(name)
         val guards = declaration.guards.map(name)
 
+        // Recorded facts only hold atoms, so the query also asks what kind of value each input variable ends up
+        // with. A number or compound there means the proof used something other than a projected fact.
+        val named = (listOf(declaration.head, groundGoal) + inputs + guards).flatMap(::variablesIn).toSet()
+        val inputVariables = inputs.flatMap(::variablesIn).distinct()
+        val kindOf = inputVariables.asSequence().zip(freshNames("Kind_", named)).toMap()
+
         val query = buildList {
             add("${declaration.head} = ($groundGoal)")
             addAll(inputs)
             // Bracketed so a guard using ; or -> can't swallow the goals around it.
             guards.forEach { add("($it)") }
+            kindOf.forEach { (variable, kind) -> add(kindProbe(variable, kind)) }
         }.joinToString(", ")
 
         for (proof in engine.queryAll(query)) {
             if (!proof.success) continue
-            // Inputs read recorded facts, which Prolog only holds as atoms, so every value is written back as one.
             val perInput = inputs.map { input ->
-                citableFactsFor(rewriteVariables(input) { proof.bindings[it]?.let(::quotedAtom) })
+                val atomsOnly = variablesIn(input).all { proof.bindings[kindOf.getValue(it)] == "a" }
+                if (!atomsOnly) emptyList()
+                else citableFactsFor(rewriteVariables(input) { proof.bindings[it]?.let(::quotedAtom) })
             }
             if (perInput.any { it.isEmpty() }) continue
             val facts = perInput.flatten()
@@ -210,8 +223,9 @@ class PrologEvidenceProvider private constructor(
         val open = groundInput.indexOf('(')
         if (open < 0 || !groundInput.endsWith(")")) return emptyList()
         val predicate = groundInput.substring(0, open).trim()
-        val args = splitArguments(groundInput.substring(open + 1, groundInput.length - 1)).map(::normaliseArgument)
-        return citableFacts[FactKey(predicate, args)].orEmpty()
+        val args = splitArguments(groundInput.substring(open + 1, groundInput.length - 1)).map(::atomText)
+        if (args.any { it == null }) return emptyList()
+        return citableFacts[FactKey(predicate, args.filterNotNull())].orEmpty()
     }
 
     private fun derive(
@@ -353,10 +367,13 @@ class PrologEvidenceProvider private constructor(
             return args.map { it.trim() }
         }
 
-        // Puts one argument in the form the projection wrote it: a quoted atom loses its quotes, then both kinds go
-        // through quoteAtom, which is how every fact argument reached Prolog.
-        private fun normaliseArgument(arg: String): String {
-            if (arg.length < 2 || !arg.startsWith('\'') || !arg.endsWith('\'')) return PrologFact.quoteAtom(arg)
+        private val BARE_ATOM = Regex("[a-z][a-zA-Z0-9_]*")
+
+        // The text of an argument that is an atom, either quoted or bare, or null for a number, a compound term or
+        // anything else, which can never be a projected fact's argument.
+        private fun atomText(arg: String): String? {
+            if (BARE_ATOM.matches(arg)) return arg
+            if (arg.length < 2 || !arg.startsWith('\'') || !arg.endsWith('\'')) return null
             val inner = arg.substring(1, arg.length - 1)
             val bare = buildString {
                 var i = 0
@@ -365,11 +382,13 @@ class PrologEvidenceProvider private constructor(
                     when {
                         c == '\\' && i + 1 < inner.length -> { append(inner[i + 1]); i += 2 }
                         c == '\'' && inner.getOrNull(i + 1) == '\'' -> { append(c); i += 2 }
+                        // A lone quote closes the atom early, so this is a term such as 'f'('a'), not one atom.
+                        c == '\'' -> return null
                         else -> { append(c); i++ }
                     }
                 }
             }
-            return PrologFact.quoteAtom(bare)
+            return bare
         }
 
         private fun sha256Hex(text: String): String =

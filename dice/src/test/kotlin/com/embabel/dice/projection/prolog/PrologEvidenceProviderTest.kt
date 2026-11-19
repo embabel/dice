@@ -341,6 +341,76 @@ class PrologEvidenceProviderTest {
     }
 
     @Nested
+    inner class AtomOnlyCitations {
+
+        // tagged/1 reads value/1, which the schema states for itself next to the projected value facts.
+        private val tagged = RuleDeclaration.of("tagged(X)").withInput("value(X)")
+
+        private fun taggedProvider(projected: String, schemaFact: String) = provider(
+            listOf(fact("value", projected, confidence = 0.9, ids = listOf("prop-v"))),
+            "$schemaFact\ntagged(X) :- value(X).",
+        ).withDeclaration(tagged)
+
+        @Test
+        fun `a number binding never cites the atom fact it would quote to`() {
+            val provider = taggedProvider("2024", "value(2024).")
+            val goal = RuleGoal.of("tagged(2024)")
+
+            assertTrue(provider.conclusions(goal).isEmpty())
+            assertInstanceOf(Evidence.Missing::class.java, provider.evidence(goal))
+        }
+
+        @Test
+        fun `a compound binding never cites an atom fact`() {
+            val provider = taggedProvider("f(a)", "value(f(a)).")
+
+            assertTrue(provider.conclusions(RuleGoal.of("tagged(f(a))")).isEmpty())
+        }
+
+        @Test
+        fun `a mixed-case or spaced atom binding never cites a fact it only normalises to`() {
+            val provider = taggedProvider("Foo Bar", "value('Foo Bar').")
+
+            assertTrue(provider.conclusions(RuleGoal.of("tagged('Foo Bar')")).isEmpty())
+        }
+
+        @Test
+        fun `an atom binding equal to the projected fact's normalised argument cites it`() {
+            val provider = taggedProvider("Foo Bar", "value('Foo Bar').")
+
+            val derived = only(provider.conclusions(RuleGoal.of("tagged(foo_bar)")))
+            assertEquals("tagged(foo_bar)", derived.conclusion)
+            assertEquals(listOf("prop-v"), derived.inputIds)
+        }
+
+        @Test
+        fun `a literal number or compound in a declared input matches no fact`() {
+            val rules = "value(2024).\nvalue(f(a)).\nflag(X) :- expert_in(X, _), value(2024).\n" +
+                "mark(X) :- expert_in(X, _), value(f(a))."
+            val facts = baseFacts + listOf(
+                fact("value", "2024", confidence = 0.9, ids = listOf("prop-n")),
+                fact("value", "f(a)", confidence = 0.9, ids = listOf("prop-c")),
+            )
+            val flag = RuleDeclaration.of("flag(X)").withInput("expert_in(X, T)").withInput("value(2024)")
+            val mark = RuleDeclaration.of("mark(X)").withInput("expert_in(X, T)").withInput("value(f(a))")
+            val provider = provider(facts, rules).withDeclaration(flag).withDeclaration(mark)
+
+            assertTrue(provider.conclusions(RuleGoal.of("flag('alice')")).isEmpty())
+            assertTrue(provider.conclusions(RuleGoal.of("mark('alice')")).isEmpty())
+        }
+
+        @Test
+        fun `a literal atom in a declared input cites the projected fact it names`() {
+            val rules = "knows_k8s(X) :- expert_in(X, kubernetes)."
+            val knows = RuleDeclaration.of("knows_k8s(X)").withInput("expert_in(X, kubernetes)")
+
+            val derived = only(provider(rules = rules).withDeclaration(knows).conclusions(RuleGoal.of("knows_k8s(X)")))
+            assertEquals("knows_k8s('alice')", derived.conclusion)
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+    }
+
+    @Nested
     inner class NoDeclaration {
 
         @Test
