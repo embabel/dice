@@ -23,7 +23,6 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.revision.RevisionResult
 import org.jetbrains.annotations.ApiStatus
 import java.util.Collections
-import java.util.IdentityHashMap
 
 /**
  * Where the host sends a result its gates routed to review.
@@ -78,8 +77,9 @@ fun interface GateContextFactory {
  *
  * @property revisionResult The revision result the verdict is for, or null when no revision ran.
  * @property propositions Every proposition the result would write.
- * @property gated What the pipeline said about the claim it was asked about. For a result withheld
- *   because it builds on an earlier withheld result, no gate ran and the entry has no evaluations.
+ * @property gated What the pipeline said about the claim it was asked about. A result held back
+ *   because another result for the same stored proposition was withheld keeps the gates' own answer
+ *   here, so it can be milder than [decision].
  * @property decision The decision that applies to the whole result.
  */
 @ApiStatus.Experimental
@@ -155,20 +155,27 @@ class GatedChunk(
  * the whole result; Demote and SkipProjection keep it and leave the decision on the verdict for
  * the host to act on. When the chunk had no revision, each proposition is its own result.
  *
- * Results are decided in chunk order, and a withheld result takes later ones down with it. The
- * reviser builds each result on the copies the earlier ones produced, so once a result that
- * changes a stored proposition is rejected or reviewed, every later result that changes the same
- * stored proposition starts from evidence the gates held back. Each of those is withheld too,
- * without asking the gates, with the same kind of decision (Reject or RouteToReview) and a reason
- * naming the stored proposition. It gets its own verdict, goes to the review sink when reviewed
- * and sends events like any other withheld result. Results that add a new proposition, such as a
- * generalization, change no stored proposition and are never held back this way.
+ * Results that write a copy of the same stored proposition stand or fall together. The reviser
+ * builds each result on the copies other results in the chunk produced, and the order it returns
+ * them in does not show which came first, so the applier groups every merge, reinforcement and
+ * contradiction by the stored proposition it writes, wherever it sits in the chunk. Each result is
+ * still gated on its own. If any of them is rejected or reviewed, the rest of the group would
+ * write evidence the gates held back, so they are withheld too: one that passed its own gates is
+ * routed to review with a reason naming the stored proposition and what happened to the other
+ * result, never rejected, because its claim may be fine on its own. It gets its own verdict, goes
+ * to the review sink and sends events like any other reviewed result. Results that add a new
+ * proposition, such as a generalization, belong to no group.
+ *
+ * A contradiction against a pinned proposition writes the original back unchanged, so it only
+ * joins the group when that original already differs, in provenance or confidence, from the
+ * earliest copy of the stored proposition in the chunk. Otherwise it carries nobody else's
+ * evidence: only its new claim is gated, and it neither withholds nor is withheld by the others.
  *
  * Replays (a merge or reinforcement that changed nothing) are never gated themselves and get no
  * verdict, sink call or event. A replay can start from the copy another result in the same chunk
- * just produced, so it follows that result: when a result that changed the same stored
- * proposition is rejected or reviewed, the replay is dropped with it, or it would write the
- * evidence the gates held back. A replay with no such result in the chunk is kept.
+ * just produced, so it follows its group: when any result in it is rejected or reviewed, the
+ * replay is dropped silently, or it would write the evidence the gates held back. A replay with
+ * no such result in the chunk is kept.
  *
  * With a listener set, each proposition of a rejected result gets a [PropositionRejected] event
  * and each proposition of a reviewed one a [PropositionRoutedToReview], carrying the decision's
@@ -225,8 +232,9 @@ class GateApplier private constructor(
     /**
      * Gates every result in [result] and returns what to persist plus a verdict for each.
      *
-     * Results are gated in order, and a result building on an earlier withheld one is withheld with
-     * it. Exceptions from a gate or from the review sink are not caught.
+     * Every result is gated first, in chunk order; then verdicts are settled, so a result that shares
+     * a stored proposition with a withheld one is withheld too, and the review sink and listener are
+     * called in chunk order. Exceptions from a gate or from the review sink are not caught.
      *
      * @param result One chunk's extraction result.
      * @return The chunk to persist and the verdicts; a failed chunk comes back unchanged with none.
@@ -243,57 +251,48 @@ class GateApplier private constructor(
     }
 
     private fun applyToRevisions(chunk: ChunkPropositionResult.Success): GatedChunk {
-        // Decide every non-replay result first, in chunk order, because a replay can come before
-        // the result it follows and has to know that result's verdict. A result that changes a
-        // stored proposition an earlier result was withheld for was built on the withheld copy,
-        // so it is withheld the same way instead of being gated on its own.
-        val verdicts = mutableListOf<ResultVerdict>()
-        val dropped = Collections.newSetFromMap(IdentityHashMap<RevisionResult, Boolean>())
-        val droppedIds = mutableSetOf<String>()
-        val withheldStored = mutableMapOf<String, GateDecision>()
-        for (revision in chunk.revisionResults) {
-            if (revision.isReplay) continue
-            val storedId = changedStoredId(revision)
-            val withholding = storedId?.let { withheldStored[it] }
-            val verdict = if (storedId != null && withholding != null) {
-                dependent(revision, storedId, withholding)
-            } else {
-                judge(revision, gatedClaim(revision), written(revision))
-            }
-            verdicts += verdict
-            if (!verdict.isAdmitted) {
-                dropped += revision
-                extractedId(revision)?.let { droppedIds += it }
-                storedId?.let { withheldStored.putIfAbsent(it, verdict.decision) }
-            }
+        val results = chunk.revisionResults
+        // Order says nothing about which result built on which: the reviser settles its fast-path
+        // merges first and hands the results back in input order. So every result that writes a
+        // copy of the same stored proposition is grouped before anything is decided.
+        val groups = groupIds(results)
+        val gated = results.map { revision ->
+            if (revision.isReplay) null else gatedClaim(revision).let { pipeline.evaluate(it, contextFactory.contextFor(it, revision)) }
         }
-        val keptResults = chunk.revisionResults.filter { revision ->
-            if (revision.isReplay) replayedStoredId(revision) !in withheldStored else revision !in dropped
+        // The first result each group was withheld for, in chunk order.
+        val withheldGroups = mutableMapOf<String, GateDecision>()
+        results.indices.forEach { i ->
+            val decision = gated[i]?.finalDecision ?: return@forEach
+            val group = groups[i] ?: return@forEach
+            if (withholds(decision)) withheldGroups.putIfAbsent(group, decision)
+        }
+        val verdicts = mutableListOf<ResultVerdict>()
+        val kept = mutableListOf<RevisionResult>()
+        val droppedIds = mutableSetOf<String>()
+        results.forEachIndexed { i, revision ->
+            val cause = groups[i]?.let { withheldGroups[it] }
+            val ownGate = gated[i]
+            if (ownGate == null) {
+                // A replay follows its group silently.
+                if (cause == null) kept += revision
+                return@forEachIndexed
+            }
+            val decision =
+                if (cause != null && !withholds(ownGate.finalDecision)) dependentDecision(groups[i]!!, cause) else ownGate.finalDecision
+            val verdict = route(ResultVerdict(revision, written(revision), listOf(ownGate), decision))
+            verdicts += verdict
+            if (verdict.isAdmitted) kept += revision else extractedId(revision)?.let { droppedIds += it }
         }
         // With no revision results left, propositionsToPersist() would fall back to every
         // extracted proposition, so the list has to be emptied as well.
-        val keptPropositions =
-            if (keptResults.isEmpty()) emptyList() else chunk.propositions.filterNot { it.id in droppedIds }
-        return GatedChunk(chunk.copy(propositions = keptPropositions, revisionResults = keptResults), verdicts)
+        val keptPropositions = if (kept.isEmpty()) emptyList() else chunk.propositions.filterNot { it.id in droppedIds }
+        return GatedChunk(chunk.copy(propositions = keptPropositions, revisionResults = kept), verdicts)
     }
 
     /** Asks the pipeline about [claim], then reports and routes the result by the decision. */
     private fun judge(revision: RevisionResult?, claim: Proposition, written: List<Proposition>): ResultVerdict {
         val gated = pipeline.evaluate(claim, contextFactory.contextFor(claim, revision))
         return route(ResultVerdict(revision, written, listOf(gated), gated.finalDecision))
-    }
-
-    /**
-     * Withholds [revision] without asking the gates, because it builds on the copy of [storedId]
-     * an earlier result was withheld for. It gets the same kind of decision as that result.
-     */
-    private fun dependent(revision: RevisionResult, storedId: String, withholding: GateDecision): ResultVerdict {
-        val reason = "builds on a withheld result for stored fact $storedId"
-        val decision =
-            if (withholding is GateDecision.RouteToReview) GateDecision.RouteToReview(reason) else GateDecision.Reject(reason)
-        val claim = gatedClaim(revision)
-        val gated = GatedPropositionResult(claim, emptyList(), decision)
-        return route(ResultVerdict(revision, written(revision), listOf(gated), decision))
     }
 
     /** Sends the events and the review sink call a verdict calls for. */
@@ -343,23 +342,78 @@ class GateApplier private constructor(
             is RevisionResult.Generalized -> listOf(revision.proposition)
         }
 
+        private fun withholds(decision: GateDecision): Boolean =
+            decision is GateDecision.Reject || decision is GateDecision.RouteToReview
+
         /**
-         * The stored proposition a non-replay result changes: the one a merge or reinforcement
-         * started from, or the one a contradiction demotes. Null for results that add a new one.
+         * What a result that passed its own gates gets when another result for the same stored
+         * proposition was withheld: review, never rejection, so a claim that may stand on its own
+         * is not lost.
          */
-        private fun changedStoredId(revision: RevisionResult): String? = when (revision) {
-            is RevisionResult.Merged -> revision.original.id
-            is RevisionResult.Reinforced -> revision.original.id
-            is RevisionResult.Contradicted -> revision.original.id
-            is RevisionResult.New, is RevisionResult.Generalized -> null
+        private fun dependentDecision(storedId: String, cause: GateDecision): GateDecision {
+            val because = when (cause) {
+                is GateDecision.Reject -> "rejected: ${cause.reason}"
+                is GateDecision.RouteToReview -> "routed to review: ${cause.reason}"
+                else -> cause.toString()
+            }
+            return GateDecision.RouteToReview("writes stored fact $storedId, which another result in this chunk was withheld for ($because)")
         }
 
-        /** The stored proposition a replay re-saves. Only merges and reinforcements can be replays. */
-        private fun replayedStoredId(revision: RevisionResult): String? = when (revision) {
-            is RevisionResult.Merged -> revision.original.id
-            is RevisionResult.Reinforced -> revision.original.id
-            else -> null
+        /**
+         * The stored proposition each result writes a copy of, or null when it stands alone.
+         *
+         * Merges and reinforcements, replays included, belong to the group of the stored
+         * proposition they started from, and so does a contradiction that demoted its original. A
+         * contradiction against a pinned proposition leaves the original as it was, so it only
+         * joins when that original already carries evidence from another result in the chunk,
+         * that is, when it differs from the earliest copy of the stored proposition the group saw.
+         */
+        private fun groupIds(results: List<RevisionResult>): List<String?> {
+            val earliest = earliestCopies(results)
+            return results.map { revision ->
+                when (revision) {
+                    is RevisionResult.Merged -> revision.original.id
+                    is RevisionResult.Reinforced -> revision.original.id
+                    is RevisionResult.Contradicted -> {
+                        val original = revision.original
+                        val first = earliest[original.id]
+                        if (original.pinned && (first == null || evidenceOf(first) == evidenceOf(original))) null else original.id
+                    }
+                    is RevisionResult.New, is RevisionResult.Generalized -> null
+                }
+            }
         }
+
+        /**
+         * For each stored proposition a merge or reinforcement started from, the copy no other
+         * result in the chunk produced: the one the chunk began from.
+         */
+        private fun earliestCopies(results: List<RevisionResult>): Map<String, Proposition> {
+            val steps = results.mapNotNull { revision ->
+                when (revision) {
+                    is RevisionResult.Merged -> revision.original to revision.revised
+                    is RevisionResult.Reinforced -> revision.original to revision.revised
+                    else -> null
+                }
+            }
+            val produced = steps.filter { (original, revised) -> original != revised }.map { evidenceOf(it.second) }.toSet()
+            val earliest = LinkedHashMap<String, Proposition>()
+            steps.forEach { (original, _) ->
+                if (evidenceOf(original) !in produced) earliest.putIfAbsent(original.id, original)
+            }
+            // Should every copy be one another result produced, fall back to the first one seen.
+            steps.forEach { (original, _) -> earliest.putIfAbsent(original.id, original) }
+            return earliest
+        }
+
+        /** What tells two copies of one stored proposition apart: its provenance and its confidence. */
+        private fun evidenceOf(proposition: Proposition): List<Any> = listOf(
+            proposition.id,
+            proposition.confidence,
+            proposition.grounding,
+            proposition.sourceIds,
+            proposition.provenanceEntries,
+        )
 
         /**
          * The id an extracted proposition shares with the result, when there is one. A merge or

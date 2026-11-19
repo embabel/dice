@@ -582,7 +582,7 @@ class GateApplierTest {
     }
 
     @Test
-    fun `dependent results follow a rejected merge so a later contradiction on the same stored id is rejected too`() {
+    fun `dependent results follow a rejected merge so a later contradiction on the same stored id is routed to review`() {
         val listener = RecordingDiceEventListener()
         val reviewed = mutableListOf<ResultVerdict>()
         val demoted = storedAWithSecondSource.copy(status = PropositionStatus.CONTRADICTED, confidence = 0.2)
@@ -596,12 +596,17 @@ class GateApplierTest {
 
         assertTrue(gated.admitted.propositionsToPersist().isEmpty())
         assertTrue(gated.admitted.revisionResults.isEmpty())
-        assertTrue(reviewed.isEmpty())
-        assertEquals(listOf(merge, contradiction), gated.rejected().map { it.revisionResult })
-        val dependentReason = (gated.verdicts[1].decision as GateDecision.Reject).reason
+        // The merge keeps its own rejection; the contradiction is held for review, not thrown away.
+        assertEquals(listOf(merge), gated.rejected().map { it.revisionResult })
+        assertEquals(listOf(contradiction), gated.reviewed().map { it.revisionResult })
+        assertEquals(listOf(contradiction), reviewed.map { it.revisionResult })
+        val dependentReason = (gated.verdicts[1].decision as GateDecision.RouteToReview).reason
         assertTrue(dependentReason.contains(storedA.id), dependentReason)
-        val events = listener.events.map { it as PropositionRejected }
-        assertEquals(listOf(storedAWithSecondSource, demoted, contradictingNew), events.map { it.proposition })
+        assertEquals(listOf(storedAWithSecondSource), listener.events.filterIsInstance<PropositionRejected>().map { it.proposition })
+        assertEquals(
+            listOf(demoted, contradictingNew),
+            listener.events.filterIsInstance<PropositionRoutedToReview>().map { it.proposition },
+        )
     }
 
     @Test
@@ -643,17 +648,147 @@ class GateApplierTest {
     }
 
     @Test
-    fun `dependent results only follow earlier results so an admitted result before a withheld one stays`() {
+    fun `dependency groups withhold an earlier listed result for the same stored id too`() {
+        val reviewed = mutableListOf<ResultVerdict>()
         val demoted = storedA.copy(status = PropositionStatus.CONTRADICTED, confidence = 0.2)
         val contradiction = RevisionResult.Contradicted(demoted, contradictingNew)
         val merge = RevisionResult.Merged(demoted, demoted.copy(grounding = listOf("chunk-1", "chunk-2")))
 
         val gated = applier(rejecting(storedA.id))
+            .withReviewSink { reviewed += it }
             .apply(chunk(listOf(contradictingNew, storedA), listOf(contradiction, merge)))
 
-        assertEquals(listOf(contradiction), gated.admitted.revisionResults)
-        assertTrue(gated.verdicts[0].isAdmitted)
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+        assertTrue(gated.admitted.propositionsToPersist().isEmpty())
+        assertInstanceOf(GateDecision.RouteToReview::class.java, gated.verdicts[0].decision)
+        assertEquals(listOf(contradiction), reviewed.map { it.revisionResult })
         assertEquals(GateDecision.Reject("rejected ${storedA.id}"), gated.verdicts[1].decision)
+    }
+
+    // --- Ruling: dependency groups ---
+
+    /** A merge that adds a second source to stored fact A, and a reinforcement built on that copy. */
+    private val once = storedAWithSecondSource
+    private val twice = once.copy(confidence = 0.85, grounding = listOf("chunk-1", "chunk-2", "chunk-3"), reinforceCount = 1)
+
+    /** Withholds only the merged copy, so the reinforcement built on it would pass on its own. */
+    private fun withholdingOnce(decision: GateDecision) = ExtractionGatePipeline(
+        listOf(ExtractionGate { p, _ -> GateEvaluation("by-copy", p, if (p == once) decision else GateDecision.Persist) }),
+    )
+
+    @Test
+    fun `dependency groups withhold a reinforcement listed before the merge it builds on`() {
+        val reviewed = mutableListOf<ResultVerdict>()
+        val reinforcement = RevisionResult.Reinforced(once, twice)
+        val merge = RevisionResult.Merged(storedA, once)
+
+        val gated = applier(withholdingOnce(GateDecision.Reject("second source")))
+            .withReviewSink { reviewed += it }
+            .apply(chunk(listOf(storedA), listOf(reinforcement, merge)))
+
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+        assertTrue(gated.admitted.propositionsToPersist().none { it.id == storedA.id })
+        assertEquals(listOf(merge), gated.rejected().map { it.revisionResult })
+        assertEquals(listOf(reinforcement), reviewed.map { it.revisionResult })
+        val reason = (gated.verdicts[0].decision as GateDecision.RouteToReview).reason
+        assertTrue(reason.contains(storedA.id), reason)
+    }
+
+    @Test
+    fun `dependency groups withhold a reinforcement listed after the merge it builds on`() {
+        val reviewed = mutableListOf<ResultVerdict>()
+        val merge = RevisionResult.Merged(storedA, once)
+        val reinforcement = RevisionResult.Reinforced(once, twice)
+
+        val gated = applier(withholdingOnce(GateDecision.Reject("second source")))
+            .withReviewSink { reviewed += it }
+            .apply(chunk(listOf(storedA), listOf(merge, reinforcement)))
+
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+        assertTrue(gated.admitted.propositionsToPersist().none { it.id == storedA.id })
+        assertEquals(listOf(merge), gated.rejected().map { it.revisionResult })
+        assertEquals(listOf(reinforcement), reviewed.map { it.revisionResult })
+        val reason = (gated.verdicts[1].decision as GateDecision.RouteToReview).reason
+        assertTrue(reason.contains(storedA.id), reason)
+    }
+
+    @Test
+    fun `dependency groups still run each dependent's own gates and keep its own withholding decision`() {
+        val seen = mutableListOf<Proposition>()
+        val reinforcement = RevisionResult.Reinforced(once, twice)
+        val merge = RevisionResult.Merged(storedA, once)
+        val pipeline = ExtractionGatePipeline(
+            listOf(
+                ExtractionGate { p, _ ->
+                    seen += p
+                    GateEvaluation("both", p, if (p == once) GateDecision.RouteToReview("once") else GateDecision.Reject("twice"))
+                },
+            ),
+        )
+
+        val gated = applier(pipeline).apply(chunk(listOf(storedA), listOf(reinforcement, merge)))
+
+        assertEquals(listOf(twice, once), seen)
+        assertEquals(GateDecision.Reject("twice"), gated.verdicts[0].decision)
+        assertEquals(GateDecision.RouteToReview("once"), gated.verdicts[1].decision)
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+    }
+
+    @Test
+    fun `dependency groups gate each contradiction of an unchanged pinned fact on its own`() {
+        val pinned = proposition("p-pinned").withPinned(true)
+        val secondNew = proposition("p-contra-2")
+        val first = RevisionResult.Contradicted(pinned, contradictingNew)
+        val second = RevisionResult.Contradicted(pinned, secondNew)
+        val seen = mutableListOf<Proposition>()
+        val pipeline = ExtractionGatePipeline(
+            listOf(
+                ExtractionGate { p, _ ->
+                    seen += p
+                    GateEvaluation("by-id", p, if (p.id == contradictingNew.id) GateDecision.Reject("no") else GateDecision.Persist)
+                },
+            ),
+        )
+
+        val gated = applier(pipeline).apply(chunk(listOf(contradictingNew, secondNew), listOf(first, second)))
+
+        assertEquals(listOf(contradictingNew, secondNew), seen)
+        assertEquals(GateDecision.Persist, gated.verdicts[1].decision)
+        assertEquals(listOf(second), gated.admitted.revisionResults)
+        assertEquals(listOf(pinned, secondNew), gated.admitted.propositionsToPersist())
+    }
+
+    @Test
+    fun `dependency groups keep a contradiction of an unchanged pinned fact when a merge into it is withheld`() {
+        val pinned = proposition("p-pinned").withPinned(true)
+        val pinnedMerged = pinned.copy(confidence = 0.95, grounding = listOf("chunk-1", "chunk-2"))
+        val merge = RevisionResult.Merged(pinned, pinnedMerged)
+        val contradiction = RevisionResult.Contradicted(pinned, contradictingNew)
+
+        val gated = applier(rejecting(pinned.id)).apply(chunk(listOf(pinned, contradictingNew), listOf(merge, contradiction)))
+
+        assertEquals(GateDecision.Persist, gated.verdicts[1].decision)
+        assertEquals(listOf(contradiction), gated.admitted.revisionResults)
+        assertEquals(listOf(pinned, contradictingNew), gated.admitted.propositionsToPersist())
+    }
+
+    @Test
+    fun `dependency groups withhold a contradiction of a pinned fact whose original carries a withheld merge`() {
+        val reviewed = mutableListOf<ResultVerdict>()
+        val pinned = proposition("p-pinned").withPinned(true)
+        val pinnedMerged = pinned.copy(confidence = 0.95, grounding = listOf("chunk-1", "chunk-2"))
+        val contradiction = RevisionResult.Contradicted(pinnedMerged, contradictingNew)
+        val merge = RevisionResult.Merged(pinned, pinnedMerged)
+
+        val gated = applier(rejecting(pinned.id))
+            .withReviewSink { reviewed += it }
+            .apply(chunk(listOf(pinned, contradictingNew), listOf(contradiction, merge)))
+
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+        assertTrue(gated.admitted.propositionsToPersist().isEmpty())
+        assertEquals(listOf(contradiction), reviewed.map { it.revisionResult })
+        val reason = (gated.verdicts[0].decision as GateDecision.RouteToReview).reason
+        assertTrue(reason.contains(pinned.id), reason)
     }
 
     // --- Ruling: events ---
