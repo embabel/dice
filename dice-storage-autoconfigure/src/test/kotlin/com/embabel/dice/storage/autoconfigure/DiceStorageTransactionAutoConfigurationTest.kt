@@ -19,6 +19,9 @@ import com.embabel.agent.api.common.Ai
 import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.incremental.ChunkHistoryStore
+import com.embabel.dice.projection.lineage.CollectorRecordStore
+import com.embabel.dice.projection.lineage.ProjectionRecordStore
+import com.embabel.dice.proposition.DecayManager
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.storage.DiceStorageTransactions
 import jakarta.persistence.EntityManager
@@ -270,6 +273,26 @@ class DiceStorageTransactionAutoConfigurationTest {
             .run { ctx ->
                 assertThat(ctx).hasFailed()
                 assertThat(ctx.startupFailure).rootCause().hasMessageContaining("JdbcConnectionProvider.sqlite")
+            }
+    }
+
+    /**
+     * A host that brings every graph store of its own, and no Drivine, still starts: no store of
+     * DICE's is made, so there is nothing for the stores' transaction manager to serve.
+     */
+    @Test
+    fun `with every graph store the host's own and no Drivine, the context starts`() {
+        ApplicationContextRunner()
+            .withPropertyValues("embabel.dice.store.type=graph")
+            .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
+            .withBean(PropositionRepository::class.java, { mock<PropositionRepository>() })
+            .withBean(ChunkHistoryStore::class.java, { mock<ChunkHistoryStore>() })
+            .withBean(ProjectionRecordStore::class.java, { mock<ProjectionRecordStore>() })
+            .withBean(CollectorRecordStore::class.java, { mock<CollectorRecordStore>() })
+            .withBean(DecayManager::class.java, { mock<DecayManager>() })
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.containsBean(DiceStorageTransactions.MANAGER)).isFalse()
             }
     }
 

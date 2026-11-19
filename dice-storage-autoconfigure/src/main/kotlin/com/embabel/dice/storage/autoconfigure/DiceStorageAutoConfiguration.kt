@@ -321,11 +321,14 @@ class DiceStorageAutoConfiguration {
      * It is never an autowire candidate, so the host's own `@Transactional` code, its injection
      * points, and Boot's conditions on a single transaction manager still see only the host's.
      *
-     * It is made whenever the graph backend is, so the SQLite checks run here too: every graph
-     * store uses the file, not only the proposition and run stores that check it themselves.
+     * It is made whenever the graph backend is and the application has a Drivine persistence
+     * manager, so the SQLite checks run here too: every graph store uses the file, not only the
+     * proposition and run stores that check it themselves. A host that brings every store of its
+     * own and no Drivine gets none.
      */
     @Bean(name = [DiceStorageTransactions.MANAGER], autowireCandidate = false)
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnBean(PersistenceManager::class)
     @ConditionalOnMissingBean(name = [DiceStorageTransactions.MANAGER])
     fun diceTransactionManager(
         persistenceManager: PersistenceManager,
