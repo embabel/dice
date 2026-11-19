@@ -21,6 +21,7 @@ import com.embabel.dice.evidence.RuleGoal
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.temporal.TemporalMetadata
+import org.junit.jupiter.api.Assertions.assertAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.function.Executable
 import org.junit.jupiter.api.function.ThrowingSupplier
 import java.time.Duration
 import java.time.Instant
@@ -391,6 +393,114 @@ class PrologEvidenceProviderTest {
             assertEquals("label('alice', 'a\\rb\\tc')", derived.conclusion)
             assertEquals(listOf("prop-1"), derived.inputIds)
         }
+
+        @Test
+        fun `a small real answer is written back so it reads again, and the conclusion is given`() {
+            // The engine shows 0.0000001 as 1E-7, which it can't read back without a decimal point.
+            val rules = "tiny(X, 0.0000001) :- expert_in(X, _)."
+            val tiny = RuleDeclaration.of("tiny(X, V)").withInput("expert_in(X, T)")
+
+            val derived = only(provider(rules = rules).withDeclaration(tiny).conclusions(RuleGoal.of("tiny('alice', V)")))
+
+            assertEquals("tiny('alice', 1.0e-7)", derived.conclusion)
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+
+        @Test
+        fun `a small real worked out by an arithmetic guard gives its conclusion`() {
+            val rules = "scaled(X, S) :- expert_in(X, T), confidence(expert_in(X, T), C), S is C / 10000000."
+            val scaled = RuleDeclaration.of("scaled(X, S)")
+                .withInput("expert_in(X, T)")
+                .withGuard("confidence(expert_in(X, T), C), S is C / 10000000")
+            val provider = provider(rules = rules).withDeclaration(scaled)
+            val goal = RuleGoal.of("scaled('alice', S)")
+
+            val derived = assertInstanceOf(Evidence.Derived::class.java, provider.evidence(goal))
+            assertTrue(PrologEngine.fromTheory("").query("(${derived.conclusion}) = scaled(_, S), S =:= 0.00000009"))
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+
+        @Test
+        fun `a negative number written after an operator in the goal still reads as one term`() {
+            // Written straight after the minus, -5 would make --, which Prolog reads as one unknown operator.
+            val rules = "gap(alice-(-5)) :- expert_in(alice, _)."
+            val gap = RuleDeclaration.of("gap(X-D)").withInput("expert_in(X, T)")
+
+            val derived = only(provider(rules = rules).withDeclaration(gap).conclusions(RuleGoal.of("gap('alice'-D)")))
+
+            assertTrue(PrologEngine.fromTheory("").query("(${derived.conclusion}) == gap(alice-(-5))"))
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+
+        @Test
+        fun `a compound written next to an operator in the goal keeps its own shape`() {
+            // Unbracketed, a :- b - 1 would read as a :- (b - 1), a different term that the rule head doesn't match.
+            val rules = "op_pair((a :- b) - 1) :- expert_in(alice, _)."
+            val opPair = RuleDeclaration.of("op_pair(X - N)").withInput("expert_in(alice, T)")
+
+            val derived = only(provider(rules = rules).withDeclaration(opPair).conclusions(RuleGoal.of("op_pair(X - 1)")))
+
+            assertTrue(PrologEngine.fromTheory("").query("(${derived.conclusion}) == op_pair((a :- b) - 1)"))
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+    }
+
+    @Nested
+    inner class RoundTripTerms {
+
+        private val holds = RuleDeclaration.of("holds(X, V)").withInput("expert_in(X, T)")
+
+        // Each value as Prolog source; the engine binds it, the provider writes it back, and the written text
+        // must read as the very same term.
+        private val table = listOf(
+            "atom with a line feed" to "'a\\nb'",
+            "atom with a carriage return" to "'a\\rb'",
+            "atom with a tab" to "'a\\tb'",
+            "atom with a backslash" to "'a\\\\b'",
+            "atom with a single quote" to "'it''s'",
+            "atom with another control character" to "'a\\x7\\b'",
+            "atom with a NUL" to "'a\\x0\\b'",
+            "atom with a non-ASCII letter" to "'café'",
+            "empty atom" to "''",
+            "mixed-case atom" to "'Alice Smith'",
+            "integer" to "42",
+            "zero" to "0",
+            "negative integer" to "-5",
+            "integer beyond Long" to "123456789012345678901234567890",
+            "negative integer beyond Long" to "-123456789012345678901234567890",
+            "real 1E-7" to "0.0000001",
+            "real 1.0E-7" to "1.0e-7",
+            "real 1.5E10" to "1.5e10",
+            "real 1E10" to "1.0e10",
+            "negative real" to "-2.5",
+            "negative small real" to "-0.0000001",
+            "whole real" to "2.0",
+            "plain real" to "0.9",
+            "huge real" to "1.5e300",
+            "compound holding a small real" to "f(0.0000001, -5, 'a\\nb', 'it''s')",
+            "compound holding a control character and a small real" to "f('a\\x7\\', 0.0000001)",
+            "list holding small reals" to "[0.0000001, -0.0000001, 1.0e10]",
+            "operator compound with a negative" to "1 - -5",
+        )
+
+        @Test
+        fun `every bound value is written back as text that reads as the same term`() {
+            assertAll(table.map { (name, source) ->
+                Executable {
+                    val rules = "holds(X, V) :- expert_in(X, _), V = ($source)."
+                    val conclusions = provider(rules = rules).withDeclaration(holds)
+                        .conclusions(RuleGoal.of("holds('alice', V)"))
+
+                    assertEquals(1, conclusions.size, "$name: expected one conclusion")
+                    val derived = conclusions.single()
+                    assertEquals(listOf("prop-1"), derived.inputIds, "$name: cited ids")
+                    assertTrue(
+                        PrologEngine.fromTheory("").query("(${derived.conclusion}) = holds(_, W), W == ($source)"),
+                        "$name: ${derived.conclusion} should read back as holds('alice', $source)",
+                    )
+                }
+            })
+        }
     }
 
     @Nested
@@ -434,6 +544,51 @@ class PrologEvidenceProviderTest {
             val derived = only(provider.conclusions(RuleGoal.of("tagged(foo_bar)")))
             assertEquals("tagged(foo_bar)", derived.conclusion)
             assertEquals(listOf("prop-v"), derived.inputIds)
+        }
+
+        @Test
+        fun `an atom holding an escape never cites the projected atom its escape letter spells`() {
+            // 'a\nb' holds a line break; dropping the backslash would read it as anb, the projected atom.
+            val provider = taggedProvider("anb", "value('a\\nb').")
+            val goal = RuleGoal.of("tagged('a\\nb')")
+
+            assertTrue(provider.conclusions(goal).isEmpty())
+            assertInstanceOf(Evidence.Missing::class.java, provider.evidence(goal))
+        }
+
+        @Test
+        fun `only the plain projected atom cites when an escaped atom also answers`() {
+            val provider = taggedProvider("anb", "value('a\\nb').")
+
+            val derived = only(provider.conclusions(RuleGoal.of("tagged(X)")))
+            assertEquals("tagged('anb')", derived.conclusion)
+            assertEquals(listOf("prop-v"), derived.inputIds)
+
+            assertEquals(listOf("prop-v"), only(provider.conclusions(RuleGoal.of("tagged(anb)"))).inputIds)
+        }
+
+        @Test
+        fun `a declared input spelling an atom with an escape other than backslash or quote cites nothing`() {
+            // '\x61\b' reads as the atom ab, but escapes other than \\ and \' are never read for a citation, so this
+            // declaration finds no fact even though the proof used value(ab).
+            val rules = "has_a(X) :- expert_in(X, _), value(ab)."
+            val facts = baseFacts + fact("value", "ab", confidence = 0.9, ids = listOf("prop-v"))
+            val escaped = RuleDeclaration.of("has_a(X)").withInput("expert_in(X, T)").withInput("value('\\x61\\b')")
+            val plain = RuleDeclaration.of("has_a(X)").withInput("expert_in(X, T)").withInput("value(ab)")
+
+            assertTrue(provider(facts, rules).withDeclaration(escaped).conclusions(RuleGoal.of("has_a('alice')")).isEmpty())
+            assertEquals(
+                listOf("prop-1", "prop-v"),
+                only(provider(facts, rules).withDeclaration(plain).conclusions(RuleGoal.of("has_a('alice')"))).inputIds,
+            )
+        }
+
+        @Test
+        fun `an escaped goal argument cites the fact Prolog reads it as, because the proof used that atom`() {
+            // Prolog itself reads '\x61\' in the goal as a, so the input is value(a), exactly the projected atom.
+            val provider = taggedProvider("a", "value(a).")
+
+            assertEquals(listOf("prop-v"), only(provider.conclusions(RuleGoal.of("tagged('\\x61\\')"))).inputIds)
         }
 
         @Test

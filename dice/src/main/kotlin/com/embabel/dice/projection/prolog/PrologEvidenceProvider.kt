@@ -52,11 +52,16 @@ import java.time.ZoneOffset
  * and arity returns nothing without running a query, but a declared rule that loops would loop here too, because
  * every answer is worked out before the goal's limit is applied. Only ask declared rules that don't recurse.
  *
- * **Answers go back in as real terms.** Each answer's values are written into the goal and the declared clause the
- * way Prolog holds them: numbers bare, compound terms as their term text, and atoms in single quotes exactly as
- * they are, case included. Prolog tells the provider which kind each value is, so an atom that looks like a number,
- * such as `'2024'`, stays an atom. A lone `_` in a declared input or guard gets its own variable name before the
- * clause runs, so the fact it matched is known and only that fact is cited.
+ * **Answers go back in as real terms.** Each answer's values are written into the goal and the declared clause as
+ * text Prolog reads back as the same term: integers bare, atoms in single quotes exactly as they are, case included,
+ * and compound terms as their term text. Prolog tells the provider which kind each value is, so an atom that looks
+ * like a number, such as `'2024'`, stays an atom and a whole real such as `2.0` stays a real. The engine's own
+ * display of a real can't always be read back (it shows 0.0000001 as `1E-7`), so every real, on its own or inside a
+ * compound, is written with a digit on both sides of the decimal point, such as `1.0e-7`. A compound that isn't
+ * closed by its own brackets, such as `a :- b`, is wrapped in parentheses, and a negative number written straight
+ * after an operator gets a space, so the goal around it can't change how it reads. A lone `_` in a declared input
+ * or guard gets its own variable name before the clause runs, so the fact it matched is known and only that fact
+ * is cited.
  *
  * **Citations need atom arguments.** Facts are written to Prolog through [PrologFact.quoteAtom], which lower-cases
  * and replaces anything outside `a-z`, `0-9` and `_`, so every projected argument is an atom in that form. An input
@@ -64,6 +69,10 @@ import java.time.ZoneOffset
  * such as `2024`, a compound term such as `f(a)`, or an atom such as `'Foo Bar'` that only normalises to `foo_bar`
  * cites nothing, because the proof can't have used the projected fact. Two recorded facts whose arguments only differ
  * in case or punctuation, such as `Alice-Smith` and `alice smith`, are the same projected fact and both are cited.
+ * A quoted atom is compared by the text it stands for. Only the escapes `\\` and `\'` (and a doubled quote) are
+ * read; an atom written with any other escape, such as `'a\nb'` or `'\x61\'`, cites nothing at all. That is safe
+ * because a projected atom only ever holds `a-z`, `0-9` and `_`, and it is simpler to trust than decoding every
+ * escape the engine accepts.
  *
  * **Confidence** is the weakest input: each matched fact counts at the highest decayed confidence among its source
  * propositions found in the repository (an invalidated one counts at 0.0), or its own confidence when none is found
@@ -175,9 +184,14 @@ class PrologEvidenceProvider private constructor(
         for (answer in engine.queryAll(probedGoal)) {
             if (conclusions.size >= goal.limit) break
             if (!answer.success) continue
+            // A value the provider can't write so it reads back the same would ground the wrong goal, so the
+            // answer is left out instead.
+            var unwritable = false
             val groundGoal = rewriteVariables(namedGoal) { name ->
-                kindOf[name]?.let { kind -> answer.bindings[name]?.let { termText(it, answer.bindings[kind]) } }
+                val value = answer.bindings[name] ?: return@rewriteVariables null
+                termText(value, kindOf[name]?.let { answer.bindings[it] }).also { if (it == null) unwritable = true }
             }
+            if (unwritable) continue
             if (!seen.add(groundGoal)) continue
             val facts = declared.firstNotNullOfOrNull { trace(it, groundGoal) } ?: continue
             conclusions += derive(goal, groundGoal, goalVariables, answer.bindings, facts)
@@ -287,8 +301,11 @@ class PrologEvidenceProvider private constructor(
 
         private fun isNameChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_'
 
+        private const val SYMBOL_CHARS = "+-*/\\^<>=~:.?@#&$"
+
         // Rewrites every variable in a Prolog term with the value [replace] gives it, leaving quoted text alone.
-        // A variable is a name starting with an upper-case letter or `_`, the anonymous `_` included.
+        // A variable is a name starting with an upper-case letter or `_`, the anonymous `_` included. A value that
+        // starts with a symbol, such as -5, gets a space after another symbol, or `X - -5` would read as `X --5`.
         private fun rewriteVariables(text: String, replace: (String) -> String?): String = buildString {
             var quote: Char? = null
             var i = 0
@@ -311,7 +328,9 @@ class PrologEvidenceProvider private constructor(
                     while (end < text.length && isNameChar(text[end])) end++
                     val name = text.substring(i, end)
                     val isVariable = name[0].isUpperCase() || name[0] == '_'
-                    append(if (isVariable) replace(name) ?: name else name)
+                    val written = if (isVariable) replace(name) ?: name else name
+                    if (written.first() in SYMBOL_CHARS && lastOrNull()?.let { it in SYMBOL_CHARS } == true) append(' ')
+                    append(written)
                     i = end
                 } else {
                     append(c)
@@ -320,14 +339,107 @@ class PrologEvidenceProvider private constructor(
             }
         }
 
-        // Asks Prolog what kind of value a variable holds: n for a number, a for an atom, anything else for the rest.
+        // Asks Prolog what kind of value a variable holds: i for an integer, r for a real, a for an atom, and t for
+        // anything else.
         private fun kindProbe(variable: String, kind: String): String =
-            "(number($variable) -> $kind = n ; atom($variable) -> $kind = a ; $kind = t)"
+            "(integer($variable) -> $kind = i ; float($variable) -> $kind = r ; atom($variable) -> $kind = a ; $kind = t)"
 
-        // Writes one answer value back as Prolog reads it. Numbers and compound terms come from the engine as
-        // valid term text already; an atom comes back bare, so it's quoted again, or when its kind is unknown.
-        private fun termText(value: String, kind: String?): String =
-            if (kind == "n" || kind == "t") value else quotedAtom(value)
+        // Writes one answer value back as text Prolog reads as the same term, or null when that can't be done. The
+        // engine's display text is only a starting point: an atom comes back bare and is quoted again (also when
+        // its kind is unknown), and numbers are checked and rewritten where the display wouldn't read back.
+        private fun termText(value: String, kind: String?): String? = when (kind) {
+            "i" -> value.toBigIntegerOrNull()?.toString()
+            "r" -> realText(value)
+            "t" -> compoundText(value)
+            else -> quotedAtom(value)
+        }
+
+        private val INTEGER = Regex("-?\\d+")
+
+        // A real Prolog reads back: digits, a decimal point, digits, and an optional exponent.
+        private val READABLE_REAL = Regex("-?\\d+\\.\\d+(?:[eE][+-]?\\d+)?")
+
+        // A real as Prolog reads it back. Display text that already reads back, such as 0.9, is kept; anything else,
+        // such as 1E-7, is rebuilt from its digits as one digit, a decimal point, the rest and the exponent: 1.0e-7.
+        private fun realText(display: String): String? {
+            if (READABLE_REAL.matches(display)) return display
+            val real = display.toBigDecimalOrNull() ?: return null
+            val digits = real.unscaledValue().abs().toString()
+            val exponent = digits.length - 1 - real.scale()
+            val sign = if (real.signum() < 0) "-" else ""
+            return "$sign${digits.first()}.${digits.drop(1).ifEmpty { "0" }}e$exponent"
+        }
+
+        // A number inside a compound's text. The engine shows a real there with ".0" added when its display has no
+        // decimal point, so 0.0000001 shows as 1E-7.0; the token takes that suffix along so it can be rewritten.
+        private val NUMBER_TOKEN = Regex("\\G\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?(?:\\.0)?")
+
+        // A compound's term text with every number made readable and, unless its own brackets close it, wrapped
+        // in parentheses. Atoms inside are already quoted and escaped by the engine and are copied as they are.
+        private fun compoundText(display: String): String? {
+            val text = buildString {
+                var i = 0
+                while (i < display.length) {
+                    val c = display[i]
+                    if (c in QUOTES) {
+                        val end = quotedEnd(display, i)
+                        append(display, i, end)
+                        i = end
+                    } else if (c.isDigit() && (i == 0 || !isNameChar(display[i - 1]))) {
+                        val token = NUMBER_TOKEN.find(display, i)!!.value
+                        val number = if (INTEGER.matches(token) || READABLE_REAL.matches(token)) token
+                        else realText(token.removeSuffix(".0")) ?: return null
+                        append(number)
+                        i += token.length
+                    } else {
+                        append(c)
+                        i++
+                    }
+                }
+            }
+            return if (standsAlone(text)) text else "($text)"
+        }
+
+        // True when the text is one name, or a functor, list, curly or bracketed term closed by its last character,
+        // so an operator next to it can't pull part of it away.
+        private fun standsAlone(text: String): Boolean {
+            var depth = 0
+            var opened = false
+            var i = 0
+            while (i < text.length) {
+                val c = text[i]
+                if (opened && depth == 0) return false
+                when (c) {
+                    in QUOTES -> {
+                        i = quotedEnd(text, i)
+                        continue
+                    }
+                    '(', '[', '{' -> { depth++; opened = true }
+                    ')', ']', '}' -> depth--
+                    else -> if (depth == 0 && !isNameChar(c)) return false
+                }
+                i++
+            }
+            return depth == 0
+        }
+
+        // The index just past the quoted text that opens at [start], read the same way as the other scanners here:
+        // a backslash escapes the next character and a doubled quote stands for one quote. The end of [text] when
+        // the quote never closes.
+        private fun quotedEnd(text: String, start: Int): Int {
+            val quote = text[start]
+            var i = start + 1
+            while (i < text.length) {
+                val c = text[i]
+                when {
+                    c == '\\' -> i += 2
+                    c == quote && text.getOrNull(i + 1) == quote -> i += 2
+                    c == quote -> return i + 1
+                    else -> i++
+                }
+            }
+            return text.length
+        }
 
         // Quotes an atom exactly as it is. The backslash and the quote are escaped, and so are line feeds, carriage
         // returns and tabs, which would otherwise break the query the atom is written into.
@@ -378,7 +490,8 @@ class PrologEvidenceProvider private constructor(
         private val BARE_ATOM = Regex("[a-z][a-zA-Z0-9_]*")
 
         // The text of an argument that is an atom, either quoted or bare, or null for a number, a compound term or
-        // anything else, which can never be a projected fact's argument.
+        // anything else, which can never be a projected fact's argument. Inside quotes only \\, \' and a doubled
+        // quote are read; any other escape gives null, so the atom is never cited (see the class docs).
         private fun atomText(arg: String): String? {
             if (BARE_ATOM.matches(arg)) return arg
             if (arg.length < 2 || !arg.startsWith('\'') || !arg.endsWith('\'')) return null
@@ -388,7 +501,10 @@ class PrologEvidenceProvider private constructor(
                 while (i < inner.length) {
                     val c = inner[i]
                     when {
-                        c == '\\' && i + 1 < inner.length -> { append(inner[i + 1]); i += 2 }
+                        c == '\\' -> when (val next = inner.getOrNull(i + 1)) {
+                            '\\', '\'' -> { append(next); i += 2 }
+                            else -> return null
+                        }
                         c == '\'' && inner.getOrNull(i + 1) == '\'' -> { append(c); i += 2 }
                         // A lone quote closes the atom early, so this is a term such as 'f'('a'), not one atom.
                         c == '\'' -> return null
