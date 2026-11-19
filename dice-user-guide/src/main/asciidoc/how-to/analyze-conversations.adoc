@@ -120,14 +120,47 @@ result yourself and need the window to stay unrecorded when the write fails, use
 `IncrementalPropositionExtraction`, or keep the chunk history store in the same transaction as the
 write.
 
-`extractPropositions` drains the events that are queued, then throws the first failure it saw. Every
-exception it throws is unchecked. After the first failure the drain finishes only the events queued
-at that moment, and events queued later wait for the next call. A failure while building the context
+`extractPropositions` runs the caller's event on the caller's thread and throws its failure. Every
+exception it throws is unchecked. A call from another thread waits for the running one to finish
+instead of handing its event over, so one caller's failure never rolls back another caller's work.
+A published `SourceAnalysisRequestEvent` is handed to a single thread DICE owns, and the publisher
+returns at once. Its queue holds 1,000 events; one it cannot take is logged at `error` and dropped,
+and the next event for the source analyses the window again. If your application defines exactly
+one `TaskDecorator` bean, each event is decorated with it on the publisher's thread, so a context it
+carries, such as a tenant, reaches the extraction. For any other decorator, or to size the queue
+yourself, bind your own executor before the first event:
+
+[source,java]
+----
+ThreadPoolTaskExecutor events = new ThreadPoolTaskExecutor();
+events.setCorePoolSize(1);
+events.setMaxPoolSize(1);
+events.setQueueCapacity(500);
+events.setTaskDecorator(tenantDecorator);
+events.initialize();
+extraction.withEventExecutor(events);
+----
+
+The executor must throw `RejectedExecutionException` when it is full, as `ThreadPoolTaskExecutor`
+does by default, rather than drop events silently. Published events run outside any transaction, so
+to keep a window's claims and its bookmark in one transaction, call `extractPropositions` from your
+own `@Transactional` method. Give extraction an executor of its own. If a running extraction waits on the same executor, for
+example through concurrent chunk extraction, the two can wait for each other forever. When the
+Spring context closes, `close()` gives DICE's own queued events 30 seconds to finish.
+A call made from inside a running extraction on the same thread, such as from a save listener, is
+queued and run after the current window is recorded. After the first failure only the events queued
+at that moment run. A failure while building the context
 or analysing a window is logged, and that window is retried on the next event. A
 `LineageNotRecordedException` that reaches the drain is thrown, also when it comes before the store
 step. One thrown by a provider while the context is built is logged like any other provider failure.
-If the thread's interrupt flag is set, the drain stops and the events still queued wait for the next
-call. A store or pipeline that catches an interrupt must set the flag again, as is the Java convention.
+Callers waiting for the lock run in the order they arrived. A direct call waits at most 30 seconds
+and then throws `ExtractionBusyException`. Nothing of its event was stored, so roll back and try
+again later. The limit exists because a caller inside a transaction may hold a database lock the
+running extraction needs, which on SQLite is the whole file's write lock.
+If the thread's interrupt flag is set, the run stops and the events still queued are dropped. If the
+caller's own event never ran, because the thread was interrupted before or while it waited, the call
+throws a `CancellationException` and the flag stays set, so a surrounding transaction can roll back.
+The next event for the same source analyses the window again. A store or pipeline that catches an interrupt must set the flag again, as is the Java convention.
 
 A failure that reaches the caller lets a host transaction roll back. For one-time processing, keep the
 chunk history in the same transactional store as the claims. The Drivine stores do this. Call
@@ -141,6 +174,11 @@ second copy: the in-memory repository keeps both, and the Drivine repository reu
 claim with the same text and writes nothing when it already holds the provenance. If the source has grown since and the retried window
 ends later, it gets a new chunk id, and the retry reinforces the stored claim again. So does the
 first retry of a window whose failed attempt ran on a DICE version that gave windows random ids.
+
+A transaction alone does not stop two callers from analysing the same window. DICE releases its lock
+when `extractPropositions` returns, before the host commits, so a second transaction can still read
+the old bookmark. If two transactions can extract from the same source at once, serialize them
+through the commit, for example with one worker per source.
 
 A window whose store or record step fails is logged at `error` with its source, its context and its
 item range, and the exception is attached. The same source and start index logged on every event

@@ -39,9 +39,18 @@ import com.embabel.dice.proposition.PropositionRepository
 import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
-import org.springframework.scheduling.annotation.Async
+import org.springframework.beans.factory.BeanFactory
+import org.springframework.beans.factory.BeanFactoryAware
+import org.springframework.core.task.TaskDecorator
 import java.io.InputStream
+import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executor
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantLock
@@ -51,8 +60,16 @@ import java.util.function.Function
  * Generic async proposition extraction from incremental sources (conversations, message streams, etc.).
  * Uses [IncrementalAnalyzer] for windowed, deduplicated processing.
  *
- * This is NOT a Spring component — consuming applications create it as a `@Bean`
- * so that `@EventListener` and `@Async` are honoured by the Spring container.
+ * This is not a Spring component. An application creates it as a `@Bean` so that its
+ * `@EventListener` methods are registered and [close] runs when the context shuts down.
+ *
+ * A published [SourceAnalysisRequestEvent] is handed to an executor and the publisher returns at
+ * once. By default that is a single thread DICE owns, with a bounded queue, so events waiting for
+ * a running extraction never hold threads of the application's own pools. If the application
+ * defines exactly one `TaskDecorator` bean, each event is decorated with it on the publisher's
+ * thread, the way Spring Boot decorates its own executors. An application that needs a different
+ * decorator, more queue room or its own lifecycle binds its own executor with [withEventExecutor].
+ * Direct calls to [extractPropositions] run on the caller's thread.
  *
  * @param contextIdProvider maps the event's [NamedEntity] user to the context ID
  *        used for proposition storage. Defaults to [NamedEntity.getId].
@@ -120,7 +137,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * [SourceAnalysisContext.mintedEntityProperties].
      */
     private val mintedEntityPropertiesProvider: (NamedEntity) -> Map<String, Any> = { _ -> emptyMap() },
-) {
+) : AutoCloseable, BeanFactoryAware {
 
     /**
      * Where `(proposition, run)` links go, once a host has bound one with [withRunLineage].
@@ -315,24 +332,195 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         )
 
     private val windowConfig = WindowConfig(properties.windowSize, properties.overlapSize, properties.triggerInterval)
-    private val extractionLock = ReentrantLock()
+    // Fair, so callers already waiting run in the order they arrived, as the old queue ran them.
+    // A newer snapshot of a source can then never move the bookmark past an older one still waiting.
+    private val extractionLock = ReentrantLock(true)
     private val pendingEvents = ConcurrentLinkedQueue<SourceAnalysisRequestEvent>()
     private val inFlightCount = AtomicInteger(0)
 
+    /** The executor bound with [withEventExecutor], or null to use [ownEventExecutor]. */
+    @Volatile
+    private var boundEventExecutor: Executor? = null
+
+    /** DICE's own event thread, created on the first published event when none is bound. */
+    @Volatile
+    private var ownEventExecutor: ExecutorService? = null
+
+    /** Guards creating and closing [ownEventExecutor], and binding with [withEventExecutor]. */
+    private val eventExecutorGuard = Any()
+
     /**
-     * Synchronous listener — runs on the publisher's thread during publishEvent().
-     * Increments the in-flight counter BEFORE the async handler is dispatched,
-     * so [isIdle] can see events that are in Spring's executor queue.
+     * How long a direct caller waits for another extraction before giving up with
+     * [ExtractionBusyException]: 30 seconds, matching SQLite's default busy timeout. A field rather
+     * than a constant only so a test can shorten it.
      */
-    @EventListener
+    private var directCallLockWaitMillis: Long = 30_000L
+
+    /** True on a thread while it runs a published event, which may wait for the lock without limit. */
+    private val runningPublishedEvent = ThreadLocal<Boolean>()
+
+    /** Set by [close]. Once set, published events are refused instead of starting a new thread. */
+    private var eventExecutorClosed = false
+
+    /**
+     * The application's `TaskDecorator`, when it has exactly one, applied to every event handed to
+     * DICE's own thread, the way Spring Boot applies it to its own executors.
+     */
+    @Volatile
+    private var taskDecorator: TaskDecorator? = null
+
+    /**
+     * Picks up the application's `TaskDecorator`, if it defines exactly one, so a context it carries,
+     * such as a tenant or a no-logging marker, reaches DICE's own event thread. Spring calls this
+     * when the extractor is a bean.
+     */
+    override fun setBeanFactory(beanFactory: BeanFactory) {
+        taskDecorator = beanFactory.getBeanProvider(TaskDecorator::class.java).getIfUnique()
+    }
+
+    /**
+     * Runs published events on [executor] instead of DICE's own thread.
+     *
+     * Use it when the work needs a `TaskDecorator` other than the application's single
+     * `TaskDecorator` bean, which DICE's own thread already applies, or when you want to size the
+     * queue yourself. Give extraction an executor
+     * of its own: if the executor that runs published events is also one that a running extraction
+     * waits on, such as the one DICE's concurrent chunk extraction uses, the two can wait for each
+     * other forever. DICE does not shut a bound executor down; its owner does.
+     *
+     * The executor must throw `RejectedExecutionException` when it cannot take an event, as Spring's
+     * `ThreadPoolTaskExecutor` does by default. One that drops tasks silently, such as a pool with
+     * `DiscardPolicy`, loses the event without a log, and [isIdle] then never turns true. Published
+     * events run outside any transaction a subclass declares on [onSourceAnalysisRequestEvent]; to
+     * keep claims and the window in one transaction, call [extractPropositions] from your own
+     * transactional method instead.
+     *
+     * Bind once, before the extractor handles its first published event.
+     *
+     * Java:
+     * ```java
+     * ThreadPoolTaskExecutor events = new ThreadPoolTaskExecutor();
+     * events.setCorePoolSize(1);
+     * events.setMaxPoolSize(1);
+     * events.setQueueCapacity(500);
+     * events.setTaskDecorator(tenantDecorator);
+     * events.initialize();
+     * extraction.withEventExecutor(events);
+     * ```
+     *
+     * EXPERIMENTAL.
+     *
+     * @param executor Runs each published event.
+     * @return this extractor.
+     * @throws IllegalStateException if an executor is already bound, or a published event has
+     *         already started DICE's own thread.
+     */
+    @ApiStatus.Experimental
+    open fun withEventExecutor(executor: Executor): IncrementalPropositionExtraction {
+        synchronized(eventExecutorGuard) {
+            check(boundEventExecutor == null && ownEventExecutor == null) {
+                "the event executor is already set on this extractor. Bind it once, before the " +
+                    "extractor handles its first published event"
+            }
+            boundEventExecutor = executor
+        }
+        return this
+    }
+
+    /**
+     * Counts a published event before it is handed to the executor, so [isIdle] sees events still
+     * waiting there. [onSourceAnalysisRequestEvent] calls it, so counting and handing off happen in
+     * the same listener and another listener cannot come between them.
+     */
     open fun trackEvent(event: SourceAnalysisRequestEvent) {
         inFlightCount.incrementAndGet()
     }
 
-    @Async
+    /**
+     * Hands a published event to the event executor and returns at once. On that thread the event
+     * waits for any extraction already running, then runs. If the executor refuses the event, it is
+     * logged at `error` and dropped; the next event for the same source analyses the window again.
+     * A failure while it runs is logged at `error`, because no caller is waiting for it.
+     */
     @EventListener
     open fun onSourceAnalysisRequestEvent(event: SourceAnalysisRequestEvent) {
-        extractPropositions(event)
+        trackEvent(event)
+        // Releases the count [trackEvent] took, exactly once, whichever path ends the event: it runs,
+        // the decorator around it fails, or it is never submitted.
+        val released = AtomicBoolean(false)
+        val release = { if (released.compareAndSet(false, true)) inFlightCount.decrementAndGet() }
+        val publisher = Thread.currentThread()
+        val task = Runnable {
+            // An executor that runs the task inline, such as a pool with CallerRunsPolicy, runs it on
+            // the publisher's thread, which may hold a transaction. It then waits like a direct caller.
+            if (Thread.currentThread() !== publisher) runningPublishedEvent.set(true)
+            try {
+                extractPropositions(event)
+            } catch (e: Exception) {
+                logger.error("Extraction failed for a published SourceAnalysisRequestEvent", e)
+            } finally {
+                runningPublishedEvent.remove()
+                release()
+            }
+        }
+        try {
+            val executor = eventExecutor()
+            val decorated = if (executor === boundEventExecutor) task else taskDecorator?.decorate(task) ?: task
+            executor.execute {
+                try {
+                    decorated.run()
+                } finally {
+                    release()
+                }
+            }
+        } catch (e: Exception) {
+            release()
+            logger.error("A SourceAnalysisRequestEvent could not be handed to the event executor, so it was dropped", e)
+        }
+    }
+
+    /**
+     * Stops handing published events off, and stops DICE's own event thread if it was started.
+     * Events already queued there get up to 30 seconds to finish, then the thread is interrupted.
+     * A bound executor is not shut down, but no new events go to it. Spring calls this when the
+     * context closes.
+     */
+    override fun close() {
+        val own = synchronized(eventExecutorGuard) {
+            eventExecutorClosed = true
+            ownEventExecutor
+        } ?: return
+        own.shutdown()
+        try {
+            if (!own.awaitTermination(CLOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                logger.warn("Extraction events still running after {} seconds; interrupting them", CLOSE_TIMEOUT_SECONDS)
+                countDiscarded(own.shutdownNow())
+            }
+        } catch (e: InterruptedException) {
+            countDiscarded(own.shutdownNow())
+            Thread.currentThread().interrupt()
+        }
+    }
+
+    /** Releases the count of each queued event that shutdown removed before it ran. */
+    private fun countDiscarded(discarded: List<Runnable>) {
+        if (discarded.isEmpty()) return
+        logger.warn("Dropping {} published event(s) still queued at shutdown", discarded.size)
+        inFlightCount.addAndGet(-discarded.size)
+    }
+
+    private fun eventExecutor(): Executor = synchronized(eventExecutorGuard) {
+        if (eventExecutorClosed) throw RejectedExecutionException("the extractor is closed")
+        boundEventExecutor ?: ownEventExecutor ?: ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            LinkedBlockingQueue(EVENT_QUEUE_CAPACITY),
+            // No inherited thread-locals: the first publisher's context must not stick to the thread
+            // and leak into later events. The decorator carries each publisher's context per event.
+            { task -> Thread(null, task, "dice-incremental-extraction", 0, false).apply { isDaemon = true } },
+        ).also { ownEventExecutor = it }
     }
 
     /**
@@ -342,9 +530,23 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     open val isIdle: Boolean
         get() = inFlightCount.get() <= 0 && pendingEvents.isEmpty() && !extractionLock.isLocked
 
+    /**
+     * Runs [event] on the calling thread, after any extraction already running.
+     *
+     * @param event The event to run.
+     * @throws ExtractionBusyException if another extraction runs for more than 30 seconds while this
+     *         call waits. The event was not run and can be retried.
+     * @throws CancellationException if the thread is interrupted before [event] runs. The event is
+     *         dropped and the interrupt flag stays set.
+     */
     open fun extractPropositions(event: SourceAnalysisRequestEvent) {
-        pendingEvents.add(event)
-        processPendingEvents()
+        inFlightCount.incrementAndGet()
+        if (extractionLock.isHeldByCurrentThread) {
+            pendingEvents.add(event)
+            logger.debug("Extraction requested from inside a drain, {} event(s) queued", pendingEvents.size)
+            return
+        }
+        processOnThisThread(event)
     }
 
     /**
@@ -498,8 +700,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
 
         if (result != null && result.propositions.isNotEmpty()) {
             logger.info(result.infoString(true, 1))
-            persistAndProject(result, context)
-            logAllPropositions(contextIdProvider.apply(user))
+            logStored(persistAndProject(result, context))
             logger.info("Remembered source: {}", sourceId)
         } else {
             logger.info("No propositions extracted from source: {}", sourceId)
@@ -509,65 +710,98 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
     // -- internal ---------------------------------------------------------
 
     /**
-     * Drains [pendingEvents] under [extractionLock], one event at a time.
+     * Runs [event] on the calling thread under [extractionLock], then any events queued from inside
+     * it on the same thread, and throws the first failure.
      *
-     * A failure on one queued event does not cost the rest of the queue. This loop catches what
-     * `processEvent` throws for each event and remembers the first failure. At that moment it
-     * counts the events still queued, finishes only those, polls no further and starts no second
-     * drain, so a save listener that keeps queueing events cannot hold the failure back. Anything
-     * queued after the first failure waits for the next call. The first failure is then rethrown,
-     * so it reaches whoever called [extractPropositions]. A host that runs extraction inside its
-     * own transaction has to see that failure to roll the transaction back, and a STRICT lineage
-     * failure has to reach the caller that asked for it. Each later failure is logged at `warn`.
-     * The first failure is rethrown unchanged, since it may belong to the store and outlive the drain.
-     * Without a failure, the drain keeps polling until the queue is empty, then drains again if
-     * another thread queued an event after it let go of the lock.
+     * Each caller runs its own event. A caller on another thread waits for the lock rather than
+     * handing its event to the thread that holds it, so an event always runs on the thread, and
+     * inside the transaction, of the caller that submitted it. One caller's failure can never roll
+     * back another caller's work.
      *
-     * A call made on the thread that is already draining, for example from a save listener, leaves
-     * its event queued and returns. The outer drain runs that event after the current window is
-     * recorded, so the same window is not analysed twice.
+     * A call made on the thread that already holds the lock, for example from a save listener, is
+     * queued by [extractPropositions] and run here after the current window is recorded, so the
+     * same window is not analysed twice. Those events belong to this caller, so their failures are
+     * this caller's too. After the first failure only the events queued at that moment run, so a
+     * listener that keeps queueing cannot hold the failure back. Each later failure is logged at
+     * `warn`, and the first is rethrown unchanged.
      *
-     * The thread's interrupt flag stops the drain. The flag is checked before every poll, so a call
-     * that starts interrupted stores nothing. A store or pipeline that catches an interrupt must set
-     * the flag again before it returns or throws, as is the Java convention. The drain stops once
-     * the flag is set, the events still queued wait for the next call, and the first failure is
-     * rethrown with the flag left set.
+     * The thread's interrupt flag stops the run before the next event, and also stops a caller that
+     * is waiting for the lock. If the caller's own event never ran, a [CancellationException] is
+     * thrown so a host transaction can roll back. Events that do not run are dropped, and so are any events this run
+     * queued but did not reach, so none of them runs on another caller's thread. Dropping one loses
+     * nothing: an event only asks for the next window to be analysed, and the next event for that
+     * source does the same, because a window is recorded only after its claims are stored.
+     *
+     * @param event The caller's event.
      */
-    private fun processPendingEvents() {
-        if (extractionLock.isHeldByCurrentThread) {
-            logger.debug("Extraction requested from inside a drain, {} event(s) queued", pendingEvents.size)
-            return
-        }
-        if (!extractionLock.tryLock()) {
-            logger.debug("Extraction in progress, {} event(s) queued", pendingEvents.size)
-            return
+    private fun processOnThisThread(event: SourceAnalysisRequestEvent) {
+        try {
+            if (runningPublishedEvent.get() == true) {
+                // A published event holds no caller's transaction, so it can wait as long as it takes.
+                extractionLock.lockInterruptibly()
+            } else if (!extractionLock.tryLock(directCallLockWaitMillis, TimeUnit.MILLISECONDS)) {
+                countDropped(1)
+                throw ExtractionBusyException(
+                    "Another extraction ran for more than ${directCallLockWaitMillis / 1000} seconds; " +
+                        "this event was not run and can be retried",
+                )
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            countDropped(1)
+            throw CancellationException("Extraction interrupted while waiting for another run; its event was dropped")
         }
         var firstFailure: Exception? = null
-        var interrupted = false
         try {
-            // How many more events this drain may take. Unbounded until the first failure.
+            // How many more queued events this run may take. Unbounded until the first failure.
             var remaining = Int.MAX_VALUE
-            while (remaining > 0) {
+            var next: SourceAnalysisRequestEvent? = event
+            // The caller's own event is the first one taken, whatever its identity, since a save
+            // listener may queue the very same event object again.
+            var ownEventStarted = false
+            while (next != null) {
                 if (Thread.currentThread().isInterrupted) {
-                    interrupted = true
+                    countDropped(1)
+                    if (!ownEventStarted) {
+                        firstFailure = CancellationException("Extraction interrupted before its event ran; the event was dropped")
+                    } else {
+                        logger.info("Extraction interrupted, dropping the next event")
+                    }
                     break
                 }
-                val next = pendingEvents.poll() ?: break
-                if (firstFailure != null) remaining--
+                ownEventStarted = true
                 try {
                     processEvent(next)
                 } catch (e: Exception) {
                     if (firstFailure == null) remaining = pendingEvents.size
                     firstFailure = keepFirst(firstFailure, e)
                 }
+                if (remaining <= 0) break
+                next = pendingEvents.poll()
+                if (next != null && firstFailure != null) remaining--
             }
         } finally {
+            // Whatever is still queued was queued by this run. Drop it here, so it never runs on
+            // another caller's thread or inside another caller's transaction.
+            var left = 0
+            while (pendingEvents.poll() != null) left++
+            if (left > 0) {
+                logger.info("Dropping {} event(s) queued by this run that it did not reach", left)
+                countDropped(left)
+            }
             extractionLock.unlock()
         }
         firstFailure?.let { throw it }
-        if (!interrupted && pendingEvents.isNotEmpty()) {
-            processPendingEvents()
-        }
+    }
+
+    /**
+     * Balances the in-flight count for events that were dropped without being processed. Each call
+     * to [extractPropositions] counts its event once, and processing or dropping it releases that.
+     *
+     * @param events How many events were dropped.
+     */
+    private fun countDropped(events: Int) {
+        inFlightCount.addAndGet(-events)
     }
 
     /**
@@ -595,7 +829,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * A failure before the store step starts, while building the context or analysing the window, is
      * logged and swallowed, and the next event tries the window again. From the store step onwards
      * (storing, recording the window, projection and grounding) a failure is thrown to
-     * [processPendingEvents], which passes it on to whoever called [extractPropositions]. A host that
+     * [processOnThisThread], which passes it on to whoever called [extractPropositions]. A host that
      * runs extraction inside its own transaction has to see that failure to roll the transaction
      * back. A [LineageNotRecordedException] that escapes context building or analysis is thrown too,
      * and is logged at `error` with the run id. One that a provider throws inside context building
@@ -699,8 +933,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 return
             }
 
-            stored?.let { projectStored(it) }
-            logAllPropositions(contextIdProvider.apply(event.user))
+            stored?.let {
+                projectStored(it)
+                logStored(it)
+            }
         } catch (e: LineageNotRecordedException) {
             logger.error(
                 "Lineage not recorded for extraction run {}; attribution was asked for and could " +
@@ -850,9 +1086,10 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
      * @param result What the analysis produced.
      * @param context The analysis the result belongs to. Its run, if any, is attributed.
      */
-    private fun persistAndProject(result: ChunkPropositionResult, context: SourceAnalysisContext) {
-        projectStored(storeUnit(result, context))
-    }
+    private fun persistAndProject(
+        result: ChunkPropositionResult,
+        context: SourceAnalysisContext,
+    ): PropositionPersistenceResult = storeUnit(result, context).also { projectStored(it) }
 
     /**
      * Writes what an analysis produced as one [PersistUnit] and returns what the store holds for its
@@ -989,16 +1226,28 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
         }
     }
 
-    private fun logAllPropositions(contextId: String) {
-        val all = propositionRepository.findByContextIdValue(contextId)
-        val sorted = all.sortedBy { it.text }
-        logger.info("All propositions in context {} ({} total):", contextId, sorted.size)
-        for (p in sorted) {
-            logger.info("  [{}] confidence={} '{}'", p.status, p.confidence, p.text)
+    /**
+     * Logs the propositions this extraction stored, at `debug`. It uses what is already in memory,
+     * so it reads nothing from the store and cannot fail or disturb the host's transaction.
+     *
+     * @param persisted What the repository returned for the saved propositions.
+     */
+    private fun logStored(persisted: PropositionPersistenceResult) {
+        if (!logger.isDebugEnabled) return
+        val stored = persisted.distinctCanonicalPropositions.sortedBy { it.text }
+        logger.debug("Stored {} proposition(s):", stored.size)
+        for (p in stored) {
+            logger.debug("  [{}] confidence={} '{}'", p.status, p.confidence, p.text)
         }
     }
 
     companion object {
         private val logger = LoggerFactory.getLogger(IncrementalPropositionExtraction::class.java)
+
+        /** How many published events DICE's own thread holds before it refuses more. */
+        private const val EVENT_QUEUE_CAPACITY = 1_000
+
+        /** How long [close] lets queued events finish before it interrupts them. */
+        private const val CLOSE_TIMEOUT_SECONDS = 30L
     }
 }
