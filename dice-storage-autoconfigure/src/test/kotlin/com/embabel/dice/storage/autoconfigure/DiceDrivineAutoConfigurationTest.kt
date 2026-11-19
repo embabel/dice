@@ -18,6 +18,7 @@ package com.embabel.dice.storage.autoconfigure
 import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.incremental.ChunkHistoryStore
+import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
@@ -45,6 +46,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.context.annotation.Configurations
 import org.springframework.boot.context.annotation.ImportCandidates
+import org.springframework.boot.test.context.assertj.AssertableApplicationContext
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Bean
@@ -311,6 +313,50 @@ class DiceDrivineAutoConfigurationTest {
     }
 
     @Test
+    fun `with several datasources the collector trace schema goes only to the named datasource`() {
+        runnerWithCollector
+            .withPropertyValues(
+                *datasource("neo"),
+                *datasource("other"),
+                "embabel.dice.store.datasource=other",
+                "embabel.dice.collector.enabled=true",
+            )
+            .run { ctx -> assertCatalogOnlyOn(ctx, "collectorTraceSchema", "other") }
+    }
+
+    @Test
+    fun `with one datasource the collector trace schema keeps its original target`() {
+        runnerWithCollector
+            .withPropertyValues(*datasource("neo"), "embabel.dice.collector.enabled=true")
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<SchemaCatalog>("collectorTraceSchema").target).isEqualTo(DatabaseTarget.All)
+            }
+    }
+
+    @Test
+    fun `with several datasources the metamodel schema goes only to the named datasource`() {
+        runnerWithMetamodel
+            .withPropertyValues(
+                *datasource("neo"),
+                *datasource("other"),
+                "embabel.dice.store.datasource=other",
+                "embabel.dice.metamodel.enabled=true",
+            )
+            .run { ctx -> assertCatalogOnlyOn(ctx, "metamodelSchema", "other") }
+    }
+
+    @Test
+    fun `with one datasource the metamodel schema keeps its original target`() {
+        runnerWithMetamodel
+            .withPropertyValues(*datasource("neo"), "embabel.dice.metamodel.enabled=true")
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<SchemaCatalog>("metamodelSchema").target).isEqualTo(DatabaseTarget.All)
+            }
+    }
+
+    @Test
     fun `forcing in-memory with several datasources starts with no Drivine beans from DICE`() {
         runner
             .withPropertyValues(*datasource("neo"), *datasource("other"), "embabel.dice.store.type=in-memory")
@@ -367,6 +413,20 @@ class DiceDrivineAutoConfigurationTest {
     private val runnerWithCollector = runner.withConfiguration(
         AutoConfigurations.of(CollectorAutoConfiguration::class.java),
     )
+
+    // Metamodel governance only switches on when the host declares a schema.
+    private val runnerWithMetamodel = runner
+        .withConfiguration(AutoConfigurations.of(MetamodelAutoConfiguration::class.java))
+        .withUserConfiguration(HostDeclaredSchema::class.java)
+
+    /** Checks the catalog bean [name] targets [datasource] alone, and that Drivine would apply it nowhere else. */
+    private fun assertCatalogOnlyOn(ctx: AssertableApplicationContext, name: String, datasource: String) {
+        assertThat(ctx).hasNotFailed()
+        val catalog = ctx.getBean<SchemaCatalog>(name)
+        assertThat(catalog.target).isEqualTo(DatabaseTarget.Named(setOf(datasource)))
+        assertThat(SchemaTargets.resolve(listOf(catalog), ctx.getBean<DatabaseRegistry>()).databases)
+            .containsExactly(datasource)
+    }
 
     /** The schema catalogs DICE's own auto-configurations declared, by bean name. */
     private fun diceCatalogs(ctx: ApplicationContext): Map<String, SchemaCatalog> =
@@ -433,6 +493,14 @@ class DiceDrivineAutoConfigurationTest {
 
         @Bean
         open fun hostSchema(): SchemaCatalog = SchemaCatalog.of(RangeIndexSpec("HostThing", "id"))
+    }
+
+    /** A host that declares a schema, which is what turns DICE's metamodel governance on. */
+    @Configuration(proxyBeanMethods = false)
+    open class HostDeclaredSchema {
+
+        @Bean
+        open fun declaredSchemaSource(): DeclaredSchemaSource = FixedDeclaredSchemaSource()
     }
 
     /** A host that still writes the two beans itself, as hosts had to before. */
