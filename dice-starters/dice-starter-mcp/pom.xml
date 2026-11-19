@@ -31,12 +31,14 @@
         </dependency>
 
         <!--
-          dice-mcp-autoconfigure only marks this optional, and its auto-configuration stays off
-          unless McpToolExport is on the classpath, so the starter brings it in.
+          dice-mcp-autoconfigure only marks the MCP server optional, and its auto-configuration stays
+          off unless McpToolExport is on the classpath. The agent framework's MCP server starter brings
+          the server together with the auto-configuration that publishes McpToolExport tools, without
+          which the server starts with no DICE tools listed.
         -->
         <dependency>
             <groupId>com.embabel.agent</groupId>
-            <artifactId>embabel-agent-mcpserver</artifactId>
+            <artifactId>embabel-agent-starter-mcpserver</artifactId>
         </dependency>
     </dependencies>
 
