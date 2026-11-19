@@ -338,6 +338,59 @@ class PrologEvidenceProviderTest {
             assertEquals("employed('alice')", derived.conclusion)
             assertEquals(listOf("prop-a"), derived.inputIds)
         }
+
+        @Test
+        fun `an anonymous variable in the goal is filled in, so different answers stay separate conclusions`() {
+            val facts = listOf(
+                fact("expert_in", "alice", "kotlin", confidence = 0.9, ids = listOf("prop-a")),
+                fact("expert_in", "bob", "kotlin", confidence = 0.8, ids = listOf("prop-b")),
+            )
+
+            val conclusions = provider(facts, canHelpRule).withDeclaration(canHelp).conclusions(RuleGoal.of("can_help(_, T)"))
+
+            assertEquals(
+                listOf("can_help('alice', 'kotlin')", "can_help('bob', 'kotlin')"),
+                conclusions.map { it.conclusion },
+            )
+            assertEquals(listOf(listOf("prop-a"), listOf("prop-b")), conclusions.map { it.inputIds })
+            assertEquals("can_help(_, T)", conclusions.first().rule.expression)
+        }
+
+        @Test
+        fun `the fresh name for an anonymous variable in the goal never clashes with the goal's own variables`() {
+            // If the anonymous variable became Anon_1 it would be forced equal to the topic, and nothing would match.
+            val facts = listOf(fact("expert_in", "alice", "kotlin", confidence = 0.9, ids = listOf("prop-a")))
+
+            val derived = only(
+                provider(facts, canHelpRule).withDeclaration(canHelp).conclusions(RuleGoal.of("can_help(_, Anon_1)"))
+            )
+
+            assertEquals("can_help('alice', 'kotlin')", derived.conclusion)
+            assertEquals(listOf("prop-a"), derived.inputIds)
+        }
+
+        @Test
+        fun `an atom holding a line break is escaped, so its answer is still traced`() {
+            val rules = "label(X, 'a\\nb') :- expert_in(X, _)."
+            val label = RuleDeclaration.of("label(X, L)").withInput("expert_in(X, T)")
+
+            val derived = only(provider(rules = rules).withDeclaration(label).conclusions(RuleGoal.of("label('alice', L)")))
+
+            assertEquals("label('alice', 'a\\nb')", derived.conclusion)
+            assertEquals("a\nb", derived.rule.parameters["binding.L"])
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+
+        @Test
+        fun `an atom holding a carriage return or tab is escaped too`() {
+            val rules = "label(X, 'a\\rb\\tc') :- expert_in(X, _)."
+            val label = RuleDeclaration.of("label(X, L)").withInput("expert_in(X, T)")
+
+            val derived = only(provider(rules = rules).withDeclaration(label).conclusions(RuleGoal.of("label('alice', L)")))
+
+            assertEquals("label('alice', 'a\\rb\\tc')", derived.conclusion)
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
     }
 
     @Nested

@@ -70,7 +70,8 @@ import java.time.ZoneOffset
  * or no repository is set. With a repository the found propositions are also attached as the conclusion's inputs.
  *
  * Two answers with the same filled-in goal give one conclusion, citing the first proof found: declarations in the
- * order added, answers in Prolog's order. The goal's context is only used to name the search in a
+ * order added, answers in Prolog's order. A lone `_` in the goal is filled in like any other variable, so answers
+ * that differ only there stay separate conclusions. The goal's context is only used to name the search in a
  * [Evidence.Missing]; the projection is taken to hold the facts for that context already.
  *
  * Not provable is not false. A [Evidence.Missing] only says the recorded facts and declared rules don't reach the
@@ -159,9 +160,14 @@ class PrologEvidenceProvider private constructor(
         if (declared.isEmpty()) return emptyList()
 
         val goalVariables = variablesIn(goal.goal)
+        // Each lone _ in the goal gets a fresh name too, so its value comes back and is filled in. Left as _, two
+        // answers that differ only there would look like the same goal and one of them would be dropped.
+        val anonymous = freshNames("Anon_", goalVariables.toSet()).iterator()
+        val namedGoal = rewriteVariables(goal.goal) { if (it == "_") anonymous.next() else null }
+        val namedVariables = variablesIn(namedGoal)
         // The engine hands back every value as text, so the goal also asks Prolog what kind each value is.
-        val kindOf = goalVariables.asSequence().zip(freshNames("Kind_", goalVariables.toSet())).toMap()
-        val probedGoal = (listOf("(${goal.goal})") + kindOf.map { (name, kind) -> kindProbe(name, kind) })
+        val kindOf = namedVariables.asSequence().zip(freshNames("Kind_", namedVariables.toSet())).toMap()
+        val probedGoal = (listOf("($namedGoal)") + kindOf.map { (name, kind) -> kindProbe(name, kind) })
             .joinToString(", ")
 
         val seen = HashSet<String>()
@@ -169,7 +175,7 @@ class PrologEvidenceProvider private constructor(
         for (answer in engine.queryAll(probedGoal)) {
             if (conclusions.size >= goal.limit) break
             if (!answer.success) continue
-            val groundGoal = rewriteVariables(goal.goal) { name ->
+            val groundGoal = rewriteVariables(namedGoal) { name ->
                 kindOf[name]?.let { kind -> answer.bindings[name]?.let { termText(it, answer.bindings[kind]) } }
             }
             if (!seen.add(groundGoal)) continue
@@ -323,9 +329,11 @@ class PrologEvidenceProvider private constructor(
         private fun termText(value: String, kind: String?): String =
             if (kind == "n" || kind == "t") value else quotedAtom(value)
 
-        // Quotes an atom exactly as it is, escaping only the backslash and the quote.
+        // Quotes an atom exactly as it is. The backslash and the quote are escaped, and so are line feeds, carriage
+        // returns and tabs, which would otherwise break the query the atom is written into.
         private fun quotedAtom(value: String): String =
-            "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+            "'" + value.replace("\\", "\\\\").replace("'", "\\'")
+                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "'"
 
         // Names not in [taken], such as Anon_1, Anon_2 and so on.
         private fun freshNames(prefix: String, taken: Set<String>): Sequence<String> =
