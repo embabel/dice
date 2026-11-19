@@ -20,6 +20,7 @@ import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.storage.DiceStorageTransactions
 import jakarta.persistence.EntityManager
 import jakarta.persistence.EntityManagerFactory
 import org.assertj.core.api.Assertions.assertThat
@@ -201,6 +202,75 @@ class DiceStorageTransactionAutoConfigurationTest {
             assertThat(ctx).hasFailed()
             assertThat(ctx.startupFailure).rootCause().hasMessageContaining("JdbcConnectionProvider.sqlite")
         }
+    }
+
+    /**
+     * The host's default manager serves another database, and a second JDBC manager owns Drivine's
+     * pool, which Drivine reads through the proxy. The stores take the second manager, so their
+     * writes run in its transactions, where a Drivine transaction of their own would commit them.
+     */
+    @Test
+    fun `a second JDBC manager that owns Drivine's pool behind the proxy is the stores' manager`() {
+        val target = drivinePool(Files.createTempFile("dice-host-second-", ".db"))
+        val owner = DataSourceTransactionManager(target)
+
+        sharedFileRunner(TransactionAwareDataSourceProxy(target), mock())
+            .withBean("graphManager", PlatformTransactionManager::class.java, { owner }, { it.isPrimary = false })
+            .withBean(
+                "otherDatabaseManager",
+                PlatformTransactionManager::class.java,
+                { DataSourceTransactionManager(sqliteDataSource(Files.createTempFile("dice-host-other-", ".db"))) },
+                { it.isPrimary = true },
+            )
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                val saves = ReflectionTestUtils.getField(ctx.getBean<PropositionRepository>(), "txTemplate") as TransactionTemplate
+
+                assertThat(saves.transactionManager).isSameAs(owner)
+                assertThat(ctx.getBean(DiceStorageTransactions.MANAGER)).isSameAs(owner)
+            }
+    }
+
+    /** Two managers over Drivine's pool behind the proxy: which transaction a store write is in cannot be told. Refused. */
+    @Test
+    fun `two managers that own Drivine's pool behind the proxy are refused at startup`() {
+        val target = drivinePool(Files.createTempFile("dice-host-two-owners-", ".db"))
+
+        sharedFileRunner(TransactionAwareDataSourceProxy(target), mock())
+            .withBean("firstOwner", PlatformTransactionManager::class.java, { DataSourceTransactionManager(target) }, { it.isPrimary = true })
+            .withBean("secondOwner", PlatformTransactionManager::class.java, { DataSourceTransactionManager(target) }, { it.isPrimary = false })
+            .run { ctx ->
+                assertThat(ctx).hasFailed()
+                assertThat(ctx.startupFailure).rootCause().hasMessageContaining("each manage")
+            }
+    }
+
+    /**
+     * With no proposition or run store in the context, the graph's other stores still use the
+     * SQLite file, so a pool without Drivine's functions is refused at startup all the same.
+     */
+    @Test
+    fun `a host-built SQLite pool is refused at startup when only the graph's other stores are configured`() {
+        val provider = mock<JdbcConnectionProvider>()
+        whenever(provider.nativeDriver).thenReturn(sqliteDataSource(Files.createTempFile("dice-host-chunks-", ".db")))
+        val registry = mock<DatabaseRegistry>()
+        whenever(registry.connectionProvider("neo")).thenReturn(provider)
+        val persistenceManager = mock<PersistenceManager>()
+        whenever(persistenceManager.type).thenReturn(DatabaseType.SQLITE)
+        whenever(persistenceManager.database).thenReturn("neo")
+
+        ApplicationContextRunner()
+            .withPropertyValues("embabel.dice.store.type=graph")
+            .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
+            .withBean(StatelessGraphObjectManager::class.java, { mock<StatelessGraphObjectManager>() })
+            .withBean(TransactionContextHolder::class.java, { mock<TransactionContextHolder>() })
+            .withBean(DatabaseRegistry::class.java, { registry })
+            .withBean(PersistenceManager::class.java, { persistenceManager })
+            .withBean(PlatformTransactionManager::class.java, { mock<PlatformTransactionManager>() })
+            .run { ctx ->
+                assertThat(ctx).hasFailed()
+                assertThat(ctx.startupFailure).rootCause().hasMessageContaining("JdbcConnectionProvider.sqlite")
+            }
     }
 
     /**

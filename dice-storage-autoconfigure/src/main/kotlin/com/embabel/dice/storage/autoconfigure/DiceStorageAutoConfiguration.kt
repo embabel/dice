@@ -99,6 +99,10 @@ class DiceStorageAutoConfiguration {
     @Autowired(required = false)
     private var databaseRegistry: DatabaseRegistry? = null
 
+    /** Every transaction manager the context offers for injection: see [drivineTransactions]. */
+    @Autowired(required = false)
+    private var transactionManagers: ObjectProvider<PlatformTransactionManager>? = null
+
     /**
      * The transaction manager the graph stores run their own transactions with: Drivine's.
      *
@@ -121,6 +125,11 @@ class DiceStorageAutoConfiguration {
      * manager whose dialect binds no connection is refused behind the proxy, and any other way of
      * sharing one SQLite file with the host's manager is refused; see [sharingWithHost].
      *
+     * Every manager in the context is asked, not only the default: a host's default may serve
+     * another database while a second manager owns the graph's data source. That second manager is
+     * then the stores', and two managers that both own it are refused, since which transaction a
+     * store write is in could not be told.
+     *
      * Drivine's transaction state is taken from its bean, or else from Drivine's own persistence
      * manager. With neither, the host's manager is used and a warning says so.
      */
@@ -128,28 +137,30 @@ class DiceStorageAutoConfiguration {
         given: PlatformTransactionManager,
         persistenceManager: PersistenceManager,
     ): PlatformTransactionManager {
-        if (given is DrivineTransactionManager) return given
-        when (sharingWithHost(given, persistenceManager)) {
-            HostSharing.THROUGH_PROXY -> {
-                check(bindsJdbcConnection(given)) {
-                    "Transaction manager ${given.javaClass.name} manages the data source the graph store's " +
-                        "datasource '${persistenceManager.database}' reads through a TransactionAwareDataSourceProxy, " +
-                        "but its JPA dialect binds no JDBC connection, so Drivine would write on a connection of its " +
-                        "own outside the manager's transactions. Use a JPA dialect that exposes the JDBC " +
-                        "connection, such as Hibernate's."
-                }
-                return given
-            }
-            HostSharing.SAME_SQLITE_FILE -> error(
-                "The graph store's SQLite datasource '${persistenceManager.database}' and transaction manager " +
-                    "${given.javaClass.name} use the same SQLite file on connections of their own. SQLite has " +
-                    "one write lock per file, so a store write inside the manager's transaction would wait " +
-                    "for that transaction's own lock. Give the manager the data source of Drivine's own SQLite " +
-                    "pool, JdbcConnectionProvider.sqlite(...), and Drivine a TransactionAwareDataSourceProxy over " +
-                    "it, so both use one connection.",
-            )
-            HostSharing.NONE -> Unit
+        val managers = (listOf(given) + transactionManagers?.orderedStream()?.toList().orEmpty())
+            .distinct()
+            .filterNot { it is DrivineTransactionManager }
+        val sharing = managers.map { it to sharingWithHost(it, persistenceManager) }.filter { it.second != HostSharing.NONE }
+        sharing.firstOrNull { it.second == HostSharing.SAME_SQLITE_FILE }?.let { (manager, _) ->
+            sameSqliteFile(manager, persistenceManager)
         }
+        check(sharing.size <= 1) {
+            "Transaction managers ${sharing.joinToString { it.first.javaClass.name }} each manage the data source " +
+                "the graph store's datasource '${persistenceManager.database}' reads through a " +
+                "TransactionAwareDataSourceProxy, so which one's transaction a store write is in cannot be told. " +
+                "Leave one manager over that data source."
+        }
+        sharing.singleOrNull()?.let { (owner, _) ->
+            check(bindsJdbcConnection(owner)) {
+                "Transaction manager ${owner.javaClass.name} manages the data source the graph store's " +
+                    "datasource '${persistenceManager.database}' reads through a TransactionAwareDataSourceProxy, " +
+                    "but its JPA dialect binds no JDBC connection, so Drivine would write on a connection of its " +
+                    "own outside the manager's transactions. Use a JPA dialect that exposes the JDBC " +
+                    "connection, such as Hibernate's."
+            }
+            return owner
+        }
+        if (given is DrivineTransactionManager) return given
         // The persistence manager's own state first: it is the one its statements consult.
         val holder = (persistenceManager as? DelegatingPersistenceManager)?.contextHolder ?: transactionContextHolder
         holder?.let { return DrivineTransactionManager(it) }
@@ -161,6 +172,17 @@ class DiceStorageAutoConfiguration {
         )
         return given
     }
+
+    /** Refuses [manager] and Drivine opening one SQLite file on connections of their own. */
+    private fun sameSqliteFile(manager: PlatformTransactionManager, persistenceManager: PersistenceManager): Nothing =
+        error(
+            "The graph store's SQLite datasource '${persistenceManager.database}' and transaction manager " +
+                "${manager.javaClass.name} use the same SQLite file on connections of their own. SQLite has " +
+                "one write lock per file, so a store write inside the manager's transaction would wait " +
+                "for that transaction's own lock. Give the manager the data source of Drivine's own SQLite " +
+                "pool, JdbcConnectionProvider.sqlite(...), and Drivine a TransactionAwareDataSourceProxy over " +
+                "it, so both use one connection.",
+        )
 
     /** How a host's transaction manager shares the store's data, if it does. */
     private enum class HostSharing { NONE, THROUGH_PROXY, SAME_SQLITE_FILE }
@@ -298,6 +320,9 @@ class DiceStorageAutoConfiguration {
      *
      * It is never an autowire candidate, so the host's own `@Transactional` code, its injection
      * points, and Boot's conditions on a single transaction manager still see only the host's.
+     *
+     * It is made whenever the graph backend is, so the SQLite checks run here too: every graph
+     * store uses the file, not only the proposition and run stores that check it themselves.
      */
     @Bean(name = [DiceStorageTransactions.MANAGER], autowireCandidate = false)
     @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
@@ -305,7 +330,12 @@ class DiceStorageAutoConfiguration {
     fun diceTransactionManager(
         persistenceManager: PersistenceManager,
         transactionManager: PlatformTransactionManager,
-    ): PlatformTransactionManager = drivineTransactions(transactionManager, persistenceManager)
+    ): PlatformTransactionManager {
+        requireLockingSqliteTransactions(persistenceManager)
+        val transactions = drivineTransactions(transactionManager, persistenceManager)
+        requireDrivineSqliteFunctions(persistenceManager)
+        return transactions
+    }
 
     @Bean
     @ConditionalOnBean(Ai::class)

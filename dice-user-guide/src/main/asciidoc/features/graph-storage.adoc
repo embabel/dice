@@ -115,10 +115,11 @@ SQLite has one write lock per file, which shapes these rules:
   whose connections lack those functions, as a pool the host builds itself does.
 * A host transaction manager can share the file with Drivine in one way only: the manager's data
   source is that pool's (`JdbcConnectionProvider.sqlite(...).nativeDriver`), and Drivine reads it
-  through Spring's `TransactionAwareDataSourceProxy`, so both use the same connection. A JPA
-  manager qualifies when its dialect exposes the JDBC connection, as Hibernate's does. Startup
-  refuses any other sharing, such as one pool used directly by both, or two pools over the same
-  file.
+  through Spring's `TransactionAwareDataSourceProxy`, so both use the same connection. That
+  manager need not be the default: the stores take whichever manager owns the pool, and refuse two.
+  A JPA manager qualifies when its dialect exposes the JDBC connection, as Hibernate's does.
+  Startup refuses any other sharing, such as one pool used directly by both, or two pools over the
+  same file. These checks run whenever the graph backend is configured.
 * A save embeds its text before it takes the lock. Outside a transaction, a save that repeats a
   stored fact is answered from reads alone. Inside a caller's SQLite transaction, an exact replay
   still calls the embedder.
