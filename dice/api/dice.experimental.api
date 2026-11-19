@@ -1,3 +1,30 @@
+public final class com/embabel/dice/agent/BudgetedSelection {
+	public fun <init> (Ljava/util/List;Ljava/util/List;II)V
+	public final fun getBudgetTokens ()I
+	public final fun getDropped ()Ljava/util/List;
+	public final fun getEstimatedTokens ()I
+	public final fun getSelected ()Ljava/util/List;
+	public final fun isOverBudget ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/agent/ContextBudget {
+	public static final field Companion Lcom/embabel/dice/agent/ContextBudget$Companion;
+	public synthetic fun <init> (ILcom/embabel/common/ai/model/TokenCountEstimator;Ljava/util/Comparator;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getEstimator ()Lcom/embabel/common/ai/model/TokenCountEstimator;
+	public final fun getRanking ()Ljava/util/Comparator;
+	public final fun getTokens ()I
+	public static final fun ofTokens (I)Lcom/embabel/dice/agent/ContextBudget;
+	public final fun select (Ljava/util/List;)Lcom/embabel/dice/agent/BudgetedSelection;
+	public fun toString ()Ljava/lang/String;
+	public final fun withEstimator (Lcom/embabel/common/ai/model/TokenCountEstimator;)Lcom/embabel/dice/agent/ContextBudget;
+	public final fun withRanking (Ljava/util/Comparator;)Lcom/embabel/dice/agent/ContextBudget;
+}
+
+public final class com/embabel/dice/agent/ContextBudget$Companion {
+	public final fun ofTokens (I)Lcom/embabel/dice/agent/ContextBudget;
+}
+
 public final class com/embabel/dice/agent/GovernanceTools {
 	public static final field Companion Lcom/embabel/dice/agent/GovernanceTools$Companion;
 	public fun <init> (Lcom/embabel/dice/governance/GovernanceOperationsService;)V
