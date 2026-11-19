@@ -1668,7 +1668,9 @@ class DrivinePropositionRepository(
      *
      * Inside a caller's transaction the writes go one statement at a time. A batch outside a Drivine
      * transaction commits as it ends, and on a connection the caller's transaction lent through a
-     * transaction-aware proxy that would commit the caller's work too.
+     * transaction-aware proxy that would commit the caller's work too. That covers a gap in Drivine:
+     * a batch's own transaction commits on whatever connection it is handed, without asking whether
+     * a Spring transaction holds it, as Drivine does ask before it turns on auto-commit.
 
      * @param oneStatementAtATime whether the writes join a caller's transaction
      */

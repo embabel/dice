@@ -113,7 +113,10 @@ class DiceStorageAutoConfiguration {
      * JDBC connection for it. A JDBC manager's always do; a JPA manager's do when its dialect
      * exposes the JDBC connection, as Hibernate's does. Inside a host transaction Drivine's
      * statements then run on the host's connection and are the host's to commit, and a Drivine
-     * transaction of the store's own on that connection would commit the host's work with it. A JPA
+     * transaction of the store's own on that connection would commit the host's work with it: Drivine
+     * commits its own transaction on whatever connection it is handed, without asking whether a
+     * Spring transaction holds it, as it does ask before it turns on auto-commit. Keeping the host's
+     * manager covers that gap in Drivine until Drivine joins or refuses such a connection itself. A JPA
      * manager whose dialect binds no connection is refused behind the proxy, and any other way of
      * sharing one SQLite file with the host's manager is refused; see [sharingWithHost].
      *

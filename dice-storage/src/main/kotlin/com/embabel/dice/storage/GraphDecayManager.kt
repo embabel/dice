@@ -125,6 +125,11 @@ class GraphDecayManager(
      * instead. A host whose JDBC transaction lends Drivine its connection would otherwise have that
      * transaction committed by the page's, and its own work with it. A caller's transaction over
      * another database holds nothing of the graph's, and the page takes its own.
+     *
+     * The check covers a gap in Drivine: its own transaction begins and commits on whatever
+     * connection it is handed, without asking whether a Spring transaction holds it, as Drivine
+     * does ask before it turns on auto-commit. Once Drivine joins or refuses such a connection
+     * itself, the page needs no check of its own.
      */
     private fun <T> inPageTransaction(page: () -> T): T {
         val holder = (persistenceManager as? DelegatingPersistenceManager)?.contextHolder ?: return page()
