@@ -96,7 +96,7 @@ if (propositionRepository instanceof GraphQueryCapable g) {
 ==== On SQLite
 
 The graph stores also run on Drivine's SQLite backend, a single file in place of a Neo4j instance.
-SQLite has one write lock per file, which shapes three rules:
+SQLite has one write lock per file, which shapes these rules:
 
 * The data source's transactions must take the write lock as they begin. Drivine's own SQLite
   provider does this. Startup refuses a data source whose transactions do not, or whose transaction
@@ -108,6 +108,8 @@ SQLite has one write lock per file, which shapes three rules:
 * A save embeds its text before it takes the lock. Outside a transaction, a save that repeats a
   stored fact is answered from reads alone. Inside a caller's SQLite transaction, an exact replay
   still calls the embedder.
+* `reembedAll` inside a caller's transaction reads the vector index on a connection of its own, so
+  it needs a pool of at least two connections. With one, it is refused.
 
 .Kotlin version
 [NOTE]

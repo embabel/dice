@@ -24,6 +24,9 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.storage.DrivinePropositionRepository
 import com.embabel.dice.storage.FakeEmbeddingService
 import com.embabel.dice.storage.TestApplication
+import com.fasterxml.jackson.databind.ObjectMapper
+import org.drivine.mapper.SubtypeRegistry
+import org.springframework.test.util.ReflectionTestUtils
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.query.QuerySpecification
@@ -151,8 +154,8 @@ class SqlitePropositionRepositoryIntegrationTest {
     }
 
     /**
-     * Twelve propositions all close to one another make 66 pairs above the threshold. The database
-     * keeps each anchor's best two, so no more than two rows an anchor ever reach the JVM.
+     * Twelve propositions all close to one another make 66 pairs above the threshold. Each anchor's
+     * search is cut to two in the database, so no more than two pairs an anchor ever reach the JVM.
      */
     @Test
     fun `findClusters reads at most topK pairs an anchor from SQLite however many pass the threshold`() {
@@ -164,22 +167,69 @@ class SqlitePropositionRepositoryIntegrationTest {
         val vectors = names.mapIndexed { i, n -> "$n fact" to at(i.toDouble()) }.toMap()
         val counting = RowCountingPersistenceManager(persistenceManager)
         val shaped = DrivinePropositionRepository(
-            graphObjectManager,
+            countingObjects(counting),
             counting,
             FixedEmbeddingService(vectors, FakeEmbeddingService()),
             transactionManager,
         )
         names.forEach { shaped.save(ghost("$it fact", "cluster-dense", id = it)) }
-        counting.pairRows = 0
+        counting.scoredRows = 0
 
         val clusters = shaped.findClusters(similarityThreshold = 0.9, topK = 2, query = PropositionQuery.forContextId(ContextId("cluster-dense")))
 
-        assertTrue(counting.pairRows in 1..names.size * 2, "read ${counting.pairRows} pair rows for ${names.size} anchors")
+        assertTrue(counting.scoredRows in 1..names.size * 2, "read ${counting.scoredRows} pair rows for ${names.size} anchors")
         assertEquals(11, clusters.size)
         clusters.forEach { cluster ->
             assertTrue(cluster.similar.size <= 2)
             assertTrue(cluster.similar.all { it.match.id > cluster.anchor.id })
         }
+    }
+
+    /**
+     * Thirty propositions at a real embedding width. Each pair is scored by Drivine's own cosine, so
+     * the clusters come back in well under a second, and a save started meanwhile goes through.
+     */
+    @Test
+    fun `findClusters over thirty wide embeddings is quick and does not hold up a save`() {
+        val random = java.util.Random(7)
+        val base = FloatArray(1536) { random.nextFloat() }
+        val vectors = (0 until 30).associate { i ->
+            "w%02d fact".format(i) to FloatArray(1536) { base[it] + random.nextFloat() * 0.3f }
+        }
+        val shaped = DrivinePropositionRepository(
+            graphObjectManager,
+            persistenceManager,
+            FixedEmbeddingService(vectors + ("late fact" to base), FakeEmbeddingService()),
+            transactionManager,
+        )
+        vectors.keys.forEach { shaped.save(ghost(it, "cluster-wide", id = it.substringBefore(' '))) }
+        val query = PropositionQuery.forContextId(ContextId("cluster-wide"))
+        shaped.findClusters(similarityThreshold = 0.5, topK = 5, query = query)
+
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val started = System.nanoTime()
+            val clustering = executor.submit<Int> { shaped.findClusters(similarityThreshold = 0.5, topK = 5, query = query).size }
+            shaped.save(ghost("late fact", "cluster-wide-save"))
+            val clusters = clustering.get(10, TimeUnit.SECONDS)
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+            println("findClusters over 30 x 1536 with a concurrent save: $elapsedMs ms")
+            assertTrue(clusters > 0)
+            assertTrue(elapsedMs < 1000, "took $elapsedMs ms")
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    /** Drivine's object manager over [persistence], made the way the context makes its own. */
+    private fun countingObjects(persistence: PersistenceManager): StatelessGraphObjectManager {
+        val objects = ReflectionTestUtils.getField(graphObjectManager, "objects")!!
+        return StatelessGraphObjectManager(
+            persistence,
+            ReflectionTestUtils.getField(graphObjectManager, "objectMapper") as ObjectMapper,
+            ReflectionTestUtils.getField(objects, "subtypeRegistry") as SubtypeRegistry,
+        )
     }
 
     private fun ghost(text: String, context: String, id: String? = null): Proposition {
@@ -214,13 +264,13 @@ private class FixedEmbeddingService(
     override fun embed(texts: List<String>): List<FloatArray> = texts.map(::embed)
 }
 
-/** Passes every call on, counting the rows of each pair query. */
+/** Passes every call on, counting the scored rows vector searches return. */
 private class RowCountingPersistenceManager(private val delegate: PersistenceManager) : PersistenceManager by delegate {
-    var pairRows = 0
+    var scoredRows = 0
 
     override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
         val rows = delegate.query(spec)
-        if (spec.parameters.containsKey("topK")) pairRows += rows.size
+        scoredRows += rows.count { it is Map<*, *> && it.containsKey("score") && it.containsKey("value") }
         return rows
     }
 }

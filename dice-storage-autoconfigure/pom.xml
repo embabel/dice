@@ -104,6 +104,17 @@
             <artifactId>spring-jdbc</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test: a JPA transaction manager, for the check on a JPA host sharing Drivine's SQLite file -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-orm</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.persistence</groupId>
+            <artifactId>jakarta.persistence-api</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- Test: the SQLite driver, for the check on how a SQLite store starts its transactions -->
         <dependency>
             <groupId>org.xerial</groupId>

@@ -68,6 +68,7 @@ import org.springframework.scheduling.annotation.EnableScheduling
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.ResourceTransactionManager
+import java.nio.file.Files
 import java.nio.file.Path
 import javax.sql.DataSource
 
@@ -154,7 +155,7 @@ class DiceStorageAutoConfiguration {
      * to one write lock.
      */
     private fun sharingWithHost(manager: PlatformTransactionManager, persistenceManager: PersistenceManager): HostSharing {
-        val managed = (manager as? ResourceTransactionManager)?.resourceFactory as? DataSource ?: return HostSharing.NONE
+        val managed = managedDataSource(manager) ?: return HostSharing.NONE
         val drivine = drivineDataSource(persistenceManager) ?: return HostSharing.NONE
         val chain = unwrapped(drivine)
         // The proxy looks the host's connection up under its own target, so only the data source it
@@ -162,8 +163,21 @@ class DiceStorageAutoConfiguration {
         if (isTransactionAwareProxy(chain.first()) && chain.getOrNull(1) == managed) return HostSharing.THROUGH_PROXY
         if (persistenceManager.type != DatabaseType.SQLITE) return HostSharing.NONE
         if (managed in chain) return HostSharing.SAME_SQLITE_FILE
-        val drivineFile = sqliteFile(chain.last())
-        return if (drivineFile != null && drivineFile == sqliteFile(managed)) HostSharing.SAME_SQLITE_FILE else HostSharing.NONE
+        val drivineFile = sqliteFile(chain.last()) ?: return HostSharing.NONE
+        val hostFile = sqliteFile(managed) ?: return HostSharing.NONE
+        // Same file, even through a hard link.
+        return if (Files.isSameFile(drivineFile, hostFile)) HostSharing.SAME_SQLITE_FILE else HostSharing.NONE
+    }
+
+    /**
+     * The JDBC data source [manager] binds its connections under. A JDBC manager names it as its
+     * resource. A JPA manager names its entity manager factory there, and gives its data source
+     * through `getDataSource()`.
+     */
+    private fun managedDataSource(manager: PlatformTransactionManager): DataSource? {
+        val resource = runCatching { (manager as? ResourceTransactionManager)?.resourceFactory }.getOrNull()
+        return resource as? DataSource
+            ?: runCatching { manager.javaClass.getMethod("getDataSource").invoke(manager) as? DataSource }.getOrNull()
     }
 
     /** Whether [dataSource] is Spring's transaction-aware proxy, which hands out a transaction's bound connection. */

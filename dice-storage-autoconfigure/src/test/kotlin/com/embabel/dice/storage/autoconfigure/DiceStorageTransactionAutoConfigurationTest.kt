@@ -18,6 +18,7 @@ package com.embabel.dice.storage.autoconfigure
 import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.proposition.PropositionRepository
+import jakarta.persistence.EntityManagerFactory
 import org.assertj.core.api.Assertions.assertThat
 import org.drivine.connection.ConnectionProvider
 import org.drivine.connection.DatabaseRegistry
@@ -45,6 +46,7 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.jdbc.datasource.LazyConnectionDataSourceProxy
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy
+import org.springframework.orm.jpa.JpaTransactionManager
 import org.springframework.test.util.ReflectionTestUtils
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.interceptor.TransactionInterceptor
@@ -272,6 +274,50 @@ class DiceStorageTransactionAutoConfigurationTest {
                 assertThat(ctx).hasNotFailed()
                 assertThat(ctx).hasSingleBean(PropositionRepository::class.java)
             }
+    }
+
+    /**
+     * A JPA manager names its entity manager factory as its resource, and its data source through
+     * `getDataSource()`. Behind a transaction-aware proxy over that data source, the store keeps the
+     * JPA manager, so a store write runs in the host's transaction instead of committing it.
+     */
+    @Test
+    fun `with a host's JPA manager and Drivine behind a transaction-aware proxy, the proposition store keeps it`() {
+        val target = sqliteDataSource(Files.createTempFile("dice-host-jpa-", ".db"))
+        val jpa = JpaTransactionManager(mock<EntityManagerFactory>()).apply { dataSource = target }
+
+        sharedFileRunner(TransactionAwareDataSourceProxy(target), jpa).run { ctx ->
+            val repository = ctx.getBean<PropositionRepository>()
+            val saves = ReflectionTestUtils.getField(repository, "txTemplate") as TransactionTemplate
+
+            assertThat(saves.transactionManager).isSameAs(jpa)
+        }
+    }
+
+    /** A JPA manager and Drivine on one raw pool is the same second connection, and the same refusal. */
+    @Test
+    fun `a host's JPA manager sharing a raw pool with Drivine is refused at startup`() {
+        val target = sqliteDataSource(Files.createTempFile("dice-host-jpa-raw-", ".db"))
+        val jpa = JpaTransactionManager(mock<EntityManagerFactory>()).apply { dataSource = target }
+
+        sharedFileRunner(target, jpa).run { ctx ->
+            assertThat(ctx).hasFailed()
+            assertThat(ctx.startupFailure).rootCause().hasMessageContaining("TransactionAwareDataSourceProxy")
+        }
+    }
+
+    /** Two hard links to one SQLite file are one file, and one write lock. */
+    @Test
+    fun `a host's pool over a hard link to Drivine's SQLite file is refused at startup`() {
+        val file = Files.createTempFile("dice-host-linked-", ".db")
+        sqliteDataSource(file).connection.use { it.createStatement().execute("CREATE TABLE IF NOT EXISTS t (x INTEGER)") }
+        val link = file.resolveSibling(file.fileName.toString() + ".link")
+        Files.createLink(link, file)
+
+        sharedFileRunner(sqliteDataSource(file), DataSourceTransactionManager(sqliteDataSource(link))).run { ctx ->
+            assertThat(ctx).hasFailed()
+            assertThat(ctx.startupFailure).rootCause().hasMessageContaining("TransactionAwareDataSourceProxy")
+        }
     }
 
     private fun sqliteDataSource(url: String): DataSource =

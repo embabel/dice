@@ -1284,19 +1284,33 @@ class DrivinePropositionRepository(
 
     /**
      * On SQLite, each anchor's [topK] nearest among the candidates with a later id, as the in-memory
-     * store pairs them. The database scores every pair by cosine and keeps each anchor's best
-     * [topK], so what comes back is at most [topK] rows an anchor however many pairs pass the
-     * threshold. Drivine's own search ranks each candidate against all the others, which can leave
-     * out a pair neither member ranks high enough.
+     * store pairs them. Each anchor is one search by Drivine's own cosine, filtered to its later
+     * candidates and cut to [topK] in the database, so at most [topK] rows an anchor come back.
+     * Drivine ranks every stored proposition before it filters, so the search is widened to all of
+     * them: a proposition of another context cannot crowd a candidate out.
      */
     private fun nearestLaterPairs(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> {
-        @Suppress("UNCHECKED_CAST")
-        return persistenceManager.query(
-            cypherQuery(NEAREST_LATER_PAIRS)
-                .bind(mapOf("ids" to ids, "threshold" to similarityThreshold, "topK" to topK))
-                .transform(Map::class.java),
-        ) as List<Map<String, Any>>
+        val vectors = embeddingsOf(ids)
+        val searchK = maxOf(topK, graphObjectManager.count<PropositionView> { }.toInt())
+        val threshold = toEngineScore(similarityThreshold)
+        val sorted = ids.sorted()
+        return sorted.flatMapIndexed { i, anchorId ->
+            val vector = vectors[anchorId] ?: return@flatMapIndexed emptyList()
+            val later = sorted.subList(i + 1, sorted.size)
+            if (later.isEmpty()) return@flatMapIndexed emptyList()
+            graphObjectManager.loadNearest<PropositionView>(vector, topK, threshold, searchK) {
+                where { proposition.id inList later }
+            }.map { mapOf("anchorId" to anchorId, "otherId" to it.value.proposition.id, "score" to toRawCosine(it.score)) }
+        }
     }
+
+    /** The stored embedding of each of [ids] that has one. */
+    private fun embeddingsOf(ids: List<String>): Map<String, List<Float>> =
+        persistenceManager.query(
+            cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids AND p.embedding IS NOT NULL RETURN {id: p.id, embedding: p.embedding} AS row")
+                .bind(mapOf("ids" to ids))
+                .transform(Map::class.java),
+        ).associate { row -> row["id"] as String to (row["embedding"] as List<*>).map { (it as Number).toFloat() } }
 
     /**
      * A Neo4j COSINE vector index reports `(1 + cosine) / 2`, not raw cosine — this converts an
@@ -1555,7 +1569,9 @@ class DrivinePropositionRepository(
     /**
      * Refuses a re-embed that would change the vector index while a caller's SQLite transaction is
      * open. Drivine records an index change on a connection of its own, which would wait for the
-     * caller's write lock until SQLite gave up. Checking first reads only.
+     * caller's write lock until SQLite gave up. Checking first reads only, but Drivine reads the
+     * index on a connection of its own too, so a pool of one connection, held by the caller's
+     * transaction, cannot answer and the call is refused as if the index were unreadable.
      */
     private fun requireIndexAsItIs(spec: VectorIndexSpec) {
         val existing = persistenceManager.indexes.find(spec)
@@ -1847,27 +1863,6 @@ class DrivinePropositionRepository(
     private fun Any?.asStringList(): List<String> = (this as? List<String>) ?: emptyList()
 
     companion object {
-        /**
-         * Every pair of candidates scored by cosine, the earlier id as anchor, and each anchor's best
-         * `topK` kept in the database. Cosine is spelt out because SQLite has no vector functions.
-         */
-        private val NEAREST_LATER_PAIRS = """
-            MATCH (a:Proposition), (b:Proposition)
-            WHERE a.id IN ${'$'}ids AND b.id IN ${'$'}ids AND a.id < b.id
-              AND a.embedding IS NOT NULL AND b.embedding IS NOT NULL AND size(a.embedding) = size(b.embedding)
-            WITH a, b,
-              reduce(s = 0.0, i IN range(0, size(a.embedding) - 1) | s + a.embedding[i] * b.embedding[i]) AS dot,
-              reduce(s = 0.0, i IN range(0, size(a.embedding) - 1) | s + a.embedding[i] * a.embedding[i]) AS aa,
-              reduce(s = 0.0, i IN range(0, size(b.embedding) - 1) | s + b.embedding[i] * b.embedding[i]) AS bb
-            WHERE aa > 0 AND bb > 0
-            WITH a, b, dot / sqrt(aa * bb) AS score
-            WHERE score >= ${'$'}threshold
-            WITH a, b, score ORDER BY a.id, score DESC, b.id
-            WITH a, collect({otherId: b.id, score: score})[0..${'$'}topK] AS near
-            UNWIND near AS n
-            RETURN {anchorId: a.id, otherId: n.otherId, score: n.score} AS row
-        """.trimIndent()
-
         /**
          * How a proposition save treats `HAS_MENTION`: the view's list is the whole list, and a
          * `:Mention` the save drops is deleted once nothing else points at it.
