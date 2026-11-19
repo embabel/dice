@@ -164,7 +164,7 @@ open class DrivineDriftReportStore(
             report.capturedAt,
         )
         persistenceManager.execute(
-            cypherQuery(SAVE_REPORT).bind(DriftReportRowMapper.bindMap(report)),
+            QuerySpecification.withStatement(SAVE_REPORT).bind(DriftReportRowMapper.bindMap(report)),
         )
     }
 
@@ -229,7 +229,7 @@ open class DrivineDriftReportStore(
         }
 
         @Suppress("UNCHECKED_CAST")
-        val spec = cypherQuery(statement).bind(bindings) as QuerySpecification<Any>
+        val spec = QuerySpecification.withStatement(statement).bind(bindings) as QuerySpecification<Any>
         return persistenceManager.query(spec).filterIsInstance<Map<*, *>>().mapNotNull { row ->
             runCatching { DriftReportRowMapper.fromRow(row) }
                 .onFailure { logger.warn("Skipping unreadable MetamodelDriftReport row: {}", it.message) }

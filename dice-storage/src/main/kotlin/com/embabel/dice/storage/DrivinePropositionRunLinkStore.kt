@@ -239,7 +239,7 @@ open class DrivinePropositionRunLinkStore(
 
     private fun queryRows(statement: String, bindings: Map<String, Any?>): List<Map<*, *>> {
         @Suppress("UNCHECKED_CAST")
-        val spec = cypherQuery(statement).bind(bindings) as QuerySpecification<Any>
+        val spec = QuerySpecification.withStatement(statement).bind(bindings) as QuerySpecification<Any>
         return persistenceManager.query(spec).filterIsInstance<Map<*, *>>()
     }
 
