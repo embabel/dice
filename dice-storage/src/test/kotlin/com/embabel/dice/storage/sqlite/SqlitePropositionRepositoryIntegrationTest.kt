@@ -25,21 +25,26 @@ import com.embabel.dice.storage.DrivinePropositionRepository
 import com.embabel.dice.storage.FakeEmbeddingService
 import com.embabel.dice.storage.TestApplication
 import com.fasterxml.jackson.databind.ObjectMapper
-import org.drivine.mapper.SubtypeRegistry
-import org.springframework.test.util.ReflectionTestUtils
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.mapper.SubtypeRegistry
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.springframework.aop.framework.ProxyFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.springframework.test.util.ReflectionTestUtils
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionManager
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
+import org.springframework.transaction.interceptor.TransactionInterceptor
 import org.springframework.transaction.support.TransactionTemplate
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -222,6 +227,53 @@ class SqlitePropositionRepositoryIntegrationTest {
         }
     }
 
+    /**
+     * Through Spring's own transaction advice, as the bean has it. A standalone clustering pass
+     * opens no transaction of its own, so it holds no write lock while it searches, and a save made
+     * while it is part way through goes straight through.
+     */
+    @Test
+    fun `a save goes through while findClusters is part way through its searches`() {
+        fun at(degrees: Double) = floatArrayOf(
+            Math.cos(Math.toRadians(degrees)).toFloat(),
+            Math.sin(Math.toRadians(degrees)).toFloat(),
+        )
+        val vectors = mapOf("q0 fact" to at(0.0), "q1 fact" to at(5.0), "q2 fact" to at(10.0))
+        val pausing = PausingPersistenceManager(persistenceManager)
+        val target = DrivinePropositionRepository(
+            countingObjects(pausing),
+            pausing,
+            FixedEmbeddingService(vectors, FakeEmbeddingService()),
+            transactionManager,
+        )
+        vectors.keys.forEach { target.save(ghost(it, "cluster-paused", id = it.substringBefore(' '))) }
+        val clustering = advised(target)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val clusters = executor.submit<Int> {
+                clustering.findClusters(similarityThreshold = 0.9, topK = 2, query = PropositionQuery.forContextId(ContextId("cluster-paused"))).size
+            }
+            assertTrue(pausing.inside.await(10, TimeUnit.SECONDS), "findClusters never reached its searches")
+
+            val save = executor.submit<Proposition> { repository.save(ghost("a fact saved meanwhile", "cluster-paused-save")) }
+
+            assertEquals(ContextId("cluster-paused-save"), save.get(5, TimeUnit.SECONDS).contextId)
+            pausing.release.countDown()
+            assertTrue(clusters.get(10, TimeUnit.SECONDS) > 0)
+        } finally {
+            pausing.release.countDown()
+            executor.shutdown()
+            executor.awaitTermination(60, TimeUnit.SECONDS)
+        }
+    }
+
+    /** [target] behind Spring's transaction advice, read from its annotations as the context reads them. */
+    private fun advised(target: DrivinePropositionRepository): DrivinePropositionRepository =
+        ProxyFactory(target).apply {
+            isProxyTargetClass = true
+            addAdvice(TransactionInterceptor(transactionManager as TransactionManager, AnnotationTransactionAttributeSource()))
+        }.proxy as DrivinePropositionRepository
+
     /** Drivine's object manager over [persistence], made the way the context makes its own. */
     private fun countingObjects(persistence: PersistenceManager): StatelessGraphObjectManager {
         val objects = ReflectionTestUtils.getField(graphObjectManager, "objects")!!
@@ -271,6 +323,21 @@ private class RowCountingPersistenceManager(private val delegate: PersistenceMan
     override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
         val rows = delegate.query(spec)
         scoredRows += rows.count { it is Map<*, *> && it.containsKey("score") && it.containsKey("value") }
+        return rows
+    }
+}
+
+/** Passes every call on. The first vector search to return rows waits for [release] before it answers. */
+private class PausingPersistenceManager(private val delegate: PersistenceManager) : PersistenceManager by delegate {
+    val inside = CountDownLatch(1)
+    val release = CountDownLatch(1)
+
+    override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+        val rows = delegate.query(spec)
+        if (inside.count > 0 && rows.any { it is Map<*, *> && it.containsKey("score") && it.containsKey("value") }) {
+            inside.countDown()
+            release.await(10, TimeUnit.SECONDS)
+        }
         return rows
     }
 }

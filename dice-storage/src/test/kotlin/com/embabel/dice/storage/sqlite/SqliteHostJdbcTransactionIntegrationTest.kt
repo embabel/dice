@@ -20,6 +20,7 @@ import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionReembedIncompleteException
 import com.embabel.dice.storage.DrivinePropositionRepository
 import com.embabel.dice.storage.FakeEmbeddingService
 import com.embabel.dice.storage.TestApplication
@@ -33,7 +34,10 @@ import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+import org.springframework.aop.framework.ProxyFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
@@ -43,6 +47,9 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.springframework.transaction.TransactionManager
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
+import org.springframework.transaction.interceptor.TransactionInterceptor
 import org.springframework.transaction.support.TransactionTemplate
 import org.sqlite.SQLiteErrorCode
 import org.sqlite.SQLiteException
@@ -154,6 +161,31 @@ class SqliteHostJdbcTransactionIntegrationTest {
         assertEquals(before, lastAccessedOf(saved.id))
     }
 
+    /**
+     * Through Spring's own transaction advice. A host that catches a partial re-embed and commits
+     * keeps what was re-embedded and its own work: the failure is reported, not a reason to throw
+     * the host's transaction away.
+     */
+    @Test
+    fun `a host that catches a partial reembedAll still commits the rewrites and its own work`() {
+        val kept = repository().save(ghost("The ghost hums a tune"))
+        repository().save(ghost("The ghost breaks the mirror"))
+        val before = embeddingOf(kept.id)
+        host.execute("CREATE TABLE host_rows (x INTEGER)")
+        val reembedding = ProxyFactory(repository(BreakingEmbeddingService("breaks"))).apply {
+            isProxyTargetClass = true
+            addAdvice(TransactionInterceptor(hostManager as TransactionManager, AnnotationTransactionAttributeSource()))
+        }.proxy as DrivinePropositionRepository
+
+        TransactionTemplate(hostManager).executeWithoutResult {
+            host.update("INSERT INTO host_rows (x) VALUES (1)")
+            assertThrows<PropositionReembedIncompleteException> { reembedding.reembedAll() }
+        }
+
+        assertEquals(1, host.queryForObject("SELECT count(*) FROM host_rows", Int::class.java))
+        assertNotEquals(before, embeddingOf(kept.id))
+    }
+
     private fun embeddingOf(id: String): List<*>? = persistenceManager.maybeGetOne(
         cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) RETURN p.embedding").bind(mapOf("id" to id)).transform(List::class.java),
     )
@@ -185,4 +217,16 @@ private class ReadOnlyRefusingPersistenceManager(private val delegate: Persisten
             SQLiteException("[SQLITE_READONLY] Attempt to write a readonly database", SQLiteErrorCode.SQLITE_READONLY),
         )
     }
+}
+
+/** Embeds each text a little differently from [FakeEmbeddingService], and fails on any text containing [failOn]. */
+private class BreakingEmbeddingService(private val failOn: String) : EmbeddingService by FakeEmbeddingService() {
+    private val fake = FakeEmbeddingService()
+
+    override fun embed(text: String): FloatArray {
+        check(failOn !in text) { "embedding refused for this text" }
+        return fake.embed("$text, again")
+    }
+
+    override fun embed(texts: List<String>): List<FloatArray> = texts.map(::embed)
 }

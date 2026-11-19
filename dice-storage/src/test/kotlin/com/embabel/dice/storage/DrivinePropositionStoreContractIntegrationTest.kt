@@ -31,6 +31,7 @@ import org.drivine.manager.load
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -318,6 +319,27 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         assertEquals(1, repository.findByContextId(ContextId("replay-a")).size)
     }
 
+    /**
+     * The replay check reads a stored match and then its evidence. If another writer moves the match
+     * to another context between those reads, the check sees the move and the save goes on in its
+     * own context.
+     */
+    @Test
+    fun `a save does not answer with a match that moved while its evidence was read`() {
+        val stored = repository.save(ghost("The ghost opens the shutters", context = "replay-b"))
+        val moving = DrivinePropositionRepository(
+            graphObjectManager,
+            MovingOnEvidenceReadPersistenceManager(persistenceManager, stored.id),
+            embeddingService,
+            transactionManager,
+        )
+
+        val saved = moving.save(ghost("The ghost opens the shutters", context = "replay-b"))
+
+        assertNotEquals(stored.id, saved.id)
+        assertEquals(ContextId("replay-b"), saved.contextId)
+    }
+
     private fun readOnly() = TransactionTemplate(transactionManager).apply { isReadOnly = true }
 
     private fun ghost(text: String, context: String = "ghost-ctx") = Proposition(
@@ -409,5 +431,27 @@ private class MovingAfterLookupPersistenceManager(
             )
         }
         return result
+    }
+}
+
+/**
+ * Passes every call on. The first time the evidence of [movedId] is read, it moves that proposition
+ * to another context first, as a concurrent writer could between the node read and this one.
+ */
+private class MovingOnEvidenceReadPersistenceManager(
+    private val delegate: PersistenceManager,
+    private val movedId: String,
+) : PersistenceManager by delegate {
+    private var moved = false
+
+    override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+        if (!moved && spec.parameters.keys == setOf("ids") && (spec.parameters["ids"] as? Collection<*>)?.contains(movedId) == true) {
+            moved = true
+            delegate.execute(
+                cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) SET p.contextId = 'replay-elsewhere'")
+                    .bind(mapOf("id" to movedId)),
+            )
+        }
+        return delegate.query(spec)
     }
 }

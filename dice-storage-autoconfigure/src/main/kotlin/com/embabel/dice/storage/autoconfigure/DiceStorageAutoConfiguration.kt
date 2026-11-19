@@ -109,11 +109,13 @@ class DiceStorageAutoConfiguration {
      * Drivine transactions still join each other.
      *
      * One case keeps the host's manager: Drivine reading the very data source the manager manages
-     * through Spring's `TransactionAwareDataSourceProxy`. Inside a host transaction Drivine's
+     * through Spring's `TransactionAwareDataSourceProxy`, when the manager's transactions bind a
+     * JDBC connection for it. A JDBC manager's always do; a JPA manager's do when its dialect
+     * exposes the JDBC connection, as Hibernate's does. Inside a host transaction Drivine's
      * statements then run on the host's connection and are the host's to commit, and a Drivine
-     * transaction of the store's own on that connection would commit the host's work with it. Any
-     * other way of sharing one SQLite file with the host's manager is refused; see
-     * [sharingWithHost].
+     * transaction of the store's own on that connection would commit the host's work with it. A JPA
+     * manager whose dialect binds no connection is refused behind the proxy, and any other way of
+     * sharing one SQLite file with the host's manager is refused; see [sharingWithHost].
      *
      * Drivine's transaction state is taken from its bean, or else from Drivine's own persistence
      * manager. With neither, the host's manager is used and a warning says so.
@@ -124,7 +126,16 @@ class DiceStorageAutoConfiguration {
     ): PlatformTransactionManager {
         if (given is DrivineTransactionManager) return given
         when (sharingWithHost(given, persistenceManager)) {
-            HostSharing.THROUGH_PROXY -> return given
+            HostSharing.THROUGH_PROXY -> {
+                check(bindsJdbcConnection(given)) {
+                    "Transaction manager ${given.javaClass.name} manages the data source the graph store's " +
+                        "datasource '${persistenceManager.database}' reads through a TransactionAwareDataSourceProxy, " +
+                        "but its JPA dialect binds no JDBC connection, so Drivine would write on a connection of its " +
+                        "own outside the manager's transactions. Use a JPA dialect that exposes the JDBC " +
+                        "connection, such as Hibernate's."
+                }
+                return given
+            }
             HostSharing.SAME_SQLITE_FILE -> error(
                 "The graph store's SQLite datasource '${persistenceManager.database}' and transaction manager " +
                     "${given.javaClass.name} use the same SQLite file on connections of their own. SQLite has " +
@@ -134,7 +145,8 @@ class DiceStorageAutoConfiguration {
             )
             HostSharing.NONE -> Unit
         }
-        val holder = transactionContextHolder ?: (persistenceManager as? DelegatingPersistenceManager)?.contextHolder
+        // The persistence manager's own state first: it is the one its statements consult.
+        val holder = (persistenceManager as? DelegatingPersistenceManager)?.contextHolder ?: transactionContextHolder
         holder?.let { return DrivineTransactionManager(it) }
         logger.warn(
             "The graph stores were given transaction manager {}, which is not Drivine's, and there is no " +
@@ -168,6 +180,20 @@ class DiceStorageAutoConfiguration {
         // Same file, even through a hard link.
         return if (Files.isSameFile(drivineFile, hostFile)) HostSharing.SAME_SQLITE_FILE else HostSharing.NONE
     }
+
+    /**
+     * Whether [manager]'s transactions bind a JDBC connection for its data source, so a proxy over
+     * that data source hands it out. A JDBC manager always does. A JPA manager does only when its
+     * dialect exposes the JDBC connection: Hibernate's does, Spring's default dialect does not.
+     */
+    private fun bindsJdbcConnection(manager: PlatformTransactionManager): Boolean {
+        val dialect = runCatching { manager.javaClass.getMethod("getJpaDialect").invoke(manager) }.getOrNull() ?: return true
+        val exposing = dialect.javaClass.methods.firstOrNull { it.name == "getJdbcConnection" } ?: return false
+        return exposing.declaringClass.name != DEFAULT_JPA_DIALECT
+    }
+
+    /** Spring's JPA dialect that binds no JDBC connection, named rather than typed: spring-orm is the host's. */
+    private val DEFAULT_JPA_DIALECT = "org.springframework.orm.jpa.DefaultJpaDialect"
 
     /**
      * The JDBC data source [manager] binds its connections under. A JDBC manager names it as its

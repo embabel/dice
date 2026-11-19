@@ -103,11 +103,13 @@ SQLite has one write lock per file, which shapes these rules:
   mode cannot be read.
 * A host transaction manager can share the file with Drivine in one way only: Drivine reads the
   manager's data source through Spring's `TransactionAwareDataSourceProxy`, so both use the same
-  connection. Startup refuses any other sharing, such as one pool used directly by both, or two
-  pools over the same file.
+  connection. A JPA manager qualifies when its dialect exposes the JDBC connection, as Hibernate's
+  does. Startup refuses any other sharing, such as one pool used directly by both, or two pools
+  over the same file.
 * A save embeds its text before it takes the lock. Outside a transaction, a save that repeats a
   stored fact is answered from reads alone. Inside a caller's SQLite transaction, an exact replay
   still calls the embedder.
+* A read-only transaction still takes the write lock on SQLite, so keep read transactions short.
 * `reembedAll` inside a caller's transaction reads the vector index on a connection of its own, so
   it needs a pool of at least two connections. With one, it is refused.
 

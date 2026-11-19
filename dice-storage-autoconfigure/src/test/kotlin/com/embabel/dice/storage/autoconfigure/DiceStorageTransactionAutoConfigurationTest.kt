@@ -18,6 +18,7 @@ package com.embabel.dice.storage.autoconfigure
 import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.proposition.PropositionRepository
+import jakarta.persistence.EntityManager
 import jakarta.persistence.EntityManagerFactory
 import org.assertj.core.api.Assertions.assertThat
 import org.drivine.connection.ConnectionProvider
@@ -43,9 +44,11 @@ import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.boot.transaction.autoconfigure.TransactionAutoConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.jdbc.datasource.ConnectionHandle
 import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.jdbc.datasource.LazyConnectionDataSourceProxy
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy
+import org.springframework.orm.jpa.DefaultJpaDialect
 import org.springframework.orm.jpa.JpaTransactionManager
 import org.springframework.test.util.ReflectionTestUtils
 import org.springframework.transaction.PlatformTransactionManager
@@ -278,13 +281,17 @@ class DiceStorageTransactionAutoConfigurationTest {
 
     /**
      * A JPA manager names its entity manager factory as its resource, and its data source through
-     * `getDataSource()`. Behind a transaction-aware proxy over that data source, the store keeps the
-     * JPA manager, so a store write runs in the host's transaction instead of committing it.
+     * `getDataSource()`. When its dialect binds the JDBC connection, as Hibernate's does, the store
+     * keeps the JPA manager behind a transaction-aware proxy over that data source, so a store write
+     * runs in the host's transaction instead of committing it.
      */
     @Test
     fun `with a host's JPA manager and Drivine behind a transaction-aware proxy, the proposition store keeps it`() {
         val target = sqliteDataSource(Files.createTempFile("dice-host-jpa-", ".db"))
-        val jpa = JpaTransactionManager(mock<EntityManagerFactory>()).apply { dataSource = target }
+        val jpa = JpaTransactionManager(mock<EntityManagerFactory>()).apply {
+            dataSource = target
+            setJpaDialect(JdbcExposingDialect())
+        }
 
         sharedFileRunner(TransactionAwareDataSourceProxy(target), jpa).run { ctx ->
             val repository = ctx.getBean<PropositionRepository>()
@@ -292,6 +299,45 @@ class DiceStorageTransactionAutoConfigurationTest {
 
             assertThat(saves.transactionManager).isSameAs(jpa)
         }
+    }
+
+    /**
+     * Spring's default JPA dialect binds no JDBC connection, so the proxy would hand Drivine a
+     * connection of its own outside the host's transaction. Refused.
+     */
+    @Test
+    fun `a host's JPA manager whose dialect binds no JDBC connection is refused behind the proxy`() {
+        val target = sqliteDataSource(Files.createTempFile("dice-host-jpa-plain-", ".db"))
+        val jpa = JpaTransactionManager(mock<EntityManagerFactory>()).apply { dataSource = target }
+
+        sharedFileRunner(TransactionAwareDataSourceProxy(target), jpa).run { ctx ->
+            assertThat(ctx).hasFailed()
+            assertThat(ctx.startupFailure).rootCause().hasMessageContaining("binds no JDBC connection")
+        }
+    }
+
+    /**
+     * With Drivine's transaction state both as a bean and on its persistence manager, the store's
+     * manager is made over the persistence manager's: that is the state its statements consult.
+     */
+    @Test
+    fun `the persistence manager's own transaction state wins over the bean`() {
+        val own = mock<TransactionContextHolder>()
+        val delegating = mock<DelegatingPersistenceManager>()
+        whenever(delegating.contextHolder).thenReturn(own)
+
+        ApplicationContextRunner()
+            .withUserConfiguration(SharedDataSourceStubConfig::class.java)
+            .withPropertyValues("embabel.dice.store.type=graph")
+            .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
+            .withBean(TransactionContextHolder::class.java, { mock<TransactionContextHolder>() })
+            .withBean(PersistenceManager::class.java, { delegating })
+            .withBean(PlatformTransactionManager::class.java, { mock<PlatformTransactionManager>() })
+            .run { ctx ->
+                val saves = ReflectionTestUtils.getField(ctx.getBean<PropositionRepository>(), "txTemplate") as TransactionTemplate
+
+                assertThat(ReflectionTestUtils.getField(saves.transactionManager!!, "contextHolder")).isSameAs(own)
+            }
     }
 
     /** A JPA manager and Drivine on one raw pool is the same second connection, and the same refusal. */
@@ -397,4 +443,9 @@ class DiceStorageTransactionAutoConfigurationTest {
         @Bean
         fun platformTransactionManager(): PlatformTransactionManager = mock()
     }
+}
+
+/** A JPA dialect that hands out the JDBC connection, as Hibernate's does. */
+private class JdbcExposingDialect : DefaultJpaDialect() {
+    override fun getJdbcConnection(entityManager: EntityManager, readOnly: Boolean): ConnectionHandle? = null
 }

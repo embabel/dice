@@ -297,8 +297,19 @@ class DrivinePropositionRepository(
         // stored one disagrees with.
         validateSourceIdentities(proposition.provenanceEntries)
         val held = existing.provenanceEntries.toHashSet()
-        return existing.takeIf { proposition.provenanceEntries.all(held::contains) }
+        if (!proposition.provenanceEntries.all(held::contains)) return null
+        // The node and its evidence are two reads. A move between them shows here as another
+        // context, and then it is no match. A move away and back between the reads is not seen.
+        return existing.takeIf { stillIn(existingId, proposition.contextId, proposition.text) }
     }
+
+    /** Whether the proposition [id] is still in [contextId] with [text]. */
+    private fun stillIn(id: String, contextId: ContextId, text: String): Boolean =
+        persistenceManager.maybeGetOne(
+            cypherQuery("MATCH (p:Proposition {id: \$id}) WHERE p.contextId = \$contextId AND p.text = \$text RETURN p.id")
+                .bind(mapOf("id" to id, "contextId" to contextId.value, "text" to text))
+                .transform(String::class.java),
+        ) != null
 
     private fun findOrPersist(
         proposition: Proposition,
@@ -1205,7 +1216,9 @@ class DrivinePropositionRepository(
      * A SQL store has no vector index procedure to call. There Drivine measures each candidate
      * against the others itself, which gives the same pairs and the same scores.
      */
-    @Transactional(readOnly = true)
+    // SUPPORTS: on SQLite a transaction of its own would hold the file's write lock through every
+    // anchor's search. Standalone, each statement reads on its own; a caller's transaction is joined.
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
     override fun findClusters(
         similarityThreshold: ZeroToOne,
         topK: Int,
@@ -1287,7 +1300,9 @@ class DrivinePropositionRepository(
      * store pairs them. Each anchor is one search by Drivine's own cosine, filtered to its later
      * candidates and cut to [topK] in the database, so at most [topK] rows an anchor come back.
      * Drivine ranks every stored proposition before it filters, so the search is widened to all of
-     * them: a proposition of another context cannot crowd a candidate out.
+     * them: a proposition of another context cannot crowd a candidate out. The cost is that each
+     * anchor scores the whole store, not only the candidates. Thirty candidates took about 0.35 s
+     * alone and about 3.15 s with 1,000 unrelated 1,536-dimension vectors in the store.
      */
     private fun nearestLaterPairs(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> {
         val vectors = embeddingsOf(ids)
@@ -1517,7 +1532,11 @@ class DrivinePropositionRepository(
      * @throws PropositionReembedIncompleteException when some propositions could not be embedded;
      * all others were written and the index is restored
      */
-    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
+    @Transactional(
+        propagation = Propagation.SUPPORTS,
+        readOnly = true,
+        noRollbackFor = [PropositionReembedIncompleteException::class],
+    )
     override fun reembedAll(): PropositionReembedReport =
         if (callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction()) {
             reembedEverything(insideCallerTransaction = true)
