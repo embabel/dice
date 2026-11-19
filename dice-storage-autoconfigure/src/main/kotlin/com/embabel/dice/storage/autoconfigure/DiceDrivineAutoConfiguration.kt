@@ -24,13 +24,16 @@ import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.schema.SchemaCatalog
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.BeanCreationException
+import org.springframework.beans.factory.BeanFactoryUtils
 import org.springframework.beans.factory.BeanCurrentlyInCreationException
 import org.springframework.beans.factory.BeanFactory
 import org.springframework.beans.factory.BeanFactoryAware
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.config.BeanPostProcessor
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory
+import org.springframework.beans.factory.config.DependencyDescriptor
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
@@ -64,7 +67,8 @@ import org.springframework.core.type.AnnotatedTypeMetadata
  * `StatelessGraphObjectManager` gets a `PersistenceManager` under that manager's name when there is just
  * one datasource; with several, startup stops and asks for both. When the host has several of either
  * manager, the primary one is the one that counts, since that is the one Spring injects; several with
- * none primary stops startup and names them.
+ * none primary stops startup and names them. Managers in a parent application context count too, just
+ * as they do for injection and for the "host already has one" checks.
  *
  * With several datasources, DICE's schema (its constraints and indexes) goes only to the one its
  * stores use, rather than to every datasource Drivine knows. With one, it is left as declared.
@@ -121,10 +125,10 @@ class DiceDrivineAutoConfiguration {
     ): StatelessGraphObjectManager {
         // Whichever PersistenceManager the stores get, the host's or the one above, decides the database.
         // The one Spring injects: the only one, or the primary among several.
-        val manager = beanFactory.getBeanProvider(PersistenceManager::class.java).getIfUnique()
+        val manager = injectedBean(beanFactory, PersistenceManager::class.java)
             ?: error(
                 "There are several PersistenceManager beans " +
-                    "(${describe(beanFactory.getBeanNamesForType(PersistenceManager::class.java, true, false).toSet())}) " +
+                    "(${describe(beanNamesIncludingAncestors(beanFactory, PersistenceManager::class.java).toSet())}) " +
                     "and none is primary, so DICE can't tell which database to build its StatelessGraphObjectManager " +
                     "for. Mark one @Primary, or define both beans yourself, on the same database.",
             )
@@ -156,7 +160,7 @@ class DiceDrivineAutoConfiguration {
         if (hostBeanNames.isEmpty()) return null
         // Spring's own choice, which only creates the manager it picks.
         val injected = try {
-            beanFactory.getBeanProvider(StatelessGraphObjectManager::class.java).getIfUnique()
+            injectedBean(beanFactory, StatelessGraphObjectManager::class.java)
         } catch (e: BeanCreationException) {
             if (e.contains(BeanCurrentlyInCreationException::class.java)) return null else throw e
         }
@@ -168,9 +172,12 @@ class DiceDrivineAutoConfiguration {
         return injected.database
     }
 
-    /** The application's own StatelessGraphObjectManager beans, leaving out the one this class may register. */
+    /**
+     * The application's own StatelessGraphObjectManager beans, parent contexts included, leaving out the one
+     * this class may register here.
+     */
     private fun hostGraphObjectManagers(): List<String> =
-        beanFactory.getBeanNamesForType(StatelessGraphObjectManager::class.java, true, false).filterNot { name ->
+        beanNamesIncludingAncestors(beanFactory, StatelessGraphObjectManager::class.java).filterNot { name ->
             beanFactory.containsBeanDefinition(name) &&
                 (beanFactory.getBeanDefinition(name) as? AnnotatedBeanDefinition)
                     ?.factoryMethodMetadata?.declaringClassName == DiceDrivineAutoConfiguration::class.java.name
@@ -228,7 +235,7 @@ internal class DiceSchemaTargeting : BeanPostProcessor, BeanFactoryAware {
 
     /** The registered datasource behind the PersistenceManager DICE's stores get, or null when that can't be told. */
     private fun diceDatasource(registry: DatabaseRegistry): String? {
-        val manager = beanFactory.getBeanProvider(PersistenceManager::class.java).getIfUnique() ?: return null
+        val manager = injectedBean(beanFactory, PersistenceManager::class.java) ?: return null
         // A PersistenceManager that isn't Drivine's own may not have a name at all.
         val key: String? = manager.database
         return key?.let(registry::resolveDatabaseName)
@@ -284,6 +291,39 @@ internal object DrivineDatasource {
 
     /** The datasource the property names, or null when it is unset or blank. */
     fun named(properties: DiceDrivineProperties): String? = properties.datasource?.trim()?.takeIf { it.isNotEmpty() }
+}
+
+/**
+ * The bean of [type] Spring would inject: the only one, or the primary among several, counting beans in
+ * parent contexts the way injection does. Null when there is none, or several and Spring can't pick one.
+ *
+ * Spring's own `getBeanProvider(type).getIfUnique()` looks at this context first and only asks the parent
+ * when this one has none, so a plain local bean would hide a primary one in the parent that injection picks.
+ * This asks the injection machinery instead, which also creates only the bean it picks.
+ */
+private fun <T : Any> injectedBean(beanFactory: ConfigurableListableBeanFactory, type: Class<T>): T? {
+    val point = ManagerInjectionPoints::class.java.declaredFields.single { it.type == type }
+    // Optional and not eager, so nothing is created just to learn its type. No name either, so a bean that
+    // happens to share the stand-in field's name isn't preferred, as a named injection point would be.
+    val descriptor = object : DependencyDescriptor(point, false, false) {
+        override fun getDependencyName(): String? = null
+    }
+    return try {
+        type.cast(beanFactory.resolveDependency(descriptor, null))
+    } catch (e: NoUniqueBeanDefinitionException) {
+        null
+    }
+}
+
+/** Every bean name of [type] in this context and its parents, without creating anything to find them. */
+private fun beanNamesIncludingAncestors(beanFactory: ConfigurableListableBeanFactory, type: Class<*>): List<String> =
+    BeanFactoryUtils.beanNamesForTypeIncludingAncestors(beanFactory, type, true, false).toList()
+
+/** Stand-in injection points, so DICE can ask Spring which manager it would inject without injecting one. */
+@Suppress("unused")
+private class ManagerInjectionPoints {
+    @JvmField var persistenceManager: PersistenceManager? = null
+    @JvmField var graphObjectManager: StatelessGraphObjectManager? = null
 }
 
 private fun describe(names: Set<String>): String =

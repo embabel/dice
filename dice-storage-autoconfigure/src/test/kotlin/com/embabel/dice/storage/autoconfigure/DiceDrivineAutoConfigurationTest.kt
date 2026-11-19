@@ -440,6 +440,112 @@ class DiceDrivineAutoConfigurationTest {
     }
 
     @Test
+    fun `a StatelessGraphObjectManager in a parent context gets a PersistenceManager under the same name`() {
+        // The child injects the parent's manager, so DICE's PersistenceManager must share its name, not
+        // fall back to "neo", which Drivine would treat as a second connection.
+        parentWith(HostGraphObjectManager::class.java, *datasource("neo"), "host.datasource=default").run { parent ->
+            childOf(parent).run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<StatelessGraphObjectManager>().database).isEqualTo("default")
+                assertThat(ctx.getBean<PersistenceManager>().database).isEqualTo("default")
+            }
+        }
+    }
+
+    @Test
+    fun `a StatelessGraphObjectManager in a parent context with several datasources fails startup asking for both beans`() {
+        parentWith(
+            HostGraphObjectManager::class.java,
+            *datasource("neo"),
+            *datasource("other"),
+            "host.datasource=default",
+        ).run { parent ->
+            childOf(parent).withPropertyValues("embabel.dice.store.datasource=other").run { ctx ->
+                assertThat(ctx).hasFailed()
+                assertThat(ctx).getFailure().rootCause()
+                    .hasMessageContaining("StatelessGraphObjectManager")
+                    .hasMessageContaining("both")
+            }
+        }
+    }
+
+    @Test
+    fun `a primary StatelessGraphObjectManager in a parent context outranks a plain one in the child`() {
+        // Injection sees both and takes the parent's primary, so DICE's PersistenceManager follows it.
+        parentWith(PrimaryHostGraphObjectManager::class.java, *datasource("neo"), "host.primary=default").run { parent ->
+            childOf(parent)
+                .withPropertyValues("host.datasource=neo")
+                .withUserConfiguration(HostGraphObjectManager::class.java, InjectedManagers::class.java)
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertThat(ctx.getBean<InjectedManagers.Seen>().graphObjectManager.database).isEqualTo("default")
+                    assertThat(ctx.getBean<PersistenceManager>("persistenceManager").database).isEqualTo("default")
+                }
+        }
+    }
+
+    @Test
+    fun `a PersistenceManager in a parent context gets a StatelessGraphObjectManager under the same name`() {
+        parentWith(
+            HostPersistenceManager::class.java,
+            *datasource("neo"),
+            *datasource("other"),
+            "host.datasource=default",
+        ).run { parent ->
+            childOf(parent).run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<PersistenceManager>().database).isEqualTo("default")
+                assertThat(ctx.getBean<StatelessGraphObjectManager>())
+                    .isSameAs(ctx.getBean<GraphObjectManagerFactory>().stateless("default"))
+            }
+        }
+    }
+
+    @Test
+    fun `a primary PersistenceManager in a parent context outranks a plain one in the child, schema included`() {
+        // Injection takes the parent's primary on "other", so DICE's StatelessGraphObjectManager and schema
+        // must follow it rather than the child's own manager on "neo".
+        parentWith(
+            PrimaryHostPersistenceManager::class.java,
+            *datasource("neo"),
+            *datasource("other"),
+            "host.primary=other",
+        ).run { parent ->
+            childOf(parent)
+                .withPropertyValues("host.datasource=neo")
+                .withUserConfiguration(HostPersistenceManager::class.java, InjectedManagers::class.java)
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    val seen = ctx.getBean<InjectedManagers.Seen>()
+                    assertThat(seen.persistenceManager.database).isEqualTo("other")
+                    assertThat(seen.graphObjectManager)
+                        .isSameAs(ctx.getBean<GraphObjectManagerFactory>().stateless("other"))
+                    val dice = diceCatalogs(ctx)
+                    assertThat(dice).isNotEmpty()
+                    dice.forEach { (name, catalog) ->
+                        assertThat(catalog.target).describedAs(name).isEqualTo(DatabaseTarget.Named(setOf("other")))
+                    }
+                }
+        }
+    }
+
+    @Test
+    fun `a PersistenceManager in a parent context and a plain one in the child fails startup naming both`() {
+        parentWith(HostPersistenceManager::class.java, *datasource("neo"), "host.datasource=neo").run { parent ->
+            childOf(parent)
+                .withPropertyValues("host.secondary=neo")
+                .withUserConfiguration(SecondHostPersistenceManager::class.java)
+                .run { ctx ->
+                    assertThat(ctx).hasFailed()
+                    assertThat(ctx).getFailure().rootCause()
+                        .hasMessageContaining("'hostPersistenceManager'")
+                        .hasMessageContaining("'secondPersistenceManager'")
+                        .hasMessageContaining("@Primary")
+                }
+        }
+    }
+
+    @Test
     fun `it runs after Drivine's auto-configuration and before every DICE one that looks for Drivine`() {
         val ordered = Configurations.getClasses(
             AutoConfigurations.of(
@@ -476,6 +582,24 @@ class DiceDrivineAutoConfigurationTest {
     private val runnerWithMetamodel = runner
         .withConfiguration(AutoConfigurations.of(MetamodelAutoConfiguration::class.java))
         .withUserConfiguration(HostDeclaredSchema::class.java)
+
+    /** A parent context with Drivine's factories and the host managers in [hostBeans], and nothing of DICE's. */
+    private fun parentWith(hostBeans: Class<*>, vararg properties: String) = ApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(DrivineAutoConfiguration::class.java))
+        .withUserConfiguration(hostBeans)
+        .withPropertyValues(*properties)
+
+    /** A child of [parent] with DICE's auto-configurations, which inherits Drivine and the parent's managers. */
+    private fun childOf(parent: ApplicationContext) = ApplicationContextRunner()
+        .withParent(parent)
+        .withConfiguration(
+            AutoConfigurations.of(
+                DiceDrivineAutoConfiguration::class.java,
+                DiceStorageAutoConfiguration::class.java,
+                CollectorAutoConfiguration::class.java,
+            ),
+        )
+        .withUserConfiguration(StubAi::class.java)
 
     /** Checks the catalog bean [name] targets [datasource] alone, and that Drivine would apply it nowhere else. */
     private fun assertCatalogOnlyOn(ctx: AssertableApplicationContext, name: String, datasource: String) {
@@ -532,6 +656,51 @@ class DiceDrivineAutoConfigurationTest {
             factory: GraphObjectManagerFactory,
             @Value("\${host.datasource}") datasource: String,
         ): StatelessGraphObjectManager = factory.stateless(datasource)
+    }
+
+    /** A host with one primary PersistenceManager, for the datasource named by `host.primary`. */
+    @Configuration(proxyBeanMethods = false)
+    open class PrimaryHostPersistenceManager {
+
+        @Bean
+        @Primary
+        open fun primaryPersistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.primary}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
+    }
+
+    /** A host with one primary StatelessGraphObjectManager, for the datasource named by `host.primary`. */
+    @Configuration(proxyBeanMethods = false)
+    open class PrimaryHostGraphObjectManager {
+
+        @Bean
+        @Primary
+        open fun primaryGraphObjectManager(
+            factory: GraphObjectManagerFactory,
+            @Value("\${host.primary}") datasource: String,
+        ): StatelessGraphObjectManager = factory.stateless(datasource)
+    }
+
+    /** A second, non-primary PersistenceManager, for the datasource named by `host.secondary`. */
+    @Configuration(proxyBeanMethods = false)
+    open class SecondHostPersistenceManager {
+
+        @Bean
+        open fun secondPersistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.secondary}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
+    }
+
+    /** Records the managers Spring injects, which are the ones DICE's stores get. */
+    @Configuration(proxyBeanMethods = false)
+    open class InjectedManagers {
+
+        class Seen(val persistenceManager: PersistenceManager, val graphObjectManager: StatelessGraphObjectManager)
+
+        @Bean
+        open fun seen(pm: PersistenceManager, gom: StatelessGraphObjectManager): Seen = Seen(pm, gom)
     }
 
     /** A host with two StatelessGraphObjectManagers, one of them primary, on `host.primary` and `host.secondary`. */
