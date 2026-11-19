@@ -60,12 +60,12 @@ public class SupportSchema {
      * mentions come back tagged Customer, Contact or Plan.
      *
      * <p>The agent platform has a {@code DataDictionary} bean too, so whoever needs this one
-     * asks for it by name with {@code @Qualifier("supportSchema")}.
+     * asks for it by name with {@code @Qualifier("supportDictionary")}.
      *
      * @return the support desk's schema
      */
     @Bean
-    DataDictionary supportSchema() {
+    DataDictionary supportDictionary() {
         return DataDictionary.fromClasses("support", Customer.class, Contact.class, Plan.class);
     }
 }

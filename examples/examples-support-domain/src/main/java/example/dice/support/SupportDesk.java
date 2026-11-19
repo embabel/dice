@@ -51,7 +51,7 @@ public class SupportDesk {
      * @param resolver finds the entity a mention names among those already stored
      * @param writer   stores a chat's facts and new entities as one unit
      */
-    SupportDesk(PropositionPipeline pipeline, @Qualifier("supportSchema") DataDictionary schema,
+    SupportDesk(PropositionPipeline pipeline, @Qualifier("supportDictionary") DataDictionary schema,
             @Qualifier("supportResolver") EntityResolver resolver,
             @Qualifier("supportWriter") PersistUnitWriter writer) {
         this.pipeline = pipeline;

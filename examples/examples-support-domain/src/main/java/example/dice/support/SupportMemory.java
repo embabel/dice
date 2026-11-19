@@ -62,7 +62,7 @@ class SupportMemory {
      * @return an empty in-memory store
      */
     @Bean
-    InMemoryNamedEntityDataRepository supportEntities(@Qualifier("supportSchema") DataDictionary schema) {
+    InMemoryNamedEntityDataRepository supportEntities(@Qualifier("supportDictionary") DataDictionary schema) {
         return new InMemoryNamedEntityDataRepository(schema);
     }
 
