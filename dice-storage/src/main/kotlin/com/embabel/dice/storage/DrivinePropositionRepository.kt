@@ -47,6 +47,7 @@ import org.drivine.schema.SimilarityFunction
 import org.drivine.schema.VectorIndexSpec
 import org.drivine.schema.EnsureResult
 import org.drivine.StaleObjectException
+import org.drivine.connection.DatabaseType
 import org.drivine.manager.*
 import org.drivine.model.Stamps
 import org.drivine.query.CypherStatement
@@ -1127,10 +1128,10 @@ class DrivinePropositionRepository(
      * cosine `2*t - 1` for a stored `t`; that threshold now means something stricter and should be
      * retuned.
      *
-     * A SQL store such as SQLite has no vector index procedure to call. There Drivine measures every
-     * pair of the candidates itself, exactly, and each anchor keeps its [topK] nearest among the
-     * candidates with a later id, as the in-memory store pairs them. That reads every pair above the
-     * threshold, so its cost grows with the square of the number of candidates.
+     * SQLite has no vector index procedure to call. There Drivine measures every pair of the
+     * candidates itself, exactly, and each anchor keeps its [topK] nearest among the candidates with
+     * a later id, as the in-memory store pairs them. That reads every pair above the threshold, so
+     * its cost and memory grow with the square of the number of candidates.
      */
     @Transactional(readOnly = true)
     override fun findClusters(
@@ -1143,10 +1144,10 @@ class DrivinePropositionRepository(
         val byId = candidates.associateBy { it.id }
         val ids = candidates.map { it.id }
 
-        val rows = if (persistenceManager.type.speaksCypher) {
-            nearestPairsByIndex(ids, similarityThreshold, topK)
-        } else {
+        val rows = if (persistenceManager.type == DatabaseType.SQLITE) {
             nearestLaterPairs(ids, similarityThreshold, topK)
+        } else {
+            nearestPairsByIndex(ids, similarityThreshold, topK)
         }
 
         val clusters = rows
@@ -1192,7 +1193,7 @@ class DrivinePropositionRepository(
         ) as List<Map<String, Any>>
     }
 
-    /** On a SQL store, each anchor's [topK] nearest among the candidates with a later id, measured by Drivine. */
+    /** On SQLite, each anchor's [topK] nearest among the candidates with a later id, measured by Drivine. */
     private fun nearestLaterPairs(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> =
         graphObjectManager.loadNearestAmong(PropositionView::class.java, ids, ids.size, toEngineScore(similarityThreshold))
             .flatMap { (anchorId, near) ->
