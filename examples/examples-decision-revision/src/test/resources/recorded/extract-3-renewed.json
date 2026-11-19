@@ -1,0 +1,15 @@
+{
+  "propositions": [
+    {
+      "text": "Acme renewed the Team plan for a year",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" },
+        { "span": "Team plan", "type": "Plan", "role": "OBJECT" }
+      ],
+      "confidence": 0.6,
+      "decay": 0.1,
+      "importance": 0.7,
+      "reasoning": "The renewal says the plan is still in use"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "propositions": [
+    {
+      "text": "Acme uses the Team plan",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" },
+        { "span": "Team plan", "type": "Plan", "role": "OBJECT" }
+      ],
+      "confidence": 0.6,
+      "decay": 0.1,
+      "importance": 0.7,
+      "reasoning": "Stated directly in the message"
+    }
+  ]
+}

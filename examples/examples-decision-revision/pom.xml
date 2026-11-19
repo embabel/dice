@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.embabel.dice.examples</groupId>
+        <artifactId>dice-examples</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>examples-decision-revision</artifactId>
+    <name>DICE Examples - Decision Revision</name>
+    <description>An Embabel decision chooses how a new fact revises the facts already stored</description>
+
+    <dependencies>
+        <!-- Brings up the Embabel Agent platform, which is where DICE and the decision get their model from. -->
+        <dependency>
+            <groupId>com.embabel.agent</groupId>
+            <artifactId>embabel-agent-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jspecify</groupId>
+            <artifactId>jspecify</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.embabel.dice.examples</groupId>
+            <artifactId>examples-common</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Checks the application's package structure, as the other examples do. -->
+        <dependency>
+            <groupId>org.springframework.modulith</groupId>
+            <artifactId>spring-modulith-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

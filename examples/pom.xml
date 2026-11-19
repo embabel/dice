@@ -33,6 +33,7 @@
         <module>examples-common</module>
         <module>examples-java</module>
         <module>examples-kotlin</module>
+        <module>examples-decision-revision</module>
     </modules>
 
     <properties>
