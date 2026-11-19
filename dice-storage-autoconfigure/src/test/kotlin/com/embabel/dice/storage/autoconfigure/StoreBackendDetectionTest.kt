@@ -53,6 +53,7 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.getBean
+import org.springframework.boot.LazyInitializationBeanFactoryPostProcessor
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.context.annotation.Configurations
@@ -244,12 +245,133 @@ class StoreBackendDetectionTest {
         }
 
         @Test
-        fun `a host's own PropositionRepository means nothing fails`() {
+        fun `a host's own PropositionRepository still fails, naming DICE's other in-memory stores`() {
             late.withUserConfiguration(HostRepository::class.java).run { ctx ->
-                assertThat(ctx).hasNotFailed()
-                assertThat(ctx.getBean<PropositionRepository>()).isSameAs(HostRepository.INSTANCE)
+                assertThat(ctx).hasFailed()
+                assertThat(ctx).getFailure().rootCause().message()
+                    .contains("after DICE's auto-configuration")
+                    .contains(ChunkHistoryStore::class.java.simpleName)
+                    .contains(ProjectionRecordStore::class.java.simpleName)
+                    .contains(CollectorRecordStore::class.java.simpleName)
+                    .doesNotContain(PropositionRepository::class.java.simpleName)
+                    .doesNotContain(DecayManager::class.java.simpleName)
             }
         }
+
+        /** The decay manager DICE builds over the host's repository follows that repository, so it doesn't count. */
+        @Test
+        fun `with every store DICE would fall back on the host's own, nothing fails`() {
+            late
+                .withUserConfiguration(
+                    HostRepository::class.java,
+                    HostLineageStores::class.java,
+                    HostCollectorRecordStore::class.java,
+                )
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertThat(ctx.getBean<PropositionRepository>()).isSameAs(HostRepository.INSTANCE)
+                    assertThat(ctx.getBean<ChunkHistoryStore>()).isSameAs(HostLineageStores.CHUNKS)
+                    assertThat(ctx.getBean<ProjectionRecordStore>()).isSameAs(HostLineageStores.PROJECTIONS)
+                    assertThat(ctx.getBean<DecayManager>()).isInstanceOf(InMemoryDecayManager::class.java)
+                }
+        }
+
+        @Test
+        fun `the check still runs when every bean is lazy`() {
+            late
+                .withInitializer { it.addBeanFactoryPostProcessor(LazyInitializationBeanFactoryPostProcessor()) }
+                .run { ctx ->
+                    assertThat(ctx).hasFailed()
+                    assertThat(ctx).getFailure().rootCause()
+                        .hasMessageContaining("after DICE's auto-configuration")
+                }
+        }
+
+        /** No `Ai` bean, so DICE makes no proposition store at all, only the stores that don't embed. */
+        private val lateWithoutAi = ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(DiceStorageAutoConfiguration::class.java, LateDrivine::class.java),
+            )
+
+        @Test
+        fun `without an Ai bean startup still fails and names the in-memory stores`() {
+            lateWithoutAi.run { ctx ->
+                assertThat(ctx).hasFailed()
+                assertThat(ctx).getFailure().rootCause()
+                    .hasMessageContaining("after DICE's auto-configuration")
+                    .hasMessageContaining("embabel.dice.store.type=graph")
+                    .hasMessageContaining(ChunkHistoryStore::class.java.simpleName)
+                    .hasMessageContaining(ProjectionRecordStore::class.java.simpleName)
+                    .hasMessageContaining(CollectorRecordStore::class.java.simpleName)
+            }
+        }
+
+        @Test
+        fun `without an Ai bean type=in-memory gives the in-memory stores without failing`() {
+            lateWithoutAi.withPropertyValues("embabel.dice.store.type=in-memory").run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<ChunkHistoryStore>()).isInstanceOf(InMemoryChunkHistoryStore::class.java)
+                assertThat(ctx.getBean<ProjectionRecordStore>()).isInstanceOf(InMemoryProjectionRecordStore::class.java)
+            }
+        }
+
+        @Test
+        fun `host stores are never counted, but a remaining DICE in-memory store still fails`() {
+            lateWithoutAi.withUserConfiguration(HostLineageStores::class.java).run { ctx ->
+                assertThat(ctx).hasFailed()
+                assertThat(ctx).getFailure().rootCause().message()
+                    .contains(CollectorRecordStore::class.java.simpleName)
+                    .doesNotContain(ChunkHistoryStore::class.java.simpleName)
+                    .doesNotContain(ProjectionRecordStore::class.java.simpleName)
+            }
+        }
+
+        @Test
+        fun `with every store the host's own nothing fails`() {
+            lateWithoutAi
+                .withUserConfiguration(HostLineageStores::class.java, HostCollectorRecordStore::class.java)
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertThat(ctx.getBean<ChunkHistoryStore>()).isSameAs(HostLineageStores.CHUNKS)
+                    assertThat(ctx.getBean<ProjectionRecordStore>()).isSameAs(HostLineageStores.PROJECTIONS)
+                }
+        }
+
+        @Test
+        fun `the collector trace and metamodel version stores are counted too`() {
+            ApplicationContextRunner()
+                .withConfiguration(
+                    AutoConfigurations.of(
+                        DiceStorageAutoConfiguration::class.java,
+                        CollectorAutoConfiguration::class.java,
+                        MetamodelAutoConfiguration::class.java,
+                        LateDrivine::class.java,
+                    ),
+                )
+                .withUserConfiguration(
+                    InMemoryBackendConfig::class.java,
+                    HostLineageStores::class.java,
+                    HostCollectorRecordStore::class.java,
+                )
+                .run { ctx ->
+                    assertThat(ctx).hasFailed()
+                    assertThat(ctx).getFailure().rootCause()
+                        .hasMessageContaining(CollectorTraceStore::class.java.simpleName)
+                        .hasMessageContaining(MetamodelVersionStore::class.java.simpleName)
+                }
+        }
+    }
+
+    @Test
+    fun `with trace recording turned off the in-memory trace store is not mistaken for lost storage`() {
+        storage
+            .withConfiguration(AutoConfigurations.of(CollectorAutoConfiguration::class.java))
+            .withUserConfiguration(StubDrivine::class.java)
+            .withPropertyValues("embabel.dice.collector.trace.enabled=false")
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<CollectorTraceStore>()).isInstanceOf(InMemoryCollectorTraceStore::class.java)
+            }
     }
 
     @Nested
@@ -399,6 +521,29 @@ class StoreBackendDetectionTest {
         companion object {
             val INSTANCE: PropositionRepository = InMemoryPropositionRepository(mock<EmbeddingService>())
         }
+    }
+
+    /** A host that keeps its own chunk history and projection records. */
+    @Configuration(proxyBeanMethods = false)
+    open class HostLineageStores {
+
+        @Bean
+        open fun hostChunkHistoryStore(): ChunkHistoryStore = CHUNKS
+
+        @Bean
+        open fun hostProjectionRecordStore(): ProjectionRecordStore = PROJECTIONS
+
+        companion object {
+            val CHUNKS: ChunkHistoryStore = InMemoryChunkHistoryStore()
+            val PROJECTIONS: ProjectionRecordStore = InMemoryProjectionRecordStore()
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    open class HostCollectorRecordStore {
+
+        @Bean
+        open fun hostCollectorRecordStore(): CollectorRecordStore = InMemoryCollectorRecordStore()
     }
 
     private companion object {

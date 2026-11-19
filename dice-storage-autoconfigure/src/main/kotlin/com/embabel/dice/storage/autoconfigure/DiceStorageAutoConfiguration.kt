@@ -20,6 +20,7 @@ import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.spi.DecayStatusPolicy
 import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
+import com.embabel.dice.metamodel.MetamodelVersionStore
 import com.embabel.dice.projection.lineage.CollectorRecordStore
 import com.embabel.dice.projection.lineage.InMemoryCollectorRecordStore
 import com.embabel.dice.projection.lineage.InMemoryProjectionRecordStore
@@ -31,6 +32,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunStore
 import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
 import com.embabel.dice.proposition.store.InMemoryDecayManager
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.spi.CollectorTraceStore
 import com.embabel.dice.storage.DiceStorageSchema
 import com.embabel.dice.storage.DrivineChunkHistoryStore
 import com.embabel.dice.storage.DrivineCollectorRecordStore
@@ -68,6 +70,7 @@ import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.ConditionContext
 import org.springframework.context.annotation.ConfigurationCondition
 import org.springframework.context.annotation.Import
+import org.springframework.context.annotation.Lazy
 import org.springframework.core.env.Environment
 import org.springframework.core.type.AnnotatedTypeMetadata
 import org.springframework.scheduling.annotation.EnableScheduling
@@ -533,23 +536,32 @@ internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
  * Checks once, at startup, that DICE ended up on the stores the application meant it to use.
  *
  * It runs after every bean has been registered, so unlike the conditions it sees a Drivine registered
- * by a host auto-configuration that came after DICE's.
+ * by a host auto-configuration that came after DICE's. It is never lazy: with
+ * `spring.main.lazy-initialization=true` nothing asks for this bean, so a lazy one would simply never
+ * run and the check with it.
  *
  * With the deprecated `embabel.dice.store.type` property unset, it refuses to start when Drivine is
- * configured but the proposition store is DICE's own in-memory one: Drivine arrived too late for the
- * conditions to see it, and durable storage would otherwise be quietly lost. A host's own proposition
- * store is left alone. With the property set, it logs one deprecation warning, then refuses to start
- * if the value is unknown, or if it is `graph` and Drivine isn't configured. `in-memory` never fails.
+ * configured but DICE wired any of its own in-memory stores that have a Drivine version: Drivine arrived
+ * too late for the conditions to see it, and durable storage would otherwise be quietly lost. That
+ * covers every such store, not just the proposition store, because a host without an `Ai` bean gets no
+ * proposition store at all yet still gets the others. A host can swap any one store by defining its own
+ * bean, and that store is left alone while the rest must still follow Drivine. The decay manager DICE
+ * builds over a host's own proposition store is left alone too.
+ * With the property set, it logs one deprecation warning, then refuses to start if the value is
+ * unknown, or if it is `graph` and Drivine isn't configured. `in-memory` never fails.
  */
+@Lazy(false)
 internal class StoreBackendCheck(environment: Environment, beanFactory: ConfigurableListableBeanFactory) {
 
     init {
         val requested = StoreBackend.requested(environment)
         if (requested == null) {
-            check(!inMemoryStoresDespiteDrivine(beanFactory)) {
+            val lost = inMemoryStoresDespiteDrivine(environment, beanFactory)
+            check(lost.isEmpty()) {
                 "Drivine is configured (there is a Drivine PersistenceManager bean), but it was registered after " +
                     "DICE's auto-configuration had already chosen its stores, so DICE wired its in-memory " +
-                    "stores and nothing would be saved to the database. Fix it in one of these ways: order the " +
+                    "stores (${lost.joinToString()}) and nothing would be saved to the database. Fix it in one " +
+                    "of these ways: order the " +
                     "auto-configuration that sets up Drivine before " +
                     "${DiceStorageAutoConfiguration::class.java.name} (the 'before' attribute of its @AutoConfiguration), " +
                     "set " +
@@ -582,24 +594,105 @@ internal class StoreBackendCheck(environment: Environment, beanFactory: Configur
     }
 
     /**
-     * True when Drivine is configured yet the proposition store is the in-memory one DICE registers
-     * itself. Only bean definitions are read, so no bean is created just to answer this.
+     * The stores DICE wired in memory although Drivine is configured, by interface name; empty when
+     * there are none or Drivine isn't configured. Only bean definitions are read, so no bean is
+     * created just to answer this.
      */
-    private fun inMemoryStoresDespiteDrivine(beanFactory: ConfigurableListableBeanFactory): Boolean {
-        if (!StoreBackend.drivineConfigured(beanFactory)) return false
-        return BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
-            beanFactory, PropositionRepository::class.java, true, false,
-        ).any { isDicesInMemoryRepository(beanFactory, it) }
+    private fun inMemoryStoresDespiteDrivine(
+        environment: Environment,
+        beanFactory: ConfigurableListableBeanFactory,
+    ): List<String> {
+        if (!StoreBackend.drivineConfigured(beanFactory)) return emptyList()
+        return beanFactory.beanDefinitionNames
+            .mapNotNull { name -> dicesInMemoryFallback(beanFactory, name) }
+            .filter { it.counts(environment, beanFactory) }
+            .map { it.store.simpleName }
+            .distinct()
     }
 
-    /** Whether [name] is the bean made by DICE's own `inMemoryPropositionRepository` method. */
-    private fun isDicesInMemoryRepository(beanFactory: ConfigurableListableBeanFactory, name: String): Boolean {
-        val definition = runCatching { beanFactory.getMergedBeanDefinition(name) }.getOrNull() ?: return false
-        if (definition.factoryMethodName != DiceStorageAutoConfiguration::inMemoryPropositionRepository.name) {
-            return false
+    /** The fallback [name] was made by, when it is one of DICE's own in-memory store methods. */
+    private fun dicesInMemoryFallback(beanFactory: ConfigurableListableBeanFactory, name: String): InMemoryFallback? {
+        val definition = runCatching { beanFactory.getMergedBeanDefinition(name) }.getOrNull() ?: return null
+        val candidates = IN_MEMORY_FALLBACKS.filter { it.method == definition.factoryMethodName }
+        if (candidates.isEmpty()) return null
+        val factoryBean = definition.factoryBeanName ?: return null
+        val factoryType = beanFactory.getType(factoryBean, false) ?: return null
+        return candidates.firstOrNull { it.configuration.isAssignableFrom(factoryType) }
+    }
+
+    /**
+     * One of DICE's in-memory store methods that has a Drivine version, and when its being wired means
+     * durable storage was lost. Most always mean that, with two exceptions. The collector trace store
+     * doesn't when trace recording is off: its Drivine version is skipped then while the in-memory one
+     * is wired anyway, Drivine or not. And the decay manager works on whatever proposition store is
+     * there, so when that store is the host's own, the decay manager DICE builds over it is the host's
+     * choice too.
+     */
+    private class InMemoryFallback(
+        val configuration: Class<*>,
+        val method: String,
+        val store: Class<*>,
+        val counts: (Environment, ConfigurableListableBeanFactory) -> Boolean = { _, _ -> true },
+    )
+
+    private companion object {
+        const val COLLECTOR_TRACE_ENABLED = "${DicePropertyPrefixes.DICE}.collector.trace.enabled"
+
+        /**
+         * Whether the host defined its own proposition store, meaning a [PropositionRepository] bean
+         * that none of DICE's own configuration made. Reads definitions only.
+         */
+        fun hostPropositionRepository(beanFactory: ConfigurableListableBeanFactory): Boolean =
+            BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
+                beanFactory, PropositionRepository::class.java, true, false,
+            ).any { name -> !madeByDiceStorage(beanFactory, name) }
+
+        private fun madeByDiceStorage(beanFactory: ConfigurableListableBeanFactory, name: String): Boolean {
+            val definition = runCatching { beanFactory.getMergedBeanDefinition(name) }.getOrNull() ?: return false
+            val factoryBean = definition.factoryBeanName ?: return false
+            val factoryType = beanFactory.getType(factoryBean, false) ?: return false
+            return DiceStorageAutoConfiguration::class.java.isAssignableFrom(factoryType)
         }
-        val factoryBean = definition.factoryBeanName ?: return false
-        val factoryType = beanFactory.getType(factoryBean, false) ?: return false
-        return DiceStorageAutoConfiguration::class.java.isAssignableFrom(factoryType)
+
+        val IN_MEMORY_FALLBACKS = listOf(
+            InMemoryFallback(
+                DiceStorageAutoConfiguration::class.java,
+                DiceStorageAutoConfiguration::inMemoryPropositionRepository.name,
+                PropositionRepository::class.java,
+            ),
+            InMemoryFallback(
+                DiceStorageAutoConfiguration::class.java,
+                DiceStorageAutoConfiguration::inMemoryChunkHistoryStore.name,
+                ChunkHistoryStore::class.java,
+            ),
+            InMemoryFallback(
+                DiceStorageAutoConfiguration::class.java,
+                DiceStorageAutoConfiguration::inMemoryProjectionRecordStore.name,
+                ProjectionRecordStore::class.java,
+            ),
+            InMemoryFallback(
+                DiceStorageAutoConfiguration::class.java,
+                DiceStorageAutoConfiguration::inMemoryCollectorRecordStore.name,
+                CollectorRecordStore::class.java,
+            ),
+            InMemoryFallback(
+                DiceStorageAutoConfiguration::class.java,
+                DiceStorageAutoConfiguration::inMemoryDecayManager.name,
+                DecayManager::class.java,
+            ) { _, beanFactory -> !hostPropositionRepository(beanFactory) },
+            InMemoryFallback(
+                CollectorAutoConfiguration::class.java,
+                CollectorAutoConfiguration::inMemoryCollectorTraceStore.name,
+                CollectorTraceStore::class.java,
+            ) { environment, _ ->
+                // Matches @ConditionalOnProperty with no havingValue: anything but "false" is on.
+                !environment.getProperty(COLLECTOR_TRACE_ENABLED, "").trim().equals("false", ignoreCase = true)
+            },
+            InMemoryFallback(
+                MetamodelAutoConfiguration::class.java,
+                MetamodelAutoConfiguration::inMemoryMetamodelVersionStore.name,
+                MetamodelVersionStore::class.java,
+            ),
+        )
     }
 }
