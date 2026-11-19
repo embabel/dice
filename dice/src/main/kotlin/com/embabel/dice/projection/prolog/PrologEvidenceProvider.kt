@@ -22,6 +22,7 @@ import com.embabel.dice.evidence.EvidenceProvider
 import com.embabel.dice.evidence.RuleDeclaration
 import com.embabel.dice.evidence.RuleGoal
 import com.embabel.dice.evidence.Searched
+import com.embabel.dice.evidence.characterCodeEnd
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStore
 import it.unibo.tuprolog.core.Atom
@@ -396,17 +397,6 @@ class PrologEvidenceProvider private constructor(
                     }
                 }
             }
-
-        // Where the character after 0' ends, starting at [start]: a doubled quote such as 0''', an escape such as
-        // 0'\n or 0'\x41\ (up to its closing backslash), or else a single character.
-        private fun characterCodeEnd(goal: String, start: Int): Int = when {
-            start >= goal.length -> start
-            goal[start] == '\'' && goal.getOrNull(start + 1) == '\'' -> start + 2
-            goal[start] != '\\' -> start + 1
-            goal.getOrNull(start + 1)?.let { it == 'x' || it.isDigit() } == true ->
-                goal.indexOf('\\', start + 2).let { if (it < 0) goal.length else it + 1 }
-            else -> minOf(start + 2, goal.length)
-        }
 
         private val QUOTES = setOf('\'', '"', '`')
 

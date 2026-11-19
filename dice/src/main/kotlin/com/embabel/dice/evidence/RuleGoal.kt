@@ -149,13 +149,14 @@ internal class GoalShape private constructor(val predicate: String, val arity: I
                         c == quote && goal.getOrNull(i + 1) == quote -> i++
                         c == quote -> quote = null
                     }
-                } else when (c) {
-                    in QUOTES -> { quote = c; hasArgs = true }
-                    '(', '[', '{' -> { depth++; hasArgs = true }
-                    ')' -> if (depth == 0) { close = i; break } else depth--
-                    ']', '}' -> if (depth > 0) depth--
-                    ',' -> if (depth == 0) commas++
-                    else -> if (!c.isWhitespace()) hasArgs = true
+                } else when {
+                    startsCharacterCode(goal, i) -> { i = characterCodeEnd(goal, i + 1); continue }
+                    c in QUOTES -> { quote = c; hasArgs = true }
+                    c == '(' || c == '[' || c == '{' -> { depth++; hasArgs = true }
+                    c == ')' -> if (depth == 0) { close = i; break } else depth--
+                    c == ']' || c == '}' -> if (depth > 0) depth--
+                    c == ',' -> if (depth == 0) commas++
+                    !c.isWhitespace() -> hasArgs = true
                 }
                 i++
             }
@@ -176,6 +177,9 @@ internal class GoalShape private constructor(val predicate: String, val arity: I
                         c == quote && goal.getOrNull(i + 1) == quote -> i++
                         c == quote -> quote = null
                     }
+                } else if (startsCharacterCode(goal, i)) {
+                    i = characterCodeEnd(goal, i + 1)
+                    continue
                 } else if (c in QUOTES) {
                     quote = c
                 } else if (c == '(') {
@@ -186,4 +190,23 @@ internal class GoalShape private constructor(val predicate: String, val arity: I
             return -1
         }
     }
+}
+
+// True when the quote at [index] belongs to a character code such as 0'A rather than opening a quoted atom: it
+// follows a lone 0, one that isn't the tail of a longer name or number like a0 or 10.
+private fun startsCharacterCode(text: String, index: Int): Boolean =
+    text[index] == '\'' && text.getOrNull(index - 1) == '0' &&
+        text.getOrNull(index - 2).let { it == null || !(it.isLetterOrDigit() || it == '_') }
+
+/**
+ * Where the character after `0'` ends, starting at [start]: a doubled quote such as `0'''`, an escape such as
+ * `0'\n` or `0'\x41\` (up to its closing backslash), or else a single character.
+ */
+internal fun characterCodeEnd(text: String, start: Int): Int = when {
+    start >= text.length -> start
+    text[start] == '\'' && text.getOrNull(start + 1) == '\'' -> start + 2
+    text[start] != '\\' -> start + 1
+    text.getOrNull(start + 1)?.let { it == 'x' || it.isDigit() } == true ->
+        text.indexOf('\\', start + 2).let { if (it < 0) text.length else it + 1 }
+    else -> minOf(start + 2, text.length)
 }

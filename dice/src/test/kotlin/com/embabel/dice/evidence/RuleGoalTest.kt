@@ -76,6 +76,37 @@ class RuleGoalTest {
             assertEquals("can_consult", declaration.predicate)
             assertEquals(3, declaration.arity)
         }
+
+        @Test
+        fun `a character code such as 0'A is not an opening quote`() {
+            val goal = RuleGoal.of("help(X, 0'A, T)")
+
+            assertEquals("help", goal.predicate)
+            assertEquals(3, goal.arity)
+        }
+
+        @Test
+        fun `a declaration whose head holds a character code is accepted`() {
+            val declaration = RuleDeclaration.of("help(X, 0'A, T)")
+
+            assertEquals("help", declaration.predicate)
+            assertEquals(3, declaration.arity)
+        }
+
+        @Test
+        fun `the character code for a quote, 0''', is one argument`() {
+            assertEquals(2, RuleGoal.of("p(0''', b)").arity)
+        }
+
+        @Test
+        fun `a name ending in 0 followed by a quoted atom is not a character code`() {
+            assertEquals(2, RuleGoal.of("p(a0, 'x')").arity)
+        }
+
+        @Test
+        fun `an escaped character code such as 0'backslash-n is one argument`() {
+            assertEquals(2, RuleGoal.of("p(0'\\n, b)").arity)
+        }
     }
 
     @Nested
