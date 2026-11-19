@@ -48,7 +48,7 @@ database.datasources.neo.database-name=neo4j
 
 ### SQLite
 
-A SQLite store is coming with #220. Once it lands, it becomes a third value of
+DICE does not ship a SQLite store yet. When it does, it becomes a third value of
 `embabel.dice.store.type` and a third subclass of `SameCodeEveryBackend`.
 
 ## Modules
