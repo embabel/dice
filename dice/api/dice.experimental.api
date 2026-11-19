@@ -308,6 +308,46 @@ public final class com/embabel/dice/evidence/RetrieverId$Companion {
 	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RetrieverId;
 }
 
+public final class com/embabel/dice/evidence/RuleDeclaration {
+	public static final field Companion Lcom/embabel/dice/evidence/RuleDeclaration$Companion;
+	public synthetic fun <init> (Ljava/lang/String;Ljava/util/List;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getArity ()I
+	public final fun getGuards ()Ljava/util/List;
+	public final fun getHead ()Ljava/lang/String;
+	public final fun getInputs ()Ljava/util/List;
+	public final fun getPredicate ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleDeclaration;
+	public fun toString ()Ljava/lang/String;
+	public final fun withGuard (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleDeclaration;
+	public final fun withInput (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleDeclaration;
+}
+
+public final class com/embabel/dice/evidence/RuleDeclaration$Companion {
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleDeclaration;
+}
+
+public final class com/embabel/dice/evidence/RuleGoal {
+	public static final field Companion Lcom/embabel/dice/evidence/RuleGoal$Companion;
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getArity ()I
+	public final fun getContextId ()Ljava/lang/String;
+	public final fun getGoal ()Ljava/lang/String;
+	public final fun getLimit ()I
+	public final fun getPredicate ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleGoal;
+	public fun toString ()Ljava/lang/String;
+	public final fun withContext (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleGoal;
+	public final fun withLimit (I)Lcom/embabel/dice/evidence/RuleGoal;
+}
+
+public final class com/embabel/dice/evidence/RuleGoal$Companion {
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleGoal;
+}
+
 public final class com/embabel/dice/evidence/Searched {
 	public static final field Companion Lcom/embabel/dice/evidence/Searched$Companion;
 	public synthetic fun <init> (Ljava/util/Set;Ljava/lang/String;Ljava/util/Map;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
