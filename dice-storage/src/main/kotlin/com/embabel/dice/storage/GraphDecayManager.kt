@@ -40,6 +40,9 @@ import java.time.Instant
  * instead of all-or-nothing — harmless for decay, since the stale rows simply carry their old value
  * into the next sweep. (This also means a sweep must run in its own implicit transaction, not inside
  * an enclosing one — `DecayManager` opens none, and callers must not wrap it in `@Transactional`.)
+ *
+ * The batching applies on Neo4j. On Drivine's SQL stores the sweep compiles to one statement, which
+ * commits or rolls back as a unit.
  */
 class GraphDecayManager(
     repository: PropositionRepository,
@@ -54,8 +57,7 @@ class GraphDecayManager(
     private fun sweep(match: String, extraParams: Map<String, Any>) {
         val now = Instant.now()
         persistenceManager.execute(
-            QuerySpecification
-                .withStatement("$match\nCALL {\n  WITH p\n$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $BATCH_ROWS ROWS")
+            cypherQuery("$match\nCALL {\n  WITH p\n$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $BATCH_ROWS ROWS")
                 .bind(extraParams + mapOf("now" to now))
         )
     }
