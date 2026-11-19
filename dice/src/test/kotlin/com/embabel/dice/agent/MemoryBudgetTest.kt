@@ -80,8 +80,11 @@ class MemoryBudgetTest {
 
     private fun lastAccessed(fact: Proposition): Instant = repository.findById(fact.id)!!.lastAccessed
 
-    private fun captureMemoryWarnings(block: () -> Unit): List<ILoggingEvent> {
-        val logger = LoggerFactory.getLogger(Memory::class.java) as Logger
+    private fun captureMemoryWarnings(block: () -> Unit): List<ILoggingEvent> =
+        captureWarnings(Memory::class.java, block)
+
+    private fun captureWarnings(source: Class<*>, block: () -> Unit): List<ILoggingEvent> {
+        val logger = LoggerFactory.getLogger(source) as Logger
         val appender = ListAppender<ILoggingEvent>().also { it.start() }
         logger.addAppender(appender)
         try {
@@ -316,6 +319,36 @@ class MemoryBudgetTest {
                 """.trimIndent(),
                 result,
             )
+        }
+
+        @Test
+        fun `a tool search with a pinned fact over budget shows it and logs one warning`() {
+            store(penicillin)
+            val memory = Memory.forContext(contextId).withRepository(repository).withContextBudget(tokens(5))
+
+            lateinit var result: String
+            val warnings = captureWarnings(MemoryRetriever::class.java) {
+                result = callTool(memory, """{"query": "penicillin"}""")
+            }
+
+            assertTrue(result.contains(penicillin.text), result)
+            assertEquals(1, warnings.size, warnings.toString())
+            assertTrue(warnings.single().formattedMessage.contains("context budget of 5"), warnings.toString())
+        }
+
+        @Test
+        fun `a tool list with a pinned fact over budget shows it and logs one warning`() {
+            store(penicillin)
+            val memory = Memory.forContext(contextId).withRepository(repository).withContextBudget(tokens(5))
+
+            lateinit var result: String
+            val warnings = captureWarnings(MemoryRetriever::class.java) {
+                result = callTool(memory, "{}")
+            }
+
+            assertTrue(result.contains(penicillin.text), result)
+            assertEquals(1, warnings.size, warnings.toString())
+            assertTrue(warnings.single().formattedMessage.contains("context budget of 5"), warnings.toString())
         }
 
         @Test

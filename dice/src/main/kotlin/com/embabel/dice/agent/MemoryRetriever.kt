@@ -226,11 +226,19 @@ internal class MemoryRetriever(
     /**
      * Keeps the results the budget selects, in their original ranking order, and counts the
      * rest. The budget decides which facts fit; the order the LLM reads them in stays the
-     * relevance order. With no budget everything is kept.
+     * relevance order. With no budget everything is kept. Pinned results are always kept, so a
+     * warning is logged when they alone go over the budget.
      */
     private fun <T> withinBudget(results: List<T>, fact: (T) -> Proposition): Pair<List<T>, Int> {
         val budget = contextBudget ?: return results to 0
-        val keep = budget.select(results.map(fact)).selected.mapTo(HashSet()) { it.id }
+        val selection = budget.select(results.map(fact))
+        if (selection.isOverBudget) {
+            logger.warn(
+                "Pinned memories in this tool result are estimated at {} tokens, over the context budget of {}; showing them anyway",
+                selection.estimatedTokens, selection.budgetTokens,
+            )
+        }
+        val keep = selection.selected.mapTo(HashSet()) { it.id }
         val shown = results.filter { fact(it).id in keep }
         return shown to (results.size - shown.size)
     }
