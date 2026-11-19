@@ -1314,35 +1314,18 @@ class DrivinePropositionRepository(
 
     /**
      * On SQLite, each anchor's [topK] nearest among the candidates with a later id, as the in-memory
-     * store pairs them. Each anchor is one search by Drivine's own cosine, filtered to its later
-     * candidates and cut to [topK] in the database, so at most [topK] rows an anchor come back.
-     * Drivine ranks every stored proposition before it filters, so the search is widened to all of
-     * them: a proposition of another context cannot crowd a candidate out. The cost is that each
-     * anchor scores the whole store, not only the candidates. Thirty candidates took about 0.35 s
-     * alone and about 3.15 s with 1,000 unrelated 1,536-dimension vectors in the store.
+     * store pairs them. Drivine measures every pair of the candidates in one statement, exactly and
+     * against nothing else in the store, so what else is stored, or saved during the pass, changes
+     * nothing. Each candidate's neighbours above the threshold come back, and are cut here to the
+     * later ids and to [topK]. The cost grows with the square of the number of candidates.
      */
-    private fun nearestLaterPairs(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> {
-        val vectors = embeddingsOf(ids)
-        val searchK = maxOf(topK, graphObjectManager.count<PropositionView> { }.toInt())
-        val threshold = toEngineScore(similarityThreshold)
-        val sorted = ids.sorted()
-        return sorted.flatMapIndexed { i, anchorId ->
-            val vector = vectors[anchorId] ?: return@flatMapIndexed emptyList()
-            val later = sorted.subList(i + 1, sorted.size)
-            if (later.isEmpty()) return@flatMapIndexed emptyList()
-            graphObjectManager.loadNearest<PropositionView>(vector, topK, threshold, searchK) {
-                where { proposition.id inList later }
-            }.map { mapOf("anchorId" to anchorId, "otherId" to it.value.proposition.id, "score" to toRawCosine(it.score)) }
-        }
-    }
-
-    /** The stored embedding of each of [ids] that has one. */
-    private fun embeddingsOf(ids: List<String>): Map<String, List<Float>> =
-        persistenceManager.query(
-            cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids AND p.embedding IS NOT NULL RETURN {id: p.id, embedding: p.embedding} AS row")
-                .bind(mapOf("ids" to ids))
-                .transform(Map::class.java),
-        ).associate { row -> row["id"] as String to (row["embedding"] as List<*>).map { (it as Number).toFloat() } }
+    private fun nearestLaterPairs(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> =
+        graphObjectManager.loadNearestAmong(PropositionView::class.java, ids, ids.size, toEngineScore(similarityThreshold))
+            .flatMap { (anchorId, near) ->
+                near.filter { it.value > anchorId }
+                    .take(topK)
+                    .map { mapOf("anchorId" to anchorId, "otherId" to it.value, "score" to toRawCosine(it.score)) }
+            }
 
     /**
      * A Neo4j COSINE vector index reports `(1 + cosine) / 2`, not raw cosine — this converts an

@@ -159,11 +159,41 @@ class SqlitePropositionRepositoryIntegrationTest {
     }
 
     /**
-     * Twelve propositions all close to one another make 66 pairs above the threshold. Each anchor's
-     * search is cut to two in the database, so no more than two pairs an anchor ever reach the JVM.
+     * Three candidates at -5, 0 and 10 degrees pair as a-b and b-c. Once the pass has searched, three
+     * propositions of another context are saved exactly where b is. The clusters measure only the
+     * candidates, so the pair b-c is still found, as it would be had the others been there all along.
      */
     @Test
-    fun `findClusters reads at most topK pairs an anchor from SQLite however many pass the threshold`() {
+    fun `findClusters keeps a pair when closer propositions of another context are saved during the pass`() {
+        fun at(degrees: Double) = floatArrayOf(
+            Math.cos(Math.toRadians(degrees)).toFloat(),
+            Math.sin(Math.toRadians(degrees)).toFloat(),
+        )
+        val vectors = mapOf("a fact" to at(-5.0), "b fact" to at(0.0), "c fact" to at(10.0)) +
+            (1..3).associate { "crowd $it fact" to at(0.0) }
+        val embedding = FixedEmbeddingService(vectors, FakeEmbeddingService())
+        val plain = DrivinePropositionRepository(graphObjectManager, persistenceManager, embedding, transactionManager)
+        listOf("a", "b", "c").forEach { plain.save(ghost("$it fact", "cluster-crowded", id = it)) }
+        val crowding = AfterFirstSearchPersistenceManager(persistenceManager) {
+            (1..3).forEach { plain.save(ghost("crowd $it fact", "cluster-crowd-other", id = "x$it")) }
+        }
+        val clustering = DrivinePropositionRepository(countingObjects(crowding), crowding, embedding, transactionManager)
+
+        val pairs = clustering.findClusters(similarityThreshold = 0.9, topK = 1, query = PropositionQuery.forContextId(ContextId("cluster-crowded")))
+            .flatMap { cluster -> cluster.similar.map { cluster.anchor.id to it.match.id } }
+            .toSet()
+
+        assertTrue(crowding.ran, "the pass never searched")
+        assertEquals(setOf("a" to "b", "b" to "c"), pairs)
+    }
+
+    /**
+     * Twelve propositions all close to one another make 66 pairs above the threshold, and twenty
+     * more of another context are stored beside them. The search measures the twelve alone, one row
+     * each, and each anchor keeps at most two later neighbours.
+     */
+    @Test
+    fun `findClusters measures only the candidates and keeps at most topK later neighbours an anchor`() {
         fun at(degrees: Double) = floatArrayOf(
             Math.cos(Math.toRadians(degrees)).toFloat(),
             Math.sin(Math.toRadians(degrees)).toFloat(),
@@ -178,11 +208,12 @@ class SqlitePropositionRepositoryIntegrationTest {
             transactionManager,
         )
         names.forEach { shaped.save(ghost("$it fact", "cluster-dense", id = it)) }
-        counting.scoredRows = 0
+        (0 until 20).forEach { shaped.save(ghost("p%02d fact".format(it % 12), "cluster-dense-other", id = "other-$it")) }
+        counting.seedRows = 0
 
         val clusters = shaped.findClusters(similarityThreshold = 0.9, topK = 2, query = PropositionQuery.forContextId(ContextId("cluster-dense")))
 
-        assertTrue(counting.scoredRows in 1..names.size * 2, "read ${counting.scoredRows} pair rows for ${names.size} anchors")
+        assertEquals(names.size, counting.seedRows, "measured ${counting.seedRows} seeds for ${names.size} candidates")
         assertEquals(11, clusters.size)
         clusters.forEach { cluster ->
             assertTrue(cluster.similar.size <= 2)
@@ -316,13 +347,34 @@ private class FixedEmbeddingService(
     override fun embed(texts: List<String>): List<FloatArray> = texts.map(::embed)
 }
 
-/** Passes every call on, counting the scored rows vector searches return. */
+/** Passes every call on, counting the seeds a search among a set measures, one row each. */
 private class RowCountingPersistenceManager(private val delegate: PersistenceManager) : PersistenceManager by delegate {
-    var scoredRows = 0
+    var seedRows = 0
 
     override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
         val rows = delegate.query(spec)
-        scoredRows += rows.count { it is Map<*, *> && it.containsKey("score") && it.containsKey("value") }
+        seedRows += rows.count { it is Map<*, *> && it.containsKey("seed") && it.containsKey("near") }
+        return rows
+    }
+}
+
+/** Whether [rows] are what a vector search returns: scored rows, or each seed's scored neighbours. */
+private fun searched(rows: List<*>): Boolean =
+    rows.any { it is Map<*, *> && ((it.containsKey("score") && it.containsKey("value")) || it.containsKey("near")) }
+
+/** Passes every call on, and runs [then] once, after the first vector search has answered. */
+private class AfterFirstSearchPersistenceManager(
+    private val delegate: PersistenceManager,
+    private val then: () -> Unit,
+) : PersistenceManager by delegate {
+    var ran = false
+
+    override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+        val rows = delegate.query(spec)
+        if (!ran && searched(rows)) {
+            ran = true
+            then()
+        }
         return rows
     }
 }
@@ -334,7 +386,7 @@ private class PausingPersistenceManager(private val delegate: PersistenceManager
 
     override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
         val rows = delegate.query(spec)
-        if (inside.count > 0 && rows.any { it is Map<*, *> && it.containsKey("score") && it.containsKey("value") }) {
+        if (inside.count > 0 && searched(rows)) {
             inside.countDown()
             release.await(10, TimeUnit.SECONDS)
         }
