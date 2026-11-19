@@ -18,8 +18,8 @@ package com.embabel.dice.storage.autoconfigure
 import com.embabel.agent.api.common.Ai
 import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.incremental.ChunkHistoryStore
-import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.incremental.InMemoryChunkHistoryStore
+import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.storage.DrivineChunkHistoryStore
@@ -51,6 +51,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.context.annotation.Primary
 
 /**
  * A host with Drivine's starter and a datasource gets DICE's Drivine stores without writing any beans.
@@ -268,6 +269,63 @@ class DiceDrivineAutoConfigurationTest {
     }
 
     @Test
+    fun `with several host StatelessGraphObjectManagers DICE's PersistenceManager shares the primary one's name`() {
+        // The primary is the one Spring injects, so it is the one DICE's PersistenceManager must share a
+        // transaction with. "default" and "neo" are the same database but two connections to Drivine.
+        runner
+            .withPropertyValues(*datasource("neo"), "host.primary=default", "host.secondary=neo")
+            .withUserConfiguration(PrimaryAmongHostGraphObjectManagers::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<StatelessGraphObjectManager>().database).isEqualTo("default")
+                assertThat(ctx.getBean<PersistenceManager>().database).isEqualTo("default")
+            }
+    }
+
+    @Test
+    fun `with several host PersistenceManagers DICE's StatelessGraphObjectManager shares the primary one's name`() {
+        runner
+            .withPropertyValues(*datasource("neo"), "host.primary=default", "host.secondary=neo")
+            .withUserConfiguration(PrimaryAmongHostPersistenceManagers::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<PersistenceManager>().database).isEqualTo("default")
+                assertThat(ctx.getBean<StatelessGraphObjectManager>())
+                    .isSameAs(ctx.getBean<GraphObjectManagerFactory>().stateless("default"))
+            }
+    }
+
+    @Test
+    fun `several host StatelessGraphObjectManagers and none primary fails startup naming them`() {
+        runner
+            .withPropertyValues(*datasource("neo"), "host.primary=default", "host.secondary=neo")
+            .withUserConfiguration(UnrankedHostGraphObjectManagers::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasFailed()
+                assertThat(ctx).getFailure().rootCause()
+                    .hasMessageContaining("'firstGraphObjectManager'")
+                    .hasMessageContaining("'secondGraphObjectManager'")
+                    .hasMessageContaining("@Primary")
+                    .hasMessageContaining("both")
+            }
+    }
+
+    @Test
+    fun `several host PersistenceManagers and none primary fails startup naming them`() {
+        runner
+            .withPropertyValues(*datasource("neo"), "host.primary=default", "host.secondary=neo")
+            .withUserConfiguration(UnrankedHostPersistenceManagers::class.java)
+            .run { ctx ->
+                assertThat(ctx).hasFailed()
+                assertThat(ctx).getFailure().rootCause()
+                    .hasMessageContaining("'firstPersistenceManager'")
+                    .hasMessageContaining("'secondPersistenceManager'")
+                    .hasMessageContaining("@Primary")
+                    .hasMessageContaining("both")
+            }
+    }
+
+    @Test
     fun `with several datasources DICE's schema goes only to the one its stores use`() {
         runnerWithCollector
             .withPropertyValues(*datasource("neo"), *datasource("other"), "embabel.dice.store.datasource=other")
@@ -474,6 +532,76 @@ class DiceDrivineAutoConfigurationTest {
             factory: GraphObjectManagerFactory,
             @Value("\${host.datasource}") datasource: String,
         ): StatelessGraphObjectManager = factory.stateless(datasource)
+    }
+
+    /** A host with two StatelessGraphObjectManagers, one of them primary, on `host.primary` and `host.secondary`. */
+    @Configuration(proxyBeanMethods = false)
+    open class PrimaryAmongHostGraphObjectManagers {
+
+        @Bean
+        @Primary
+        open fun primaryGraphObjectManager(
+            factory: GraphObjectManagerFactory,
+            @Value("\${host.primary}") datasource: String,
+        ): StatelessGraphObjectManager = factory.stateless(datasource)
+
+        @Bean
+        open fun otherGraphObjectManager(
+            factory: GraphObjectManagerFactory,
+            @Value("\${host.secondary}") datasource: String,
+        ): StatelessGraphObjectManager = factory.stateless(datasource)
+    }
+
+    /** A host with two PersistenceManagers, one of them primary, on `host.primary` and `host.secondary`. */
+    @Configuration(proxyBeanMethods = false)
+    open class PrimaryAmongHostPersistenceManagers {
+
+        @Bean
+        @Primary
+        open fun primaryPersistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.primary}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
+
+        @Bean
+        open fun otherPersistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.secondary}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
+    }
+
+    /** A host with two StatelessGraphObjectManagers and neither primary. */
+    @Configuration(proxyBeanMethods = false)
+    open class UnrankedHostGraphObjectManagers {
+
+        @Bean
+        open fun firstGraphObjectManager(
+            factory: GraphObjectManagerFactory,
+            @Value("\${host.primary}") datasource: String,
+        ): StatelessGraphObjectManager = factory.stateless(datasource)
+
+        @Bean
+        open fun secondGraphObjectManager(
+            factory: GraphObjectManagerFactory,
+            @Value("\${host.secondary}") datasource: String,
+        ): StatelessGraphObjectManager = factory.stateless(datasource)
+    }
+
+    /** A host with two PersistenceManagers and neither primary. */
+    @Configuration(proxyBeanMethods = false)
+    open class UnrankedHostPersistenceManagers {
+
+        @Bean
+        open fun firstPersistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.primary}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
+
+        @Bean
+        open fun secondPersistenceManager(
+            factory: PersistenceManagerFactory,
+            @Value("\${host.secondary}") datasource: String,
+        ): PersistenceManager = factory.get(datasource)
     }
 
     /** A host that builds its StatelessGraphObjectManager on whatever PersistenceManager the context has. */

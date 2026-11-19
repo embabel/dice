@@ -62,7 +62,9 @@ import org.springframework.core.type.AnnotatedTypeMetadata
  * `StatelessGraphObjectManager` under exactly the name the host used, and the property can't move it
  * elsewhere: naming a different datasource stops startup. A host that defines only a
  * `StatelessGraphObjectManager` gets a `PersistenceManager` under that manager's name when there is just
- * one datasource; with several, startup stops and asks for both.
+ * one datasource; with several, startup stops and asks for both. When the host has several of either
+ * manager, the primary one is the one that counts, since that is the one Spring injects; several with
+ * none primary stops startup and names them.
  *
  * With several datasources, DICE's schema (its constraints and indexes) goes only to the one its
  * stores use, rather than to every datasource Drivine knows. With one, it is left as declared.
@@ -100,8 +102,9 @@ class DiceDrivineAutoConfiguration {
                 "which one it uses. DICE needs both on the same database, so define both beans yourself."
         }
         val datasource = DrivineDatasource.choose(registry, properties)
-        // A host StatelessGraphObjectManager on this datasource decides the name, so both join one connection.
-        val key = hostGraphObjectManagers.singleOrNull()?.let(::databaseKeyOf)
+        // The host StatelessGraphObjectManager Spring injects, when it is on this datasource, decides the
+        // name, so both join one connection.
+        val key = injectedHostGraphObjectManagerKey(hostGraphObjectManagers)
             ?.takeIf { registry.resolveDatabaseName(it) == datasource }
             ?: datasource
         logger.info("DICE's Drivine stores use datasource '{}'", key)
@@ -117,10 +120,13 @@ class DiceDrivineAutoConfiguration {
         properties: DiceDrivineProperties,
     ): StatelessGraphObjectManager {
         // Whichever PersistenceManager the stores get, the host's or the one above, decides the database.
+        // The one Spring injects: the only one, or the primary among several.
         val manager = beanFactory.getBeanProvider(PersistenceManager::class.java).getIfUnique()
             ?: error(
-                "There are several PersistenceManager beans and none is primary, so DICE can't tell which database " +
-                    "to build its StatelessGraphObjectManager for. Define that bean yourself, on the same database.",
+                "There are several PersistenceManager beans " +
+                    "(${describe(beanFactory.getBeanNamesForType(PersistenceManager::class.java, true, false).toSet())}) " +
+                    "and none is primary, so DICE can't tell which database to build its StatelessGraphObjectManager " +
+                    "for. Mark one @Primary, or define both beans yourself, on the same database.",
             )
         val datasource = registry.resolveDatabaseName(manager.database) ?: error(
             "Your PersistenceManager uses database '${manager.database}', which isn't one of Drivine's datasources " +
@@ -141,15 +147,26 @@ class DiceDrivineAutoConfiguration {
     }
 
     /**
-     * The name a host StatelessGraphObjectManager was built for, or null when it is itself built on the
-     * PersistenceManager being made here, in which case the two already share it.
+     * The name the host StatelessGraphObjectManager Spring injects was built for: the only one, or the
+     * primary among several. Null when the host has none, or when that manager is itself built on the
+     * PersistenceManager being made here, in which case the two already share the name. Several with
+     * none primary stops startup, since DICE's stores would get one DICE can't predict.
      */
-    private fun databaseKeyOf(beanName: String): String? =
-        try {
-            beanFactory.getBean(beanName, StatelessGraphObjectManager::class.java).database
+    private fun injectedHostGraphObjectManagerKey(hostBeanNames: List<String>): String? {
+        if (hostBeanNames.isEmpty()) return null
+        // Spring's own choice, which only creates the manager it picks.
+        val injected = try {
+            beanFactory.getBeanProvider(StatelessGraphObjectManager::class.java).getIfUnique()
         } catch (e: BeanCreationException) {
-            if (e.contains(BeanCurrentlyInCreationException::class.java)) null else throw e
+            if (e.contains(BeanCurrentlyInCreationException::class.java)) return null else throw e
         }
+        checkNotNull(injected) {
+            "There are several StatelessGraphObjectManager beans (${describe(hostBeanNames.toSet())}) and none is " +
+                "primary, so DICE can't tell which one its PersistenceManager must share a database name with. " +
+                "Mark one @Primary, or define both beans yourself, on the same database."
+        }
+        return injected.database
+    }
 
     /** The application's own StatelessGraphObjectManager beans, leaving out the one this class may register. */
     private fun hostGraphObjectManagers(): List<String> =
