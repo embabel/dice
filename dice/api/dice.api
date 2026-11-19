@@ -48,6 +48,7 @@ public final class com/embabel/dice/agent/Memory : com/embabel/agent/api/referen
 	public fun contribution ()Ljava/lang/String;
 	public final fun copy-jkBRvYk (Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/projection/memory/MemoryProjector;DILjava/lang/String;Ljava/lang/String;Ljava/util/function/UnaryOperator;Ljava/util/function/UnaryOperator;Ljava/lang/Integer;Lcom/embabel/common/core/types/TextSimilaritySearchRequest;Lcom/embabel/dice/agent/ProvenanceResolver;)Lcom/embabel/dice/agent/Memory;
 	public static synthetic fun copy-jkBRvYk$default (Lcom/embabel/dice/agent/Memory;Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/projection/memory/MemoryProjector;DILjava/lang/String;Ljava/lang/String;Ljava/util/function/UnaryOperator;Ljava/util/function/UnaryOperator;Ljava/lang/Integer;Lcom/embabel/common/core/types/TextSimilaritySearchRequest;Lcom/embabel/dice/agent/ProvenanceResolver;ILjava/lang/Object;)Lcom/embabel/dice/agent/Memory;
+	public final fun eagerSelection ()Lcom/embabel/dice/agent/BudgetedSelection;
 	public fun equals (Ljava/lang/Object;)Z
 	public static final fun forContext (Ljava/lang/String;)Lcom/embabel/dice/agent/Memory$WithContext;
 	public static final fun forContext-GRzcY08 (Ljava/lang/String;)Lcom/embabel/dice/agent/Memory$WithContext;
@@ -59,6 +60,7 @@ public final class com/embabel/dice/agent/Memory : com/embabel/agent/api/referen
 	public fun notes ()Ljava/lang/String;
 	public fun toString ()Ljava/lang/String;
 	public fun tools ()Ljava/util/List;
+	public final fun withContextBudget (Lcom/embabel/dice/agent/ContextBudget;)Lcom/embabel/dice/agent/Memory;
 	public final fun withDefaultLimit (I)Lcom/embabel/dice/agent/Memory;
 	public final fun withEagerQuery (Ljava/util/function/UnaryOperator;)Lcom/embabel/dice/agent/Memory;
 	public synthetic fun withEagerSearchAbout (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;)Lcom/embabel/agent/api/reference/EagerSearch;

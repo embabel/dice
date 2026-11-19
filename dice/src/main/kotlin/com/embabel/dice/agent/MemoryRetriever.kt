@@ -44,12 +44,18 @@ import org.slf4j.LoggerFactory
  *
  * @param eagerIds propositions already surfaced eagerly in the system
  *   prompt — removed from results so the LLM only sees new information.
+ * @param contextBudget when set, [search] and [listAll] show only the
+ *   results that fit and end with a line saying how many were left out.
+ *   Only the facts' text is counted, not the probe tags or the source and
+ *   entity labels, so it is a soft target. The unrendered
+ *   [rankedPropositions] and [listRanked] are not trimmed.
  */
 internal class MemoryRetriever(
     private val repository: PropositionRepository,
     private val provenanceResolver: ProvenanceResolver?,
     private val topic: String,
     private val eagerIds: Set<String>,
+    private val contextBudget: ContextBudget? = null,
 ) {
     private val logger = LoggerFactory.getLogger(MemoryRetriever::class.java)
 
@@ -117,10 +123,12 @@ internal class MemoryRetriever(
             )
         }
 
-        val provenance = resolveProvenance(results.map { it.id })
+        val (shown, leftOut) = withinBudget(results) { it }
+        val provenance = resolveProvenance(shown.map { it.id })
         val text = buildString {
-            appendLine("All memories (${results.size}):")
-            results.forEach { prop -> appendMemoryLine("- ", prop, provenance) }
+            appendLine("All memories (${shown.size}):")
+            shown.forEach { prop -> appendMemoryLine("- ", prop, provenance) }
+            appendLeftOut(leftOut)
         }.trimEnd()
         return Tool.Result.text(text)
     }
@@ -203,14 +211,32 @@ internal class MemoryRetriever(
 
     /** Render the unioned hits, each tagged with its probe(s) and provenance. */
     private fun renderHits(query: String, hits: List<ProbeHit>): Tool.Result {
-        val provenance = resolveProvenance(hits.map { it.prop.id })
+        val (shown, leftOut) = withinBudget(hits) { it.prop }
+        val provenance = resolveProvenance(shown.map { it.prop.id })
         val text = buildString {
-            appendLine("Memories about '$query' (${hits.size}):")
-            hits.forEach { hit ->
+            appendLine("Memories about '$query' (${shown.size}):")
+            shown.forEach { hit ->
                 appendMemoryLine("- [${hit.sources.sorted().joinToString(",")}] ", hit.prop, provenance)
             }
+            appendLeftOut(leftOut)
         }.trimEnd()
         return Tool.Result.text(text)
+    }
+
+    /**
+     * Keeps the results the budget selects, in their original ranking order, and counts the
+     * rest. The budget decides which facts fit; the order the LLM reads them in stays the
+     * relevance order. With no budget everything is kept.
+     */
+    private fun <T> withinBudget(results: List<T>, fact: (T) -> Proposition): Pair<List<T>, Int> {
+        val budget = contextBudget ?: return results to 0
+        val keep = budget.select(results.map(fact)).selected.mapTo(HashSet()) { it.id }
+        val shown = results.filter { fact(it).id in keep }
+        return shown to (results.size - shown.size)
+    }
+
+    private fun StringBuilder.appendLeftOut(leftOut: Int) {
+        if (leftOut > 0) appendLine("[$leftOut more matches left out to stay within the context budget]")
     }
 
     /**
