@@ -17,8 +17,39 @@ Set it to `graph` and the facts go to Neo4j instead.
 
 The example runs as tests. `BackendSwapApplication` is the Spring Boot configuration they
 start. The tests add `ScriptedModel`, a placeholder model with no replies: Embabel Agent will not
-start without a default model, and nothing here calls one. `StartupTests` starts the
-application on the in-memory store.
+start without a default model, and nothing here calls one, so no API key is needed.
+
+`SameCodeEveryBackend` holds the assertions. `InMemoryBackendTests` runs them on the in-memory
+store and `Neo4jBackendTests` runs them on Neo4j. Each subclass only adds a check that it got
+the store it asked for. `StartupTests` starts the application as configured, on the
+in-memory store.
+
+- **With Docker running**, both classes run. `Neo4jBackendTests` starts
+  `neo4j:2026.05-community` with Testcontainers, once for the whole test run.
+- **Without Docker**, `Neo4jBackendTests` is skipped, not failed, and the in-memory tests still
+  run.
+
+### Pointing at a real Neo4j
+
+Set the store type to `graph` and give the `neo` datasource its connection, in
+`application.properties` or as `--` arguments:
+
+```properties
+embabel.dice.store.type=graph
+database.datasources.neo.type=NEO4J
+database.datasources.neo.host=localhost
+database.datasources.neo.port=7687
+database.datasources.neo.username=neo4j
+database.datasources.neo.password=<your password>
+database.datasources.neo.database-name=neo4j
+```
+
+`MemoryDesk` does not change.
+
+### SQLite
+
+A SQLite store is coming with #220. Once it lands, it becomes a third value of
+`embabel.dice.store.type` and a third subclass of `SameCodeEveryBackend`.
 
 ## Modules
 
@@ -71,3 +102,9 @@ among them. A store the application builds itself does not follow it.
 
 | Test | Behaviour |
 |---|---|
+| `about` | Three facts about Acme and one about Globex are remembered. `about("acme")` returns exactly the three Acme facts, and `about("globex")` the Globex one. |
+| `get` | Returns a fact with its text, confidence and entity mention as they were remembered. |
+| `correct` | The fact drops out of `about("acme")`, but `get` still returns it, now `CONTRADICTED`. |
+| The store in use | `InMemoryBackendTests` gets `InMemoryPropositionRepository`, `Neo4jBackendTests` gets `DrivinePropositionRepository`. |
+
+The first three rows are the same test code on both stores, and pass on both.
