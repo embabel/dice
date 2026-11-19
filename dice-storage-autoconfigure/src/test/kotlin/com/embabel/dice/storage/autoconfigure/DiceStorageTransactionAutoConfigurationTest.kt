@@ -146,7 +146,7 @@ class DiceStorageTransactionAutoConfigurationTest {
      */
     @Test
     fun `with a host's JDBC manager and Drivine behind a transaction-aware proxy, the proposition store keeps it`() {
-        val target = sqliteDataSource(Files.createTempFile("dice-host-jdbc-", ".db"))
+        val target = drivinePool(Files.createTempFile("dice-host-jdbc-", ".db"))
         val hostManager = DataSourceTransactionManager(target)
 
         sharedFileRunner(TransactionAwareDataSourceProxy(target), hostManager).run { ctx ->
@@ -154,6 +154,21 @@ class DiceStorageTransactionAutoConfigurationTest {
             val saves = ReflectionTestUtils.getField(repository, "txTemplate") as TransactionTemplate
 
             assertThat(saves.transactionManager).isSameAs(hostManager)
+        }
+    }
+
+    /**
+     * A pool the host builds itself, read by Drivine through the proxy. Its transactions start
+     * IMMEDIATE, but its connections lack the SQL functions Drivine registers only on its own pool,
+     * so Drivine's first statement on it would fail. Refused at startup, naming the pool to use.
+     */
+    @Test
+    fun `a host-built SQLite pool behind the proxy lacks Drivine's functions and is refused at startup`() {
+        val target = sqliteDataSource(Files.createTempFile("dice-host-built-", ".db"))
+
+        sharedFileRunner(TransactionAwareDataSourceProxy(target), DataSourceTransactionManager(target)).run { ctx ->
+            assertThat(ctx).hasFailed()
+            assertThat(ctx.startupFailure).rootCause().hasMessageContaining("JdbcConnectionProvider.sqlite")
         }
     }
 
@@ -258,7 +273,7 @@ class DiceStorageTransactionAutoConfigurationTest {
     @Test
     fun `without a registry bean, the SQLite store reads its data source from Drivine's persistence manager`() {
         val provider = mock<JdbcConnectionProvider>()
-        whenever(provider.nativeDriver).thenReturn(sqliteDataSource(Files.createTempFile("dice-hand-built-", ".db")))
+        whenever(provider.nativeDriver).thenReturn(drivinePool(Files.createTempFile("dice-hand-built-", ".db")))
         val registry = mock<DatabaseRegistry>()
         whenever(registry.connectionProvider("neo")).thenReturn(provider)
         val holder = mock<TransactionContextHolder>()
@@ -288,7 +303,7 @@ class DiceStorageTransactionAutoConfigurationTest {
      */
     @Test
     fun `with a host's JPA manager and Drivine behind a transaction-aware proxy, the proposition store keeps it`() {
-        val target = sqliteDataSource(Files.createTempFile("dice-host-jpa-", ".db"))
+        val target = drivinePool(Files.createTempFile("dice-host-jpa-", ".db"))
         val jpa = JpaTransactionManager(mock<EntityManagerFactory>()).apply {
             dataSource = target
             setJpaDialect(JdbcExposingDialect(target))
@@ -348,7 +363,7 @@ class DiceStorageTransactionAutoConfigurationTest {
      */
     @Test
     fun `a JPA dialect that returns no handle cannot be told apart at startup`() {
-        val target = sqliteDataSource(Files.createTempFile("dice-host-jpa-null-", ".db"))
+        val target = drivinePool(Files.createTempFile("dice-host-jpa-null-", ".db"))
         val jpa = JpaTransactionManager(mock<EntityManagerFactory>()).apply {
             dataSource = target
             setJpaDialect(NullHandleDialect())
@@ -389,9 +404,14 @@ class DiceStorageTransactionAutoConfigurationTest {
         SQLiteDataSource(SQLiteConfig().apply { setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE) })
             .apply { this.url = url }
 
+    /** A pool a host builds itself over [file]: IMMEDIATE, as DICE asks, but without Drivine's functions. */
     private fun sqliteDataSource(file: Path): DataSource =
         SQLiteDataSource(SQLiteConfig().apply { setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE) })
             .apply { url = "jdbc:sqlite:$file" }
+
+    /** Drivine's own SQLite pool over [file], whose connections carry the functions its statements call. */
+    private fun drivinePool(file: Path): DataSource =
+        JdbcConnectionProvider.sqlite(name = "pool-${file.fileName}", path = file.toString()).nativeDriver
 
     /** The graph store on SQLite, Drivine reading [drivineDataSource], the host's manager [hostManager]. */
     private fun sharedFileRunner(drivineDataSource: DataSource, hostManager: PlatformTransactionManager): ApplicationContextRunner {

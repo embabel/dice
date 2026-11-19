@@ -23,8 +23,9 @@ import javax.sql.DataSource
  * DICE's stores read and then write in one transaction: a save looks for the same text before it
  * inserts. That is safe on SQLite only when the transaction takes the file's write lock as it
  * begins (`IMMEDIATE`, or `EXCLUSIVE`). Started `DEFERRED`, two such transactions both read, and the
- * second to write is turned away with `SQLITE_BUSY`. Drivine's own SQLite provider starts them
- * `IMMEDIATE`; a provider a host builds itself might not.
+ * second to write is turned away with `SQLITE_BUSY`. Drivine's own SQLite pool starts them
+ * `IMMEDIATE`. A pool a host builds itself might not, and in any case lacks the functions
+ * Drivine's statements call (see [SqliteDrivineFunctions]).
  *
  * SQLite's driver is optional, so its connection is reached by name rather than by type.
  */
@@ -57,13 +58,13 @@ internal object SqliteTransactionMode {
     fun requireImmediate(dataSource: DataSource, datasourceName: String) {
         val mode = checkNotNull(of(dataSource)) {
             "SQLite datasource '$datasourceName' gives connections whose transaction mode cannot be read. DICE " +
-                "needs its transactions to take the write lock as they begin: use Drivine's own SQLite provider, " +
-                "or a data source whose connections unwrap to the SQLite driver's."
+                "needs its transactions to take the write lock as they begin: use Drivine's own SQLite pool, " +
+                "JdbcConnectionProvider.sqlite(...), or a TransactionAwareDataSourceProxy over it."
         }
         check(mode in LOCKING_MODES) {
             "SQLite datasource '$datasourceName' starts its transactions $mode. DICE reads and then writes in " +
-                "one transaction, so SQLite must take the write lock as each one begins: set the data " +
-                "source's transaction mode to IMMEDIATE, as Drivine's own SQLite provider does."
+                "one transaction, so SQLite must take the write lock as each one begins: use Drivine's own " +
+                "SQLite pool, JdbcConnectionProvider.sqlite(...), which starts them IMMEDIATE."
         }
     }
 }

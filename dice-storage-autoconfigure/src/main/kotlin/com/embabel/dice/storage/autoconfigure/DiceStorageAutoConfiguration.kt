@@ -143,8 +143,9 @@ class DiceStorageAutoConfiguration {
                 "The graph store's SQLite datasource '${persistenceManager.database}' and transaction manager " +
                     "${given.javaClass.name} use the same SQLite file on connections of their own. SQLite has " +
                     "one write lock per file, so a store write inside the manager's transaction would wait " +
-                    "for that transaction's own lock. Give Drivine a TransactionAwareDataSourceProxy over the " +
-                    "data source the manager manages, so both use one connection.",
+                    "for that transaction's own lock. Give the manager the data source of Drivine's own SQLite " +
+                    "pool, JdbcConnectionProvider.sqlite(...), and Drivine a TransactionAwareDataSourceProxy over " +
+                    "it, so both use one connection.",
             )
             HostSharing.NONE -> Unit
         }
@@ -275,6 +276,16 @@ class DiceStorageAutoConfiguration {
         SqliteTransactionMode.requireImmediate(dataSource, name)
     }
 
+    /**
+     * Refuses a SQLite store whose connections lack the SQL functions Drivine's statements call, as
+     * a pool the host builds itself does. Checked after the transaction manager is chosen, so a way
+     * of sharing the file that is refused anyway is named for what it is. See [SqliteDrivineFunctions].
+     */
+    private fun requireDrivineSqliteFunctions(persistenceManager: PersistenceManager) {
+        if (persistenceManager.type != DatabaseType.SQLITE) return
+        drivineDataSource(persistenceManager)?.let { SqliteDrivineFunctions.requirePresent(it, persistenceManager.database) }
+    }
+
     // ---- Graph backend (embabel.dice.store.type=graph) ----
 
     @Bean
@@ -293,11 +304,13 @@ class DiceStorageAutoConfiguration {
             DrivinePropositionRepository.VECTOR_INDEX,
         )
         requireLockingSqliteTransactions(persistenceManager)
+        val transactions = drivineTransactions(transactionManager, persistenceManager)
+        requireDrivineSqliteFunctions(persistenceManager)
         return DrivinePropositionRepository(
             graphObjectManager,
             persistenceManager,
             storeEmbeddingService("graph", ai, embeddingServices),
-            drivineTransactions(transactionManager, persistenceManager),
+            transactions,
         )
     }
 
@@ -403,7 +416,9 @@ class DiceStorageAutoConfiguration {
         transactionManager: PlatformTransactionManager,
     ): ExtractionRunStore {
         requireLockingSqliteTransactions(persistenceManager)
-        return DrivineExtractionRunStore(persistenceManager, drivineTransactions(transactionManager, persistenceManager))
+        val transactions = drivineTransactions(transactionManager, persistenceManager)
+        requireDrivineSqliteFunctions(persistenceManager)
+        return DrivineExtractionRunStore(persistenceManager, transactions)
     }
 
     /**
