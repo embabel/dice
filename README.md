@@ -1647,6 +1647,34 @@ can_consult(Person, Expert, Topic) :-
     expert_in(Expert, Topic).
 ```
 
+#### Derived evidence
+
+`PrologEvidenceProvider` answers a rule goal with `Evidence.Derived`, which tells you which rule worked the answer out and which propositions it was worked out from:
+
+```java
+PrologProjectionResult projection = prologProjector.projectAll(relationships);
+PrologSchema schema = PrologSchema.Companion.withRules(
+        "can_help(X, Topic) :- expert_in(X, Topic).", List.of());
+
+PrologEvidenceProvider provider = PrologEvidenceProvider.of(projection, schema)
+        .withDeclaration(RuleDeclaration.of("can_help(X, Topic)").withInput("expert_in(X, Topic)"))
+        .withRepository(repository);
+
+Evidence evidence = provider.evidence(RuleGoal.of("can_help('alice', T)"));
+if (evidence instanceof Evidence.Derived) {
+    Evidence.Derived derived = (Evidence.Derived) evidence;
+    DerivationRule rule = derived.getRule();        // rule id "can_help/2", plus the goal and its bindings
+    List<String> inputIds = derived.getInputIds();  // the propositions behind expert_in('alice', ...)
+}
+```
+
+Recorded and derived claims stay apart: a conclusion is worked out when you ask for it, and nothing is stored back in the repository.
+Inputs are declared rather than traced, one `RuleDeclaration` per rule clause, so a rule with three clauses needs three declarations.
+Recursive rules such as `reports_to_chain` can't be declared this way yet.
+A conclusion's confidence is the weakest of its inputs, using each source proposition's decayed confidence when a repository is given.
+When a goal can't be proved you get `Evidence.Missing`, and not provable doesn't mean false, since the facts may just not be there yet.
+This is experimental, and the engine behind it may change.
+
 ### Agent Memory
 
 The `Memory` class gives agents access to their stored memories (propositions) within a context.
