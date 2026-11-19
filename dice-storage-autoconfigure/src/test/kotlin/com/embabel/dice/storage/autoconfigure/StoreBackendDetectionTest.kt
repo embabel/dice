@@ -53,6 +53,7 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.getBean
+import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.context.annotation.Configurations
 import org.springframework.boot.test.context.assertj.AssertableApplicationContext
@@ -200,6 +201,57 @@ class StoreBackendDetectionTest {
         }
     }
 
+    /**
+     * A host whose own auto-configuration supplies Drivine, ordered after DICE's. DICE's conditions
+     * can't see that `PersistenceManager` when they run, so the outcome has to come from the property
+     * or from the startup check instead.
+     */
+    @Nested
+    inner class `with Drivine registered after DICE's auto-configuration` {
+
+        private val late = ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(DiceStorageAutoConfiguration::class.java, LateDrivine::class.java),
+            )
+            .withUserConfiguration(StubAi::class.java)
+
+        @Test
+        fun `type=graph still wires the Drivine stores`() {
+            late.withPropertyValues("embabel.dice.store.type=graph").run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertDrivineStores(ctx)
+            }
+        }
+
+        @Test
+        fun `with the property unset startup fails and says how to fix it`() {
+            late.run { ctx ->
+                assertThat(ctx).hasFailed()
+                assertThat(ctx).getFailure().rootCause()
+                    .hasMessageContaining("PersistenceManager")
+                    .hasMessageContaining("after DICE's auto-configuration")
+                    .hasMessageContaining("DiceStorageAutoConfiguration")
+                    .hasMessageContaining("embabel.dice.store.type=graph")
+            }
+        }
+
+        @Test
+        fun `type=in-memory gives the in-memory stores without failing`() {
+            late.withPropertyValues("embabel.dice.store.type=in-memory").run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertInMemoryStores(ctx)
+            }
+        }
+
+        @Test
+        fun `a host's own PropositionRepository means nothing fails`() {
+            late.withUserConfiguration(HostRepository::class.java).run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<PropositionRepository>()).isSameAs(HostRepository.INSTANCE)
+            }
+        }
+    }
+
     @Nested
     inner class `the collector trace store follows the same rule` {
 
@@ -317,6 +369,10 @@ class StoreBackendDetectionTest {
         @Bean
         open fun transactionManager(): PlatformTransactionManager = mock()
     }
+
+    /** Drivine supplied by a host auto-configuration that runs after DICE's. */
+    @AutoConfiguration(after = [DiceStorageAutoConfiguration::class])
+    open class LateDrivine : StubDrivine()
 
     /** The embabel-agent `Ai` handle the proposition stores need for embedding. */
     @Configuration(proxyBeanMethods = false)

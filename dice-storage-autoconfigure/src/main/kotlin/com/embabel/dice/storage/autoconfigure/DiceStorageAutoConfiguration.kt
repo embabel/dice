@@ -54,6 +54,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.BeanFactoryUtils
 import org.springframework.beans.factory.ListableBeanFactory
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionMessage
 import org.springframework.boot.autoconfigure.condition.ConditionOutcome
@@ -482,9 +483,9 @@ internal object StoreBackend {
 }
 
 /**
- * Registers a bean only when DICE should use its Drivine stores: Drivine is configured and the
- * deprecated property doesn't force `in-memory`. Every Drivine-backed bean in this module carries it,
- * so all of them switch together.
+ * Registers a bean only when DICE should use its Drivine stores: the deprecated property says `graph`,
+ * or it is unset and Drivine is configured. Every Drivine-backed bean in this module carries it, so
+ * all of them switch together.
  */
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.RUNTIME)
@@ -493,9 +494,15 @@ internal object StoreBackend {
 internal annotation class ConditionalOnDrivineStores
 
 /**
- * The check behind [ConditionalOnDrivineStores]. It runs while beans are being registered, so it sees
- * the `PersistenceManager` that Drivine's auto-configuration (which runs before DICE's) or the
- * application itself has declared.
+ * The check behind [ConditionalOnDrivineStores].
+ *
+ * `graph` is taken at its word without looking for Drivine. The lookup runs while beans are being
+ * registered, so it can't see a `PersistenceManager` that a host's own auto-configuration registers
+ * after DICE's; an explicit request must not be lost to that. Whether Drivine really turned up is
+ * left to [StoreBackendCheck], which runs once everything is registered.
+ *
+ * With the property unset, the lookup sees Drivine's own auto-configuration (which runs before DICE's)
+ * and anything the application declares itself.
  */
 internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
 
@@ -504,9 +511,12 @@ internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
 
     override fun getMatchOutcome(context: ConditionContext, metadata: AnnotatedTypeMetadata): ConditionOutcome {
         val message = ConditionMessage.forCondition(ConditionalOnDrivineStores::class.java)
-        if (StoreBackend.requested(context.environment) == StoreBackend.IN_MEMORY) {
-            return ConditionOutcome.noMatch(
+        when (StoreBackend.requested(context.environment)) {
+            StoreBackend.IN_MEMORY -> return ConditionOutcome.noMatch(
                 message.because("${StoreBackend.TYPE_PROPERTY}=${StoreBackend.IN_MEMORY} forces the in-memory stores"),
+            )
+            StoreBackend.GRAPH -> return ConditionOutcome.match(
+                message.because("${StoreBackend.TYPE_PROPERTY}=${StoreBackend.GRAPH} asks for the Drivine stores"),
             )
         }
         val beanFactory = context.beanFactory
@@ -520,17 +530,32 @@ internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
 }
 
 /**
- * Applies the rules for the deprecated `embabel.dice.store.type` property once, at startup.
+ * Checks once, at startup, that DICE ended up on the stores the application meant it to use.
  *
- * Unset, it does nothing. Set, it logs one deprecation warning, then refuses to start if the value
- * is unknown, or if it is `graph` and Drivine isn't configured. Failing loudly here beats quietly
- * falling back to in-memory stores the operator didn't ask for.
+ * It runs after every bean has been registered, so unlike the conditions it sees a Drivine registered
+ * by a host auto-configuration that came after DICE's.
+ *
+ * With the deprecated `embabel.dice.store.type` property unset, it refuses to start when Drivine is
+ * configured but the proposition store is DICE's own in-memory one: Drivine arrived too late for the
+ * conditions to see it, and durable storage would otherwise be quietly lost. A host's own proposition
+ * store is left alone. With the property set, it logs one deprecation warning, then refuses to start
+ * if the value is unknown, or if it is `graph` and Drivine isn't configured. `in-memory` never fails.
  */
-internal class StoreBackendCheck(environment: Environment, beanFactory: ListableBeanFactory) {
+internal class StoreBackendCheck(environment: Environment, beanFactory: ConfigurableListableBeanFactory) {
 
     init {
         val requested = StoreBackend.requested(environment)
-        if (requested != null) {
+        if (requested == null) {
+            check(!inMemoryStoresDespiteDrivine(beanFactory)) {
+                "Drivine is configured (there is a Drivine PersistenceManager bean), but it was registered after " +
+                    "DICE's auto-configuration had already chosen its stores, so DICE wired its in-memory " +
+                    "stores and nothing would be saved to the database. Fix it in one of these ways: order the " +
+                    "auto-configuration that sets up Drivine before " +
+                    "${DiceStorageAutoConfiguration::class.java.name} (the 'before' attribute of its @AutoConfiguration), " +
+                    "set " +
+                    "${StoreBackend.TYPE_PROPERTY}=${StoreBackend.GRAPH}, or define the store beans yourself."
+            }
+        } else {
             LoggerFactory.getLogger(StoreBackendCheck::class.java).warn(
                 "{} is deprecated and will be removed. DICE now uses its Drivine stores when Drivine is " +
                     "configured and its in-memory stores otherwise, so the property can go. Keep " +
@@ -554,5 +579,27 @@ internal class StoreBackendCheck(environment: Environment, beanFactory: Listable
                 )
             }
         }
+    }
+
+    /**
+     * True when Drivine is configured yet the proposition store is the in-memory one DICE registers
+     * itself. Only bean definitions are read, so no bean is created just to answer this.
+     */
+    private fun inMemoryStoresDespiteDrivine(beanFactory: ConfigurableListableBeanFactory): Boolean {
+        if (!StoreBackend.drivineConfigured(beanFactory)) return false
+        return BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
+            beanFactory, PropositionRepository::class.java, true, false,
+        ).any { isDicesInMemoryRepository(beanFactory, it) }
+    }
+
+    /** Whether [name] is the bean made by DICE's own `inMemoryPropositionRepository` method. */
+    private fun isDicesInMemoryRepository(beanFactory: ConfigurableListableBeanFactory, name: String): Boolean {
+        val definition = runCatching { beanFactory.getMergedBeanDefinition(name) }.getOrNull() ?: return false
+        if (definition.factoryMethodName != DiceStorageAutoConfiguration::inMemoryPropositionRepository.name) {
+            return false
+        }
+        val factoryBean = definition.factoryBeanName ?: return false
+        val factoryType = beanFactory.getType(factoryBean, false) ?: return false
+        return DiceStorageAutoConfiguration::class.java.isAssignableFrom(factoryType)
     }
 }
