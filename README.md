@@ -1831,9 +1831,33 @@ val memory = Memory.forContext(contextId)
 | `withEagerSearchAbout(String, Int)` | Preloads memories by vector similarity to the given text (e.g., recent conversation). Recommended for chat agents | none (disabled) |
 | `withEagerTopicSearch(Int)` | Preloads memories by vector similarity to the `topic` into the system prompt. Tool calls auto-deduplicate against these | none (disabled) |
 | `withEagerQuery(UnaryOperator<PropositionQuery>)` | Preloads key memories by structured query (e.g., top-N by confidence) into the system prompt | none (disabled) |
+| `withContextBudget(ContextBudget)` | Keeps the key memories and each memory tool result within a rough token budget. Experimental | none (no limit) |
 
 All search modes expose optional `level` and `type` parameters to the LLM, allowing it to filter
 by abstraction level and knowledge type at query time. Both compose with `narrowedBy`.
+
+#### Context budgets
+
+A context budget caps how many tokens of facts Memory puts in front of the LLM:
+
+```java
+var memory = Memory.forContext("session-123")
+        .withRepository(repository)
+        .withEagerQuery(query -> query.orderedByEffectiveConfidence())
+        .withContextBudget(ContextBudget.ofTokens(500));
+```
+
+- Pinned facts always go first and are always shown, even when they alone go over the budget, and a warning is logged when that happens.
+- The other facts are added in order until the first one that doesn't fit, and everything after it is left out too, even smaller facts that would have fitted.
+- The same budget trims each result of the memory tool, and a trimmed result ends with a line saying how many matches were left out.
+- `memory.eagerSelection()` tells you which facts would go into the prompt right now and which would be dropped, without marking anything as accessed.
+- Token counts come from the agent framework's `TokenCountEstimator`, which guesses about four characters per token by default; you can pass your own with `withEstimator` on the budget.
+- The budget is a soft target that counts only the facts' own text, not the headings or labels printed around them.
+- Context budgets are experimental, and the API may change before 1.0.
+
+Facts the budget leaves out of the prompt aren't lost, since the LLM can still find them with the
+memory tool. The budget only covers memories; keeping chat history short is still the agent's
+job, and the agent framework's `TokenBudgetConversationFormatter` does that.
 
 #### Prompt Template
 

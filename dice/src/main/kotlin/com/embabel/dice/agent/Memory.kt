@@ -19,6 +19,7 @@ import com.embabel.agent.api.reference.EagerSearch
 import com.embabel.agent.api.reference.LlmReference
 import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.ContextId
+import com.embabel.common.ai.model.TokenCountEstimator
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.dice.agent.Memory.Companion.DEFAULT_LIMIT
 import com.embabel.dice.projection.memory.MemoryProjector
@@ -28,6 +29,7 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import java.util.function.UnaryOperator
 
@@ -68,6 +70,9 @@ import java.util.function.UnaryOperator
  *
  * When eager memories are loaded, subsequent tool calls automatically deduplicate results
  * so the LLM always receives new information.
+ *
+ * To keep the eager block and tool results to a rough number of tokens rather than a count of
+ * facts, set a budget with [withContextBudget].
  *
  * Example: preload memories relevant to the current conversation:
  * ```kotlin
@@ -139,11 +144,67 @@ data class Memory @JvmOverloads constructor(
         get() = "Memories about $topic"
 
     /**
+     * The token budget for the eager block and the tool's results, or null for no limit.
+     *
+     * It lives in the class body rather than the constructor so adding it left the constructor
+     * and `copy` signatures alone. Every `with...` method carries it over to the copy it returns;
+     * it is only ever written on a fresh copy, before that copy is handed out.
+     */
+    @Volatile
+    private var contextBudget: ContextBudget? = null
+
+    /**
+     * Returns a copy that keeps the facts it shows the LLM within [budget].
+     *
+     * The budget covers two things: the key memories listed in [contribution], and each result
+     * of the `memory` tool. Facts left out of the eager block are not lost; they stay
+     * retrievable through the tool. Only the facts' own text is counted, not the headings,
+     * numbering, source or entity labels around them, and the default estimator is a rough
+     * guess, so treat the budget as a soft target rather than a hard cap.
+     *
+     * With a budget, pinned facts are listed first and are always shown, even when they alone go
+     * over; a warning is logged when that happens. Without one, nothing changes: every eagerly
+     * loaded fact is listed in the order it was loaded.
+     *
+     * The budget is not part of this data class's constructor, so `equals`, `hashCode`,
+     * `toString` and a direct `copy(...)` ignore it. The `with...` methods all keep it.
+     *
+     * EXPERIMENTAL. The API may change before 1.0.
+     *
+     * @param budget how many tokens of facts to show, and how to choose them
+     * @return a copy with the budget set. This Memory is unchanged.
+     */
+    @ApiStatus.Experimental
+    fun withContextBudget(budget: ContextBudget): Memory = copy().also { it.contextBudget = budget }
+
+    /**
+     * Works out which eagerly loaded facts would go into the prompt right now, and which the
+     * budget would leave out, without changing anything. Unlike [contribution], this does not
+     * mark the facts as accessed.
+     *
+     * With no budget set, every loaded fact is selected in load order, nothing is dropped,
+     * [BudgetedSelection.budgetTokens] is [Int.MAX_VALUE] and the estimate uses the default
+     * character-count heuristic.
+     *
+     * EXPERIMENTAL. The API may change before 1.0.
+     *
+     * @return the selected and dropped facts and their estimated token use
+     */
+    @ApiStatus.Experimental
+    fun eagerSelection(): BudgetedSelection = selectEager(mergeEagerMemories())
+
+    /** Copies the budget onto [copy], so `with...` methods don't lose it. */
+    private fun keepBudget(copy: Memory): Memory {
+        copy.contextBudget = contextBudget
+        return copy
+    }
+
+    /**
      * Set the topic description for the memories.
      */
-    fun withTopic(topic: String): Memory = copy(topic = topic)
+    fun withTopic(topic: String): Memory = keepBudget(copy(topic = topic))
 
-    fun withUseWhen(useWhen: String): Memory = copy(useWhen = useWhen)
+    fun withUseWhen(useWhen: String): Memory = keepBudget(copy(useWhen = useWhen))
 
     /**
      * Wire a [ProvenanceResolver] so every returned proposition is
@@ -151,7 +212,7 @@ data class Memory @JvmOverloads constructor(
      * answers into ordinary recall — no separate evidence tool.
      */
     fun withProvenance(resolver: ProvenanceResolver): Memory =
-        copy(provenanceResolver = resolver)
+        keepBudget(copy(provenanceResolver = resolver))
 
     /**
      * Narrow the scope of all memory queries.
@@ -177,7 +238,7 @@ data class Memory @JvmOverloads constructor(
      * @return New Memory with the scope narrowed
      */
     fun narrowedBy(narrowedBy: UnaryOperator<PropositionQuery>): Memory =
-        copy(narrowedBy = narrowedBy)
+        keepBudget(copy(narrowedBy = narrowedBy))
 
     /**
      * Build the base query that all operations start from.
@@ -200,14 +261,63 @@ data class Memory @JvmOverloads constructor(
     }
 
     /**
-     * IDs of propositions that were eagerly loaded into the description.
-     * Used to deduplicate results from subsequent tool calls.
+     * The ids of the facts the last [contribution] put in the prompt, or null if this Memory has
+     * not rendered one yet. The tool leaves these out of its results so the LLM isn't told the
+     * same thing twice.
+     *
+     * It is written once per [contribution] call, as a whole new set, so a tool call on another
+     * thread sees either the old set or the new one. Copies made by the `with...` methods start
+     * with null, because a copy has not shown anything yet.
      */
-    private val eagerPropositionIds: Set<String> by lazy {
-        loadEagerMemories().map { it.id }.toSet()
+    @Volatile
+    private var renderedIds: Set<String>? = null
+
+    /**
+     * The ids the tool should leave out: exactly what the prompt showed, so a fact the budget
+     * left out of the prompt can still come back from the tool.
+     *
+     * Before any [contribution], it works out which facts the prompt would show, the same
+     * read-only way [eagerSelection] does. That doesn't mark anything as accessed and isn't
+     * kept, so the next call works it out again.
+     */
+    private fun eagerPropositionIds(): Set<String> =
+        renderedIds ?: eagerSelection().selected.map { it.id }.toSet()
+
+    /**
+     * Merges the eager sources, picks what fits the budget, and marks only the picked facts as
+     * accessed.
+     */
+    private fun loadEagerSelection(): BudgetedSelection {
+        val selection = selectEager(mergeEagerMemories())
+        // Reinforce on access: eagerly-surfaced memories are the ones actually being used, so
+        // refresh their decay anchor. Best-effort and scoped to this read path only (not every
+        // internal query) to bound write amplification — a failure here must never break the
+        // eager load itself. Facts the budget left out were not shown, so they are not touched.
+        if (selection.selected.isNotEmpty()) {
+            try {
+                repository.touchAccessed(selection.selected.map { it.id })
+            } catch (t: Throwable) {
+                logger.warn("Unable to touch lastAccessed for eagerly loaded memories", t)
+            }
+        }
+        return selection
     }
 
-    private fun loadEagerMemories(): List<Proposition> = try {
+    /**
+     * Applies the budget to the merged facts. With no budget every fact is kept in merge order,
+     * so the prompt reads exactly as it did before budgets existed.
+     */
+    private fun selectEager(merged: List<Proposition>): BudgetedSelection =
+        contextBudget?.select(merged) ?: BudgetedSelection(
+            selected = merged,
+            dropped = emptyList(),
+            estimatedTokens = merged.sumOf { UNBUDGETED_ESTIMATOR.estimate(it.text).coerceAtLeast(0).toLong() }
+                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+            budgetTokens = Int.MAX_VALUE,
+        )
+
+    /** Loads every eager source and merges them by id. Reads only; nothing is marked as accessed. */
+    private fun mergeEagerMemories(): List<Proposition> = try {
         val base = baseQuery()
 
         val topicMemories = eagerTopicSearch?.let { limit ->
@@ -234,21 +344,7 @@ data class Memory @JvmOverloads constructor(
 
         // Merge all sources, deduplicating by ID, aboutMemories first (most contextual)
         val seen = mutableSetOf<String>()
-        val merged = (aboutMemories + topicMemories + queryMemories).filter { seen.add(it.id) }
-
-        // Reinforce on access: eagerly-surfaced memories are the ones actually being used, so
-        // refresh their decay anchor. Best-effort and scoped to this read path only (not every
-        // internal query) to bound write amplification — a failure here must never break the
-        // eager load itself.
-        if (merged.isNotEmpty()) {
-            try {
-                repository.touchAccessed(merged.map { it.id })
-            } catch (t: Throwable) {
-                logger.warn("Unable to touch lastAccessed for eagerly loaded memories", t)
-            }
-        }
-
-        merged
+        (aboutMemories + topicMemories + queryMemories).filter { seen.add(it.id) }
     } catch (t: Throwable) {
         logger.warn("Unable to perform vector search")
         emptyList()
@@ -262,7 +358,15 @@ data class Memory @JvmOverloads constructor(
 
     override fun contribution(): String {
         val memoryCount = repository.count(baseQuery())
-        val eagerMemories = loadEagerMemories()
+        val selection = loadEagerSelection()
+        if (selection.isOverBudget) {
+            logger.warn(
+                "Pinned memories alone are estimated at {} tokens, over the context budget of {}; showing them anyway",
+                selection.estimatedTokens, selection.budgetTokens,
+            )
+        }
+        val eagerMemories = selection.selected
+        renderedIds = eagerMemories.map { it.id }.toSet()
 
         return buildString {
             appendLine("Reference: $name")
@@ -276,6 +380,10 @@ data class Memory @JvmOverloads constructor(
                 if (eagerMemories.size < memoryCount) {
                     appendLine("[${memoryCount - eagerMemories.size} more retrievable via the $NAME tool]")
                 }
+            } else if (selection.dropped.isNotEmpty() && memoryCount > 0) {
+                // The budget left out every fact; still tell the LLM there is something to ask for.
+                appendLine()
+                appendLine("[$memoryCount more retrievable via the $NAME tool]")
             }
             appendLine()
             append("Notes: ${notes()}")
@@ -311,7 +419,7 @@ data class Memory @JvmOverloads constructor(
      * @return New Memory with updated projector
      */
     fun withProjector(projector: MemoryProjector): Memory =
-        copy(projector = projector)
+        keepBudget(copy(projector = projector))
 
     /**
      * Set the minimum confidence threshold for returned memories.
@@ -322,7 +430,7 @@ data class Memory @JvmOverloads constructor(
      */
     fun withMinConfidence(minConfidence: Double): Memory {
         require(minConfidence in 0.0..1.0) { "minConfidence must be between 0.0 and 1.0" }
-        return copy(minConfidence = minConfidence)
+        return keepBudget(copy(minConfidence = minConfidence))
     }
 
     /**
@@ -333,7 +441,7 @@ data class Memory @JvmOverloads constructor(
      */
     fun withDefaultLimit(limit: Int): Memory {
         require(limit > 0) { "limit must be positive" }
-        return copy(defaultLimit = limit)
+        return keepBudget(copy(defaultLimit = limit))
     }
 
     /**
@@ -361,7 +469,7 @@ data class Memory @JvmOverloads constructor(
      * @return New Memory with eager query configured
      */
     fun withEagerQuery(eagerQuery: UnaryOperator<PropositionQuery>): Memory =
-        copy(eagerQuery = eagerQuery)
+        keepBudget(copy(eagerQuery = eagerQuery))
 
     /**
      * Enable eager topic-based similarity search.
@@ -382,12 +490,12 @@ data class Memory @JvmOverloads constructor(
     @JvmOverloads
     fun withEagerTopicSearch(limit: Int = DEFAULT_LIMIT): Memory {
         require(limit > 0) { "limit must be positive" }
-        return copy(eagerTopicSearch = limit)
+        return keepBudget(copy(eagerTopicSearch = limit))
     }
 
     override fun withEagerSearchAbout(request: TextSimilaritySearchRequest): Memory {
         require(request.topK > 0) { "topK must be positive" }
-        return copy(eagerTextSearch = request)
+        return keepBudget(copy(eagerTextSearch = request))
     }
 
     override val definition: Tool.Definition by lazy {
@@ -419,7 +527,7 @@ data class Memory @JvmOverloads constructor(
         val query = (params["query"] as? String ?: params["topic"] as? String)
             ?.trim()?.takeIf { it.isNotBlank() }
         val limit = (params["limit"] as? Number)?.toInt() ?: defaultLimit
-        val retriever = MemoryRetriever(repository, provenanceResolver, topic, eagerPropositionIds)
+        val retriever = MemoryRetriever(repository, provenanceResolver, topic, eagerPropositionIds(), contextBudget)
         return if (query == null) {
             retriever.listAll(baseQuery(), limit.coerceAtLeast(defaultLimit))
         } else {
@@ -448,6 +556,9 @@ data class Memory @JvmOverloads constructor(
         const val DEFAULT_LIMIT = 10
 
         private val objectMapper = jacksonObjectMapper()
+
+        /** Only used to report an estimate from [eagerSelection] when no budget is set. */
+        private val UNBUDGETED_ESTIMATOR = TokenCountEstimator.heuristic()
 
         /**
          * Start creating a Memory for the given context.
