@@ -23,28 +23,24 @@ import org.drivine.manager.PersistenceManagerFactory
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.schema.SchemaCatalog
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.BeanCreationException
-import org.springframework.beans.factory.BeanFactoryUtils
-import org.springframework.beans.factory.BeanCurrentlyInCreationException
 import org.springframework.beans.factory.BeanFactory
 import org.springframework.beans.factory.BeanFactoryAware
+import org.springframework.beans.factory.BeanFactoryUtils
 import org.springframework.beans.factory.NoUniqueBeanDefinitionException
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.config.BeanPostProcessor
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory
 import org.springframework.beans.factory.config.DependencyDescriptor
 import org.springframework.boot.autoconfigure.AutoConfiguration
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.boot.autoconfigure.condition.ConditionMessage
 import org.springframework.boot.autoconfigure.condition.ConditionOutcome
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.boot.autoconfigure.condition.SpringBootCondition
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.ConditionContext
+import org.springframework.context.annotation.Conditional
 import org.springframework.context.annotation.Import
 import org.springframework.core.type.AnnotatedTypeMetadata
 
@@ -58,29 +54,24 @@ import org.springframework.core.type.AnnotatedTypeMetadata
  * `embabel.dice.store.datasource` when there are several. Several with none named, or a name that
  * isn't there, stops startup and lists the ones that are.
  *
- * The two always share a database, under the same name: DICE saves through one and deduplicates,
- * deletes and decays through the other, and Drivine gives a transaction one connection per name it is
- * asked for, so "default" and the datasource it stands for would be two connections that neither see
- * each other's writes nor commit together. A host that defines only its own `PersistenceManager` gets a
- * `StatelessGraphObjectManager` under exactly the name the host used, and the property can't move it
- * elsewhere: naming a different datasource stops startup. A host that defines only a
- * `StatelessGraphObjectManager` gets a `PersistenceManager` under that manager's name when there is just
- * one datasource; with several, startup stops and asks for both. When the host has several of either
- * manager, the primary one is the one that counts, since that is the one Spring injects; several with
- * none primary stops startup and names them. Managers in a parent application context count too, just
- * as they do for injection and for the "host already has one" checks.
+ * DICE builds the two only as a pair, and only when the host defines neither, parent contexts included.
+ * DICE saves through one and deduplicates, deletes and decays through the other, so they have to share a
+ * database and a transaction, and a manager built to sit beside the host's can always end up somewhere
+ * the host's isn't. So a host that defines both keeps them and DICE leaves them alone, and a host that
+ * defines just one stops startup with a message asking for both or neither. This is the same way Spring
+ * Boot steps aside from a whole persistence setup when the application brings its own.
  *
  * With several datasources, DICE's schema (its constraints and indexes) goes only to the one its
  * stores use, rather than to every datasource Drivine knows. With one, it is left as declared.
  *
  * It runs after Drivine's auto-configuration, so the factories are already registered when it looks
  * for them, and before DICE's storage auto-configuration, which picks the Drivine stores when it
- * finds a `PersistenceManager`. A host that defines either bean itself keeps its own. With
- * `embabel.dice.store.type=in-memory` it does nothing, since DICE won't use Drivine at all.
+ * finds a `PersistenceManager`. With `embabel.dice.store.type=in-memory` it does nothing, since DICE
+ * won't use Drivine at all.
  */
 @AutoConfiguration(after = [DrivineAutoConfiguration::class], before = [DiceStorageAutoConfiguration::class])
 @ConditionalOnClass(PersistenceManagerFactory::class)
-@ConditionalOnBean(PersistenceManagerFactory::class, DatabaseRegistry::class)
+@ConditionalOnBean(PersistenceManagerFactory::class, GraphObjectManagerFactory::class, DatabaseRegistry::class)
 @Conditional(NotForcedInMemory::class)
 @EnableConfigurationProperties(DiceDrivineProperties::class)
 @Import(DiceSchemaTargeting::class)
@@ -88,100 +79,75 @@ class DiceDrivineAutoConfiguration {
 
     private val logger = LoggerFactory.getLogger(DiceDrivineAutoConfiguration::class.java)
 
-    // A field rather than a bean-method parameter, so the published method signatures stay as they are.
-    @Autowired
-    private lateinit var beanFactory: ConfigurableListableBeanFactory
-
     @Bean
-    @ConditionalOnMissingBean
+    @Conditional(HostDefinesNeitherManager::class)
     fun persistenceManager(
         factory: PersistenceManagerFactory,
         registry: DatabaseRegistry,
         properties: DiceDrivineProperties,
     ): PersistenceManager {
-        val hostGraphObjectManagers = hostGraphObjectManagers()
-        check(hostGraphObjectManagers.isEmpty() || registry.databaseNames.size <= 1) {
-            "Your StatelessGraphObjectManager (${describe(hostGraphObjectManagers.toSet())}) has no PersistenceManager " +
-                "beside it, and with several Drivine datasources (${describe(registry.databaseNames)}) DICE can't tell " +
-                "which one it uses. DICE needs both on the same database, so define both beans yourself."
-        }
         val datasource = DrivineDatasource.choose(registry, properties)
-        // The host StatelessGraphObjectManager Spring injects, when it is on this datasource, decides the
-        // name, so both join one connection.
-        val key = injectedHostGraphObjectManagerKey(hostGraphObjectManagers)
-            ?.takeIf { registry.resolveDatabaseName(it) == datasource }
-            ?: datasource
-        logger.info("DICE's Drivine stores use datasource '{}'", key)
-        return factory.get(key)
+        logger.info("DICE's Drivine stores use datasource '{}'", datasource)
+        return factory.get(datasource)
     }
 
     @Bean
-    @ConditionalOnBean(GraphObjectManagerFactory::class)
-    @ConditionalOnMissingBean
+    @Conditional(HostDefinesNeitherManager::class)
     fun statelessGraphObjectManager(
         factory: GraphObjectManagerFactory,
         registry: DatabaseRegistry,
         properties: DiceDrivineProperties,
-    ): StatelessGraphObjectManager {
-        // Whichever PersistenceManager the stores get, the host's or the one above, decides the database.
-        // The one Spring injects: the only one, or the primary among several.
-        val manager = injectedBean(beanFactory, PersistenceManager::class.java)
-            ?: error(
-                "There are several PersistenceManager beans " +
-                    "(${describe(beanNamesIncludingAncestors(beanFactory, PersistenceManager::class.java).toSet())}) " +
-                    "and none is primary, so DICE can't tell which database to build its StatelessGraphObjectManager " +
-                    "for. Mark one @Primary, or define both beans yourself, on the same database.",
-            )
-        val datasource = registry.resolveDatabaseName(manager.database) ?: error(
-            "Your PersistenceManager uses database '${manager.database}', which isn't one of Drivine's datasources " +
-                "(${describe(registry.databaseNames)}), so DICE can't build a StatelessGraphObjectManager beside it. " +
-                "Define both beans yourself, on the same database.",
-        )
-        val named = DrivineDatasource.named(properties)
-        if (named != null) {
-            check(registry.resolveDatabaseName(named) == datasource) {
-                "${DrivineDatasource.PROPERTY} names '$named', but your PersistenceManager uses '$datasource'. DICE keeps " +
-                    "its stores on one database and won't move them off your PersistenceManager's: remove the property " +
-                    "or make the two agree."
-            }
+    ): StatelessGraphObjectManager =
+        // The same resolved name as the PersistenceManager above: Drivine opens one connection per name in a
+        // transaction, so the two only share a transaction when they were asked for exactly the same name.
+        factory.stateless(DrivineDatasource.choose(registry, properties))
+}
+
+/**
+ * Lets DICE build its Drivine managers only when the host defines neither of them, and stops startup when
+ * the host defines just one.
+ *
+ * Both present means the host has its own setup, so DICE builds nothing and doesn't look at them. Just one
+ * would leave DICE building the other beside it, which is how saves and dedup end up on two databases, so
+ * that is a startup error. Beans in parent contexts count, as they do for injection; DICE's own two
+ * managers, declared in this context, don't.
+ */
+internal class HostDefinesNeitherManager : SpringBootCondition() {
+
+    override fun getMatchOutcome(context: ConditionContext, metadata: AnnotatedTypeMetadata): ConditionOutcome {
+        val message = ConditionMessage.forCondition("DICE Drivine managers")
+        val beanFactory = context.beanFactory
+            ?: return ConditionOutcome.noMatch(message.because("there is no bean factory to look in"))
+        val persistenceManagers = hostBeans(beanFactory, PersistenceManager::class.java)
+        val graphObjectManagers = hostBeans(beanFactory, StatelessGraphObjectManager::class.java)
+        return when {
+            persistenceManagers.isEmpty() && graphObjectManagers.isEmpty() ->
+                ConditionOutcome.match(message.because("the application defines neither manager"))
+            persistenceManagers.isNotEmpty() && graphObjectManagers.isNotEmpty() ->
+                ConditionOutcome.noMatch(message.because("the application defines both managers"))
+            else -> error(onlyOne(persistenceManagers, graphObjectManagers))
         }
-        // The name exactly as the PersistenceManager was given it, not the datasource it resolves to:
-        // Drivine opens a connection per name within a transaction.
-        return factory.stateless(manager.database)
     }
 
-    /**
-     * The name the host StatelessGraphObjectManager Spring injects was built for: the only one, or the
-     * primary among several. Null when the host has none, or when that manager is itself built on the
-     * PersistenceManager being made here, in which case the two already share the name. Several with
-     * none primary stops startup, since DICE's stores would get one DICE can't predict.
-     */
-    private fun injectedHostGraphObjectManagerKey(hostBeanNames: List<String>): String? {
-        if (hostBeanNames.isEmpty()) return null
-        // Spring's own choice, which only creates the manager it picks.
-        val injected = try {
-            injectedBean(beanFactory, StatelessGraphObjectManager::class.java)
-        } catch (e: BeanCreationException) {
-            if (e.contains(BeanCurrentlyInCreationException::class.java)) return null else throw e
+    private fun onlyOne(persistenceManagers: Set<String>, graphObjectManagers: Set<String>): String {
+        val (defined, missing, names) = if (persistenceManagers.isNotEmpty()) {
+            Triple("PersistenceManager", "StatelessGraphObjectManager", persistenceManagers)
+        } else {
+            Triple("StatelessGraphObjectManager", "PersistenceManager", graphObjectManagers)
         }
-        checkNotNull(injected) {
-            "There are several StatelessGraphObjectManager beans (${describe(hostBeanNames.toSet())}) and none is " +
-                "primary, so DICE can't tell which one its PersistenceManager must share a database name with. " +
-                "Mark one @Primary, or define both beans yourself, on the same database."
-        }
-        return injected.database
+        return "Your application defines a $defined (${describe(names)}) but no $missing. DICE builds these two " +
+            "Drivine managers only as a pair, so its stores never save through one database and deduplicate " +
+            "through another. Define both beans yourself, on the same database key, or neither and let DICE " +
+            "build them from database.datasources."
     }
 
-    /**
-     * The application's own StatelessGraphObjectManager beans, parent contexts included, leaving out the one
-     * this class may register here.
-     */
-    private fun hostGraphObjectManagers(): List<String> =
-        beanNamesIncludingAncestors(beanFactory, StatelessGraphObjectManager::class.java).filterNot { name ->
+    /** The application's beans of [type], parent contexts included, leaving out the ones DICE declares here. */
+    private fun hostBeans(beanFactory: ConfigurableListableBeanFactory, type: Class<*>): Set<String> =
+        beanNamesIncludingAncestors(beanFactory, type).filterNot { name ->
             beanFactory.containsBeanDefinition(name) &&
                 (beanFactory.getBeanDefinition(name) as? AnnotatedBeanDefinition)
                     ?.factoryMethodMetadata?.declaringClassName == DiceDrivineAutoConfiguration::class.java.name
-        }
+        }.toSet()
 }
 
 /**
@@ -323,7 +289,6 @@ private fun beanNamesIncludingAncestors(beanFactory: ConfigurableListableBeanFac
 @Suppress("unused")
 private class ManagerInjectionPoints {
     @JvmField var persistenceManager: PersistenceManager? = null
-    @JvmField var graphObjectManager: StatelessGraphObjectManager? = null
 }
 
 private fun describe(names: Set<String>): String =
