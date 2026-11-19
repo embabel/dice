@@ -1126,6 +1126,11 @@ class DrivinePropositionRepository(
      * `(1 + cosine) / 2` index score (before this method converted back to cosine) admitted down to
      * cosine `2*t - 1` for a stored `t`; that threshold now means something stricter and should be
      * retuned.
+     *
+     * A SQL store such as SQLite has no vector index procedure to call. There Drivine measures every
+     * pair of the candidates itself, exactly, and each anchor keeps its [topK] nearest among the
+     * candidates with a later id, as the in-memory store pairs them. That reads every pair above the
+     * threshold, so its cost grows with the square of the number of candidates.
      */
     @Transactional(readOnly = true)
     override fun findClusters(
@@ -1138,23 +1143,11 @@ class DrivinePropositionRepository(
         val byId = candidates.associateBy { it.id }
         val ids = candidates.map { it.id }
 
-        // A COSINE index scores as (1 + cosine) / 2 (see toRawCosine below); the `cosine` binding here
-        // converts back to raw cosine so the gate and the returned score are both cosine, as the
-        // in-memory store returns. COSINE-only: a EUCLIDEAN index normalizes differently.
-        @Suppress("UNCHECKED_CAST")
-        val rows = persistenceManager.query(
-            cypherQuery(
-                    """
-                    UNWIND ${'$'}ids AS sid
-                    MATCH (seed:Proposition {id: sid}) WHERE seed.embedding IS NOT NULL
-                    CALL db.index.vector.queryNodes('$vectorIndexName', ${'$'}k, seed.embedding) YIELD node AS m, score
-                    WITH sid, m, 2.0 * score - 1.0 AS cosine
-                    WHERE m.id IN ${'$'}ids AND sid < m.id AND cosine >= ${'$'}threshold
-                    RETURN { anchorId: sid, otherId: m.id, score: cosine } AS row
-                    """.trimIndent()
-                )
-                .bind(mapOf("ids" to ids, "k" to topK + 1, "threshold" to similarityThreshold))
-        ) as List<Map<String, Any>>
+        val rows = if (persistenceManager.type.speaksCypher) {
+            nearestPairsByIndex(ids, similarityThreshold, topK)
+        } else {
+            nearestLaterPairs(ids, similarityThreshold, topK)
+        }
 
         val clusters = rows
             .groupBy { it["anchorId"] as String }
@@ -1177,6 +1170,36 @@ class DrivinePropositionRepository(
         )
         return clusters
     }
+
+    /** Each candidate's nearest others among [ids], one row per pair with the smaller id as the anchor, through Neo4j's vector index. */
+    private fun nearestPairsByIndex(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> {
+        // A COSINE index scores as (1 + cosine) / 2 (see toRawCosine below); the `cosine` binding here
+        // converts back to raw cosine so the gate and the returned score are both cosine, as the
+        // in-memory store returns. COSINE-only: a EUCLIDEAN index normalizes differently.
+        @Suppress("UNCHECKED_CAST")
+        return persistenceManager.query(
+            cypherQuery(
+                    """
+                    UNWIND ${'$'}ids AS sid
+                    MATCH (seed:Proposition {id: sid}) WHERE seed.embedding IS NOT NULL
+                    CALL db.index.vector.queryNodes('$vectorIndexName', ${'$'}k, seed.embedding) YIELD node AS m, score
+                    WITH sid, m, 2.0 * score - 1.0 AS cosine
+                    WHERE m.id IN ${'$'}ids AND sid < m.id AND cosine >= ${'$'}threshold
+                    RETURN { anchorId: sid, otherId: m.id, score: cosine } AS row
+                    """.trimIndent()
+                )
+                .bind(mapOf("ids" to ids, "k" to topK + 1, "threshold" to similarityThreshold))
+        ) as List<Map<String, Any>>
+    }
+
+    /** On a SQL store, each anchor's [topK] nearest among the candidates with a later id, measured by Drivine. */
+    private fun nearestLaterPairs(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> =
+        graphObjectManager.loadNearestAmong(PropositionView::class.java, ids, ids.size, toEngineScore(similarityThreshold))
+            .flatMap { (anchorId, near) ->
+                near.filter { it.value > anchorId }
+                    .take(topK)
+                    .map { mapOf("anchorId" to anchorId, "otherId" to it.value, "score" to toRawCosine(it.score)) }
+            }
 
     /**
      * A Neo4j COSINE vector index reports `(1 + cosine) / 2`, not raw cosine — this converts an

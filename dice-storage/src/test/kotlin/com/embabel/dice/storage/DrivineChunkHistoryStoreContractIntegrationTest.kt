@@ -110,6 +110,37 @@ abstract class DrivineChunkHistoryStoreContractCases : AbstractChunkHistoryStore
     }
 
     /**
+     * The two records share a time, and the earlier window's content hash sorts after the later
+     * window's, so an order that falls back to the record id would pick the earlier window.
+     */
+    @Test
+    fun `the bookmark is the further window when two records share a time`() {
+        val ctx = ContextId("chunk-tie-ctx")
+        val bookmarkKey = BookmarkKey(ctx, "source-1")
+        val processedAt = Instant.parse("2026-01-01T12:00:05Z")
+        chunkHistoryStore.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = bookmarkKey,
+                hashKey = HashKey(ctx, "hash-z"),
+                startIndex = 0,
+                endIndex = 20,
+                processedAt = processedAt,
+            ),
+        )
+        chunkHistoryStore.recordProcessed(
+            ProcessedChunkRecord(
+                bookmarkKey = bookmarkKey,
+                hashKey = HashKey(ctx, "hash-a"),
+                startIndex = 20,
+                endIndex = 40,
+                processedAt = processedAt,
+            ),
+        )
+
+        assertEquals(40, chunkHistoryStore.getLastBookmark(bookmarkKey)?.endIndex)
+    }
+
+    /**
      * Counts the nodes that carry a label, read straight from the graph.
      *
      * @param label the node label to count

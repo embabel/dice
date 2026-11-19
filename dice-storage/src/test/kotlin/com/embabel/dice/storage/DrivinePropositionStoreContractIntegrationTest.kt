@@ -20,6 +20,7 @@ import com.embabel.dice.conformance.AbstractPropositionStoreContractTest
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.storage.model.PropositionView
 import org.drivine.StaleObjectException
@@ -61,6 +62,25 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
     fun cleanUp() {
         repository.clearAll()
         persistenceManager.execute(cypherQuery("MATCH (s:Source) DETACH DELETE s"))
+    }
+
+    /** The same text in two contexts is not deduplicated, so the two share an embedding and cluster. */
+    @Test
+    fun `findClusters pairs propositions with the same embedding`() {
+        fun ghost(text: String, context: String) = Proposition(
+            contextId = ContextId(context),
+            text = text,
+            mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
+            confidence = 0.9,
+        )
+        val first = repository.save(ghost("The ghost hums in the attic", "cluster-a"))
+        val second = repository.save(ghost("The ghost hums in the attic", "cluster-b"))
+        repository.save(ghost("A lonely distinct fact about the cellar", "cluster-a"))
+
+        val clusters = repository.findClusters(similarityThreshold = 0.95, topK = 10, query = PropositionQuery())
+
+        assertEquals(1, clusters.size)
+        assertEquals(setOf(first.id, second.id), setOf(clusters.single().anchor.id) + clusters.single().similar.map { it.match.id })
     }
 
     @Test
