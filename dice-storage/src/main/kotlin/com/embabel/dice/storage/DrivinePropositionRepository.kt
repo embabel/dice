@@ -188,6 +188,9 @@ class DrivinePropositionRepository(
         propagationBehavior = TransactionDefinition.PROPAGATION_NOT_SUPPORTED
     }
 
+    /** Reads in one read-only transaction, the caller's when there is one (see [findClusters]). */
+    private val readOnlyTransaction = TransactionTemplate(transactionManager).apply { isReadOnly = true }
+
     override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
 
     override val luceneSyntaxNotes: String get() = "no lucene support"
@@ -1237,10 +1240,23 @@ class DrivinePropositionRepository(
      * other propositions is missed, and Oracle's index search is approximate. SQLite, and Postgres
      * or Oracle with no vector index, measure every pair of the candidates exactly.
      */
-    // SUPPORTS: on SQLite a transaction of its own would hold the file's write lock through every
-    // anchor's search. Standalone, each statement reads on its own; a caller's transaction is joined.
+    // SUPPORTS, for SQLite: a transaction of its own there would hold the file's write lock through
+    // the search, as SQLite takes it for a read-only one too. Standalone, each statement reads on its
+    // own; a caller's transaction is joined. Every other backend reads in one read-only transaction,
+    // its own or the caller's, so the candidates and their neighbours come from one state.
     @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
     override fun findClusters(
+        similarityThreshold: ZeroToOne,
+        topK: Int,
+        query: PropositionQuery,
+    ): List<Cluster<Proposition>> =
+        if (persistenceManager.type == DatabaseType.SQLITE) {
+            clustersOf(similarityThreshold, topK, query)
+        } else {
+            readOnlyTransaction.execute { clustersOf(similarityThreshold, topK, query) }.orEmpty()
+        }
+
+    private fun clustersOf(
         similarityThreshold: ZeroToOne,
         topK: Int,
         query: PropositionQuery,

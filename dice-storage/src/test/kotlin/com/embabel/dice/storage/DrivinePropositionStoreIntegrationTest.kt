@@ -37,6 +37,7 @@ import com.embabel.dice.provenance.ProvenanceEvidenceKey
 import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.provenance.UriLocator
 import com.embabel.dice.temporal.TemporalMetadata
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -51,10 +52,12 @@ import org.junit.jupiter.api.assertThrows
 import org.drivine.connection.DataSourceMap
 import com.embabel.dice.storage.model.PropositionView
 import org.drivine.StaleObjectException
+import org.drivine.manager.DelegatingPersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.load
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
+import org.drivine.mapper.SubtypeRegistry
 import org.neo4j.driver.AuthTokens
 import org.neo4j.driver.GraphDatabase
 import org.neo4j.driver.SessionConfig
@@ -65,6 +68,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.springframework.test.util.ReflectionTestUtils
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
 import org.springframework.transaction.interceptor.TransactionInterceptor
@@ -2359,6 +2363,49 @@ class DrivinePropositionStoreIntegrationTest {
                 .bind(mapOf("id" to id))
                 .transform(Long::class.java)
         ).toInt().takeIf { it >= 0 }
+
+    /**
+     * Through Spring's transaction advice, as the bean has it. On Neo4j a clustering pass reads its
+     * candidates and their neighbours in one read-only transaction, so both come from one state of
+     * the graph.
+     */
+    @Test
+    fun `findClusters on Neo4j reads its candidates and their neighbours in one transaction`() {
+        val recording = TransactionRecordingPersistenceManager(persistenceManager)
+        val objects = ReflectionTestUtils.getField(graphObjectManager, "objects")!!
+        val recordingObjects = StatelessGraphObjectManager(
+            recording,
+            ReflectionTestUtils.getField(graphObjectManager, "objectMapper") as ObjectMapper,
+            ReflectionTestUtils.getField(objects, "subtypeRegistry") as SubtypeRegistry,
+        )
+        val clustering = ProxyFactory(
+            DrivinePropositionRepository(recordingObjects, recording, embeddingService, transactionManager),
+        ).apply {
+            isProxyTargetClass = true
+            addAdvice(TransactionInterceptor(transactionManager, AnnotationTransactionAttributeSource()))
+        }.proxy as DrivinePropositionRepository
+        repository.save(prop("The ghost hums in the attic", context = "cluster-tx"))
+        repository.save(prop("The ghost hums in the attic.", context = "cluster-tx"))
+        recording.seen.clear()
+
+        clustering.findClusters(similarityThreshold = 0.5, topK = 5, query = PropositionQuery.forContextId(ContextId("cluster-tx")))
+
+        assertTrue(recording.seen.size >= 2, "expected the candidates and the search, saw ${recording.seen.size} statements")
+        assertTrue(recording.seen.all { it != null }, "a statement ran outside a transaction: ${recording.seen}")
+        assertEquals(1, recording.seen.toSet().size, "the statements ran in ${recording.seen.toSet().size} transactions")
+    }
+
+    /** Passes every call on, recording the Drivine transaction each query runs in, or null for none. */
+    private class TransactionRecordingPersistenceManager(
+        private val delegate: PersistenceManager,
+    ) : PersistenceManager by delegate {
+        val seen = mutableListOf<Any?>()
+
+        override fun <T : Any> query(spec: QuerySpecification<T>): List<T> {
+            seen += (delegate as DelegatingPersistenceManager).contextHolder.currentTransaction
+            return delegate.query(spec)
+        }
+    }
 
     /** findClusters must query the configured vector index, not a hard-coded name. */
     @Test
