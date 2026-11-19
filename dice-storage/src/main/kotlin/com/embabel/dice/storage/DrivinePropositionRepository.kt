@@ -1371,7 +1371,10 @@ class DrivinePropositionRepository(
      * Declared read-only so a read-only caller's transaction can be joined at all: Spring refuses a
      * read-write participant in one. The write itself runs in the transaction chosen below.
      */
-    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
+    // SUPPORTS so it can join a caller's SQLite transaction. Its failures never mark the caller's
+    // transaction: elsewhere the touch runs in a transaction of its own, as it always has, and a
+    // caller that catches the failure keeps its own work.
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true, noRollbackFor = [Throwable::class])
     override fun touchAccessed(ids: Collection<String>) {
         if (ids.isEmpty()) return
         val touch = {
@@ -1532,11 +1535,10 @@ class DrivinePropositionRepository(
      * @throws PropositionReembedIncompleteException when some propositions could not be embedded;
      * all others were written and the index is restored
      */
-    @Transactional(
-        propagation = Propagation.SUPPORTS,
-        readOnly = true,
-        noRollbackFor = [PropositionReembedIncompleteException::class],
-    )
+    // SUPPORTS so it can join a caller's SQLite transaction. Its failures never mark the caller's
+    // transaction: elsewhere the re-embed runs outside it, as it always has, and a caller that
+    // catches a failure, an incomplete re-embed among them, keeps its own work.
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true, noRollbackFor = [Throwable::class])
     override fun reembedAll(): PropositionReembedReport =
         if (callerTransactionHoldsWriteLock && transactionManager.hasOpenTransaction()) {
             reembedEverything(insideCallerTransaction = true)

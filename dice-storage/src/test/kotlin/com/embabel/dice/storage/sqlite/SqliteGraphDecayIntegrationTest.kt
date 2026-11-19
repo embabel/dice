@@ -33,8 +33,12 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.springframework.transaction.support.TransactionTemplate
+import org.sqlite.SQLiteDataSource
+import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -124,6 +128,49 @@ class SqliteGraphDecayIntegrationTest {
             assertTrue(holding.await(10, TimeUnit.SECONDS), "the other writer never took the lock")
 
             GraphDecayManager(repository, persistenceManager).materialize(context)
+
+            writer.get(10, TimeUnit.SECONDS)
+        } finally {
+            executor.shutdownNow()
+        }
+        val refreshed = persistenceManager.query(
+            cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) WHERE p.decayUpdatedAt IS NOT NULL RETURN p.id")
+                .bind(mapOf("id" to saved.id))
+                .transform(String::class.java),
+        )
+        assertEquals(1, refreshed.size)
+    }
+
+    /**
+     * A host transaction over another database holds nothing of the graph's. Inside it, the page
+     * still takes its own transaction, and so still waits for another writer of the graph's file.
+     */
+    @Test
+    fun `inside a host transaction on another database, a sweep still waits for another writer`() {
+        val context = ContextId("decay-other-host-ctx")
+        val saved = repository.save(ghost("The ghost waits for the other house", context))
+        val hostManager = DataSourceTransactionManager(
+            SQLiteDataSource().apply { url = "jdbc:sqlite:" + Files.createTempFile("dice-decay-other-host-", ".db") },
+        )
+        val dataSource = (registry.connectionProvider("neo") as NativeDriverSource<*>).nativeDriver as DataSource
+        dataSource.connection.use { it.createStatement().execute("CREATE TABLE IF NOT EXISTS decay_holder (x INTEGER)") }
+        val holding = CountDownLatch(1)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val writer = executor.submit {
+                dataSource.connection.use { connection ->
+                    connection.autoCommit = false
+                    connection.createStatement().execute("INSERT INTO decay_holder (x) VALUES (1)")
+                    holding.countDown()
+                    Thread.sleep(1500)
+                    connection.commit()
+                }
+            }
+            assertTrue(holding.await(10, TimeUnit.SECONDS), "the other writer never took the lock")
+
+            TransactionTemplate(hostManager).executeWithoutResult {
+                GraphDecayManager(repository, persistenceManager).materialize(context)
+            }
 
             writer.get(10, TimeUnit.SECONDS)
         } finally {

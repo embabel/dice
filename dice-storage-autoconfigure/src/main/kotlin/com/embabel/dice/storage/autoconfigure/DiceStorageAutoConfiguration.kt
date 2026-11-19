@@ -248,10 +248,11 @@ class DiceStorageAutoConfiguration {
 
     /**
      * The JDBC data source behind [persistenceManager]'s store, when Drivine reaches it through one.
-     * The registry is Drivine's bean, or else the one Drivine's own persistence manager carries.
+     * The registry is the one Drivine's own persistence manager carries, which its statements use,
+     * or else Drivine's bean.
      */
     private fun drivineDataSource(persistenceManager: PersistenceManager): DataSource? {
-        val registry = databaseRegistry ?: (persistenceManager as? DelegatingPersistenceManager)?.contextHolder?.databaseRegistry
+        val registry = (persistenceManager as? DelegatingPersistenceManager)?.contextHolder?.databaseRegistry ?: databaseRegistry
         val provider = registry?.connectionProvider(persistenceManager.database) as? NativeDriverSource<*>
         return provider?.nativeDriver as? DataSource
     }

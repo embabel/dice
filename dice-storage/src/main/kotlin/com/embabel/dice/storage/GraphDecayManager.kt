@@ -19,8 +19,10 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.DecayManager
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
+import org.drivine.connection.NativeDriverSource
 import org.drivine.manager.DelegatingPersistenceManager
 import org.drivine.manager.PersistenceManager
+import org.drivine.transaction.TransactionContextHolder
 import org.drivine.transaction.Transactions
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.drivine.model.Stamps
@@ -118,14 +120,31 @@ class GraphDecayManager(
      * Runs [page] in a Drivine transaction, when the persistence manager is Drivine's own and so
      * carries its transaction state. Otherwise each statement commits on its own.
      *
-     * Inside a transaction a caller already has, the page joins it instead. A host whose JDBC
-     * transaction lends Drivine its connection would otherwise have that transaction committed by
-     * the page's, and its own work with it.
+     * Inside a caller's transaction that holds the graph's own connection, the page joins it
+     * instead. A host whose JDBC transaction lends Drivine its connection would otherwise have that
+     * transaction committed by the page's, and its own work with it. A caller's transaction over
+     * another database holds nothing of the graph's, and the page takes its own.
      */
     private fun <T> inPageTransaction(page: () -> T): T {
-        if (TransactionSynchronizationManager.isActualTransactionActive()) return page()
         val holder = (persistenceManager as? DelegatingPersistenceManager)?.contextHolder ?: return page()
+        if (callerHoldsGraphConnection(holder)) return page()
         return Transactions(holder).transaction { page() }
+    }
+
+    /**
+     * Whether a Spring transaction on this thread has bound a connection for the data source the
+     * graph is read through, or for one that data source wraps.
+     */
+    private fun callerHoldsGraphConnection(holder: TransactionContextHolder): Boolean {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) return false
+        val provider = holder.databaseRegistry.connectionProvider(persistenceManager.database) as? NativeDriverSource<*>
+        var dataSource: Any? = provider?.nativeDriver
+        repeat(MAX_WRAPPERS) {
+            val current = dataSource ?: return false
+            if (TransactionSynchronizationManager.hasResource(current)) return true
+            dataSource = runCatching { current.javaClass.getMethod("getTargetDataSource").invoke(current) }.getOrNull()
+        }
+        return false
     }
 
     private companion object {
@@ -135,6 +154,9 @@ class GraphDecayManager(
          * different `k` falls back to live decay rather than reading this column.
          */
         private const val DECAY_K = Proposition.DEFAULT_DECAY_K
+
+        /** How far [callerHoldsGraphConnection] follows wrapping data sources. */
+        private const val MAX_WRAPPERS = 8
 
         /** The default for [batchRows]. */
         private const val BATCH_ROWS = 10_000

@@ -31,20 +31,28 @@ import org.drivine.manager.load
 import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.springframework.aop.framework.ProxyFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.datasource.DataSourceTransactionManager
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.TransactionManager
 import org.springframework.transaction.TransactionStatus
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
+import org.springframework.transaction.interceptor.TransactionInterceptor
 import org.springframework.transaction.support.TransactionTemplate
+import org.sqlite.SQLiteDataSource
+import java.nio.file.Files
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -340,6 +348,33 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         assertEquals(ContextId("replay-b"), saved.contextId)
     }
 
+    /**
+     * Through Spring's own transaction advice, with a host JDBC manager for another database. A host
+     * that catches a failed touch and carries on commits its own work: the touch's failure is not
+     * the host's.
+     */
+    @Test
+    fun `a host that catches a failed touchAccessed still commits its own work`() {
+        val saved = repository.save(ghost("The ghost knocks twice", context = "touch-host"))
+        val hostData = SQLiteDataSource().apply { url = "jdbc:sqlite:" + Files.createTempFile("dice-touch-host-", ".db") }
+        val hostManager = DataSourceTransactionManager(hostData)
+        val host = JdbcTemplate(hostData)
+        host.execute("CREATE TABLE host_rows (x INTEGER)")
+        val touching = ProxyFactory(
+            DrivinePropositionRepository(graphObjectManager, TouchRefusingPersistenceManager(persistenceManager), embeddingService, hostManager),
+        ).apply {
+            isProxyTargetClass = true
+            addAdvice(TransactionInterceptor(hostManager as TransactionManager, AnnotationTransactionAttributeSource()))
+        }.proxy as DrivinePropositionRepository
+
+        TransactionTemplate(hostManager).executeWithoutResult {
+            host.update("INSERT INTO host_rows (x) VALUES (1)")
+            assertThrows<IllegalStateException> { touching.touchAccessed(listOf(saved.id)) }
+        }
+
+        assertEquals(1, host.queryForObject("SELECT count(*) FROM host_rows", Int::class.java))
+    }
+
     private fun readOnly() = TransactionTemplate(transactionManager).apply { isReadOnly = true }
 
     private fun ghost(text: String, context: String = "ghost-ctx") = Proposition(
@@ -453,5 +488,13 @@ private class MovingOnEvidenceReadPersistenceManager(
             )
         }
         return delegate.query(spec)
+    }
+}
+
+/** Passes every call on, and refuses the access touch. */
+private class TouchRefusingPersistenceManager(private val delegate: PersistenceManager) : PersistenceManager by delegate {
+    override fun execute(spec: QuerySpecification<*>) {
+        check(spec.parameters.keys != setOf("ids", "now")) { "touch refused" }
+        delegate.execute(spec)
     }
 }
