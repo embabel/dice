@@ -38,6 +38,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.springframework.aop.framework.ProxyFactory
@@ -54,10 +55,12 @@ import org.springframework.transaction.TransactionManager
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
 import org.springframework.transaction.interceptor.TransactionInterceptor
 import org.springframework.transaction.support.TransactionTemplate
+import org.sqlite.SQLiteDataSource
 import org.sqlite.SQLiteErrorCode
 import org.sqlite.SQLiteException
 import java.nio.file.Files
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import javax.sql.DataSource
@@ -238,6 +241,51 @@ class SqliteHostJdbcTransactionIntegrationTest {
         } finally {
             executor.shutdownNow()
         }
+    }
+
+    /**
+     * Inside a transaction on another database, a graph read through the proxy leaves Spring holding
+     * a plain auto-commit connection for the graph's data source. That connection is in no
+     * transaction, so a decay page still takes its own, and waits for another writer of the file.
+     */
+    @Test
+    fun `inside another database's transaction, a decay page after a graph read still waits for another writer`() {
+        val saved = repository().save(ghost("The ghost waits behind the door"))
+        val otherManager = DataSourceTransactionManager(
+            SQLiteDataSource().apply { url = "jdbc:sqlite:" + Files.createTempFile("dice-other-db-", ".db") },
+        )
+        hostDataSource.connection.use { it.createStatement().execute("CREATE TABLE IF NOT EXISTS decay_holder (x INTEGER)") }
+        val holding = CountDownLatch(1)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val writer = executor.submit {
+                hostDataSource.connection.use { connection ->
+                    connection.autoCommit = false
+                    connection.createStatement().execute("INSERT INTO decay_holder (x) VALUES (1)")
+                    holding.countDown()
+                    Thread.sleep(1500)
+                    connection.commit()
+                }
+            }
+
+            TransactionTemplate(otherManager).executeWithoutResult {
+                repository().findById(saved.id)
+                assertTrue(holding.await(10, TimeUnit.SECONDS), "the other writer never took the lock")
+                GraphDecayManager(repository(), persistenceManager).materializeAll()
+            }
+
+            writer.get(10, TimeUnit.SECONDS)
+        } finally {
+            executor.shutdownNow()
+        }
+        assertEquals(
+            listOf(saved.id),
+            persistenceManager.query(
+                cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) WHERE p.decayUpdatedAt IS NOT NULL RETURN p.id")
+                    .bind(mapOf("id" to saved.id))
+                    .transform(String::class.java),
+            ),
+        )
     }
 
     private fun embeddingOf(id: String): List<*>? = persistenceManager.maybeGetOne(

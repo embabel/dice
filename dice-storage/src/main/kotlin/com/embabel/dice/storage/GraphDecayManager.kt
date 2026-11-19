@@ -27,6 +27,7 @@ import org.drivine.transaction.Transactions
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.drivine.model.Stamps
 import org.drivine.query.QuerySpecification
+import java.sql.Connection
 import java.time.Instant
 
 /**
@@ -132,8 +133,11 @@ class GraphDecayManager(
     }
 
     /**
-     * Whether a Spring transaction on this thread has bound a connection for the data source the
-     * graph is read through, or for one that data source wraps.
+     * Whether a Spring transaction on this thread holds the graph's connection in a transaction of
+     * its own: a connection bound for the data source the graph is read through, or for one it
+     * wraps, with auto-commit off. Spring also binds a plain auto-commit connection for any read
+     * through a transaction-aware proxy made while another database's transaction is open; that one
+     * is in no transaction, and the page takes its own.
      */
     private fun callerHoldsGraphConnection(holder: TransactionContextHolder): Boolean {
         if (!TransactionSynchronizationManager.isActualTransactionActive()) return false
@@ -141,11 +145,16 @@ class GraphDecayManager(
         var dataSource: Any? = provider?.nativeDriver
         repeat(MAX_WRAPPERS) {
             val current = dataSource ?: return false
-            if (TransactionSynchronizationManager.hasResource(current)) return true
+            TransactionSynchronizationManager.getResource(current)?.let { return inTransaction(it) }
             dataSource = runCatching { current.javaClass.getMethod("getTargetDataSource").invoke(current) }.getOrNull()
         }
         return false
     }
+
+    /** Whether a bound connection holder's connection has auto-commit off, read reflectively. */
+    private fun inTransaction(holder: Any): Boolean = runCatching {
+        (holder.javaClass.getMethod("getConnection").invoke(holder) as Connection).autoCommit.not()
+    }.getOrDefault(false)
 
     private companion object {
         /**
