@@ -52,8 +52,13 @@ to verify its structure, as the other examples do.
 | `aPreferenceIsUnrelatedToThePlanSoItIsNewAndTheContradictedFactIsNotAskedAbout` | "Acme prefers email over phone" is answered `unrelated` and stored as new. Its only candidate is the Enterprise plan fact, because a contradicted fact is no longer active. |
 | `aDecisionReplyThatIsNotJsonStoresTheFactAsNewAndChangesNothingStored` | "Acme has 40 seats on the Enterprise plan" has two candidates, and the reply `this is not json` fails the whole decision. The fact is stored as new, no stored fact changes, and a warning naming the fact is logged. |
 
-Each of the last five messages makes exactly one decision call. Candidate ids are random, so
-the tests never assume which candidate comes first.
+| `hearingAMessageTheFactAlreadyHoldsAgainLeavesTheFactAsItIs` | A fact told again, whose only evidence is a message the stored fact already holds, is answered `duplicate`, but the stored fact comes back unchanged: the same confidence, decay and reinforce count. A retry is not more support. |
+| `newEvidenceForAFactAtTheConfidenceCapStillRestartsItsDecay` | A fact at confidence 0.99 that has sat unused for a month gets new evidence. Its confidence cannot rise, but its decay restarts from now, so its effective confidence is back near 0.99. |
+| `contradictingAFactAlreadyAtTheConfidenceFloorStillCountsAsARecentChange` | A fact already at confidence 0.05 is contradicted. Its confidence stays at 0.05, but the change of status still counts as a revision, so a query for facts revised since the call finds it. |
+
+Each of the last five story messages makes exactly one decision call. Candidate ids are random,
+so the tests never assume which candidate comes first. The last three tests ask the reviser
+directly, each against a store of its own.
 
 ## Compared with the built-in reviser
 
