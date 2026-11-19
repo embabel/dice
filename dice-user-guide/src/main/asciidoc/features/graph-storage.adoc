@@ -39,8 +39,12 @@ sees them when it decides. <<how-to-choose-a-backend>> walks through it.
 
 With several data sources, set `embabel.dice.store.datasource` to the one DICE should use. If there
 are several and none is named, or the name isn't one Drivine has, startup stops and lists the
-configured ones. A `PersistenceManager` or `StatelessGraphObjectManager` bean of your own replaces the
-one DICE would build.
+configured ones.
+
+DICE builds the `PersistenceManager` and `StatelessGraphObjectManager` as a pair, and only when your
+application defines neither. Define both yourself, on the same database, and DICE builds nothing and
+uses yours. Define only one and startup fails, because DICE would otherwise save through one database
+and read back through another; the message asks you to define both or neither.
 
 If your own auto-configuration registers the `PersistenceManager` after DICE's, DICE can't see it in
 time. Rather than run with any of its stores in memory while Drivine is configured, startup fails and

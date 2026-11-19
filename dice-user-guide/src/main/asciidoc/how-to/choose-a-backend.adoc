@@ -140,8 +140,10 @@ See <<features-graph-storage>> for the full activation detail.
 ==== Using your own Drivine beans
 
 You only need this when DICE's choice of Drivine beans doesn't suit you, for example when the
-`PersistenceManager` should come from somewhere other than one of Drivine's factories. Define either
-bean yourself and DICE uses yours instead of building its own:
+`PersistenceManager` should come from somewhere other than one of Drivine's factories. Define both
+beans yourself, on the same database, and DICE uses them instead of building its own. Define only one
+and startup fails: DICE never builds one manager to sit beside yours, because the two could end up on
+different databases.
 
 [source,java]
 ----
