@@ -585,6 +585,21 @@ public final class com/embabel/dice/governance/TypeRenameDto {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class com/embabel/dice/projection/prolog/PrologEvidenceProvider : com/embabel/dice/evidence/EvidenceProvider {
+	public static final field Companion Lcom/embabel/dice/projection/prolog/PrologEvidenceProvider$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/projection/prolog/PrologProjectionResult;Lcom/embabel/dice/projection/prolog/PrologSchema;Ljava/util/List;Lcom/embabel/dice/proposition/PropositionStore;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun conclusions (Lcom/embabel/dice/evidence/RuleGoal;)Ljava/util/List;
+	public fun evidence (Lcom/embabel/dice/evidence/RuleGoal;)Lcom/embabel/dice/evidence/Evidence;
+	public synthetic fun evidence (Ljava/lang/Object;)Lcom/embabel/dice/evidence/Evidence;
+	public static final fun of (Lcom/embabel/dice/projection/prolog/PrologProjectionResult;Lcom/embabel/dice/projection/prolog/PrologSchema;)Lcom/embabel/dice/projection/prolog/PrologEvidenceProvider;
+	public final fun withDeclaration (Lcom/embabel/dice/evidence/RuleDeclaration;)Lcom/embabel/dice/projection/prolog/PrologEvidenceProvider;
+	public final fun withRepository (Lcom/embabel/dice/proposition/PropositionStore;)Lcom/embabel/dice/projection/prolog/PrologEvidenceProvider;
+}
+
+public final class com/embabel/dice/projection/prolog/PrologEvidenceProvider$Companion {
+	public final fun of (Lcom/embabel/dice/projection/prolog/PrologProjectionResult;Lcom/embabel/dice/projection/prolog/PrologSchema;)Lcom/embabel/dice/projection/prolog/PrologEvidenceProvider;
+}
+
 public abstract interface class com/embabel/dice/projection/prolog/PrologProjector : com/embabel/dice/proposition/Projector {
 	public abstract fun project (Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/agent/core/DataDictionary;)Lcom/embabel/dice/proposition/ProjectionResult;
 	public abstract fun projectAll (Ljava/util/List;)Lcom/embabel/dice/projection/prolog/PrologProjectionResult;
