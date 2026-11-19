@@ -1,21 +1,23 @@
 [[how-to-choose-a-backend]]
 === Choose a storage backend
 
-*Prerequisites*: `dice-storage-autoconfigure` on the classpath.
+*Prerequisites*: a DICE starter on the classpath. `dice-starter` gives you the in-memory stores and
+`dice-starter-neo4j` gives you the Drivine stores on Neo4j. Both bring in `dice-storage-autoconfigure`.
 
 You don't choose the backend with a property. It follows from what your application sets up: when
 Drivine is configured, DICE uses its Drivine stores, and when it isn't, DICE uses its in-memory
 stores. The code you write against `PropositionRepository` is the same either way.
 
-Drivine counts as configured when your application has a Drivine `PersistenceManager` bean. Which
-database that bean talks to is decided by Drivine's own configuration, not by DICE.
+Drivine counts as configured when your application has a Drivine `PersistenceManager` bean. You
+don't write that bean yourself: once Drivine has a data source, DICE builds it for you. Which
+database it talks to is decided by Drivine's own configuration, not by DICE.
 
 [cols="1,2,3", options="header"]
 |===
 | Backend | How you get it | Choose it when
 
 | In-memory
-| The default. Leave Drivine unconfigured.
+| The default. Add `dice-starter` and leave Drivine without a data source.
 | Development, tests, single-process applications, and anything where losing the store on restart is
   acceptable. Needs an `Ai` bean for embeddings.
 
@@ -24,20 +26,46 @@ database that bean talks to is decided by Drivine's own configuration, not by DI
 | You want survival across restarts with no infrastructure at all. Not for concurrent writers.
 
 | Graph (Drivine/Neo4j)
-| Configure Drivine: a data source, plus a `PersistenceManager` and a `StatelessGraphObjectManager`
-  bean for it.
+| Add `dice-starter-neo4j` and one entry under `database.datasources`.
 | Production. Durable, concurrent, with native graph traversal, a vector index, and decay applied in
   the database.
 |===
 
+SQLite will get a starter of its own in a later release.
+
 ==== Switching to the graph backend
 
-Drivine's Spring Boot starter (`drivine4j-spring-boot-starter`) already comes in with
-`dice-storage-autoconfigure`, so there is nothing to add to your build. What switches DICE over is
-giving Drivine a connection.
+First, import the `dice-dependencies` BOM so every DICE module and Drivine stay on versions that
+work together, then swap `dice-starter` for `dice-starter-neo4j`. The BOM supplies the versions, so
+the starter needs none:
 
-First, declare a data source. This is Drivine's configuration, and its `type` and connection
-settings pick the database:
+[source,xml]
+----
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-dependencies</artifactId>
+            <version>${dice.version}</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
+<dependencies>
+    <dependency>
+        <groupId>com.embabel.dice</groupId>
+        <artifactId>dice-starter-neo4j</artifactId>
+    </dependency>
+</dependencies>
+----
+
+The Neo4j starter brings in `dice-storage` and Drivine's Spring Boot starter, which comes with the
+Neo4j driver. The BOM doesn't manage Spring Boot itself; that stays with your application.
+
+Then declare a data source. This is Drivine's configuration, and its `type` and connection settings
+pick the database:
 
 [source,yaml]
 ----
@@ -52,32 +80,26 @@ database:
       database-name: neo4j
 ----
 
-Then expose a `PersistenceManager` and a `StatelessGraphObjectManager` for that data source. Drivine's
-starter registers the factories they come from once a data source exists:
-
-[source,java]
-----
-@Configuration
-public class DrivineConfig {
-
-    @Bean
-    PersistenceManager persistenceManager(PersistenceManagerFactory factory) {
-        return factory.get("neo");
-    }
-
-    @Bean
-    StatelessGraphObjectManager graphObjectManager(GraphObjectManagerFactory factory) {
-        return factory.stateless("neo");
-    }
-}
-----
-
-Nothing else in your application changes. Once the `PersistenceManager` bean exists, the
-auto-configuration swaps `PropositionRepository`, `ChunkHistoryStore`, `DecayManager`,
+That's all. You define no beans. Drivine builds its factories from the data source, and DICE builds
+the `PersistenceManager` and `StatelessGraphObjectManager` from them. With that `PersistenceManager`
+in place, the auto-configuration swaps `PropositionRepository`, `ChunkHistoryStore`, `DecayManager`,
 `ProjectionRecordStore` and `CollectorRecordStore` for their Drivine equivalents, and registers the
 schema catalogues that create the constraints and, when an embedding model is available, the vector
-index. See <<features-vector-index>> for models added after startup. Take the Drivine beans away and
+index. See <<features-vector-index>> for models added after startup. Take the data source away and
 DICE goes back to its in-memory stores.
+
+If you have several data sources, tell DICE which one to keep its stores in:
+
+[source,yaml]
+----
+embabel:
+  dice:
+    store:
+      datasource: neo
+----
+
+With several data sources and none named, or with a name Drivine doesn't have, startup stops and
+lists the data sources that are configured. With only one, you can leave the property out.
 
 If your configuration still sets `embabel.dice.store.type`, you can remove it. It is deprecated, and
 <<reference-configuration-properties>> lists what each value still does.
@@ -114,6 +136,29 @@ See <<features-graph-storage>> for the full activation detail.
 | None
 | A Neo4j instance
 |===
+
+==== Using your own Drivine beans
+
+You only need this when DICE's choice of Drivine beans doesn't suit you, for example when the
+`PersistenceManager` should come from somewhere other than one of Drivine's factories. Define either
+bean yourself and DICE uses yours instead of building its own:
+
+[source,java]
+----
+@Configuration
+public class DrivineConfig {
+
+    @Bean
+    PersistenceManager persistenceManager(PersistenceManagerFactory factory) {
+        return factory.get("neo");
+    }
+
+    @Bean
+    StatelessGraphObjectManager graphObjectManager(GraphObjectManagerFactory factory) {
+        return factory.stateless("neo");
+    }
+}
+----
 
 ==== Overriding the choice entirely
 

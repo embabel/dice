@@ -2,10 +2,11 @@
 === Graph-backed storage
 
 *Activation*: Drivine is configured, meaning the application has a Drivine `PersistenceManager` bean.
-No DICE property is needed.
+With `dice-starter-neo4j` and one data source, DICE builds that bean for you. No DICE property is
+needed.
 
-*Availability*: `dice-storage` and `dice-storage-autoconfigure`, from DICE {dice-version}. Costs a
-Neo4j instance.
+*Availability*: `dice-starter-neo4j`, which brings in `dice-storage`, `dice-storage-autoconfigure` and
+Drivine, from DICE {dice-version}. Costs a Neo4j instance.
 
 ==== When to use it
 
@@ -18,7 +19,8 @@ Neo4j.
 
 ==== Impact
 
-* *Infrastructure*: a Neo4j instance, reached through Drivine (`drivine4j-spring-boot-starter`).
+* *Infrastructure*: a Neo4j instance, reached through Drivine (`drivine4j-spring-boot-starter`, which
+  `dice-starter-neo4j` brings in).
 * *Latency*: network round trips replace map lookups. Traversals get much faster; single-id lookups
   get slower.
 * *Memory*: propositions no longer live in your heap.
@@ -28,15 +30,24 @@ Neo4j.
 
 ==== How to enable
 
-Configure Drivine and DICE picks it up. Give Drivine a data source under `database.datasources` (its
-`type` and connection settings choose the database), then expose a `PersistenceManager` and a
-`StatelessGraphObjectManager` bean for it from Drivine's factories. <<how-to-choose-a-backend>> walks
-through both. DICE's auto-configuration runs after Drivine's, so it sees those beans when it decides.
+Add `dice-starter-neo4j`, importing the `dice-dependencies` BOM for the versions, and give Drivine
+one data source under `database.datasources` (its `type` and connection settings choose the
+database). You define no beans. Drivine builds its factories from the data source, and DICE builds
+the `PersistenceManager` and `StatelessGraphObjectManager` from those factories, after Drivine's
+auto-configuration and before its own storage auto-configuration, so the storage auto-configuration
+sees them when it decides. <<how-to-choose-a-backend>> walks through it.
+
+With several data sources, set `embabel.dice.store.datasource` to the one DICE should use. If there
+are several and none is named, or the name isn't one Drivine has, startup stops and lists the
+configured ones. A `PersistenceManager` or `StatelessGraphObjectManager` bean of your own replaces the
+one DICE would build.
 
 If your own auto-configuration registers the `PersistenceManager` after DICE's, DICE can't see it in
-time. Rather than run on in-memory stores while Drivine sits unused, startup fails and says so. To fix
-it, order your auto-configuration before `DiceStorageAutoConfiguration`, or define the store beans
-yourself.
+time. Rather than run with any of its stores in memory while Drivine is configured, startup fails and
+names the stores that were left in memory. That covers every DICE store with a Drivine version, not
+only the proposition store. You can still swap any one store by defining your own bean of that type;
+the check leaves your bean alone, and the rest must still follow Drivine. To fix the failure, order
+your auto-configuration before `DiceStorageAutoConfiguration`, or define the store beans yourself.
 
 Without a `PersistenceManager` bean, DICE uses its in-memory stores. The deprecated
 `embabel.dice.store.type` property can still force `in-memory` while Drivine is present; see

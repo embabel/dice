@@ -1,12 +1,30 @@
 [[overview-modules]]
 === Modules
 
-DICE publishes six consumer-facing artifacts under the `com.embabel.dice` group. There is no
-aggregator starter: pick the modules you need.
+DICE publishes its artifacts under the `com.embabel.dice` group. Most applications need just a BOM and
+one starter, and define no beans of their own.
 
 [cols="1,2,1", options="header"]
 |===
 | Artifact | What it gives you | Pull it in when
+
+| `dice-dependencies`
+| A BOM that lines up every published DICE module and the Drivine version DICE is built against. It
+  doesn't manage Spring Boot.
+| Always. Import it in `dependencyManagement` and leave the versions off the DICE dependencies.
+
+| `dice-starter`
+| `dice` and `dice-storage-autoconfigure`, wired for the in-memory stores.
+| You want DICE on Spring Boot without a database. This is the base of the other starters.
+
+| `dice-starter-neo4j`
+| `dice-starter` plus `dice-storage` and Drivine's Spring Boot starter, which brings the Neo4j driver.
+  Add one entry under `database.datasources` and DICE uses its Drivine stores.
+| You want propositions in Neo4j.
+
+| `dice-starter-mcp`
+| `dice-starter` plus `dice-mcp-autoconfigure` and the agent framework's MCP server module.
+| You want DICE's tools exported over MCP.
 
 | `dice`
 | The whole domain: the `Proposition` model, the `PropositionStore` and `PropositionRepository`
@@ -20,9 +38,10 @@ aggregator starter: pick the modules you need.
 | You want propositions in Neo4j rather than in memory.
 
 | `dice-storage-autoconfigure`
-| Spring Boot auto-configuration: backend selection from `embabel.dice.store.type`, the scheduled
-  decay tick, and the multi-signal duplicate collector.
-| You are on Spring Boot and want beans wired for you. This is the usual entry point.
+| Spring Boot auto-configuration: the Drivine stores when Drivine is configured and the in-memory
+  ones otherwise, Drivine's `PersistenceManager` and `StatelessGraphObjectManager` built from its data
+  source, the scheduled decay tick, and the multi-signal duplicate collector.
+| You are on Spring Boot and assembling the modules yourself. The starters bring it in for you.
 
 | `dice-report`
 | Output projectors over propositions: rationale (why a fact is believed, with its evidence),
@@ -34,12 +53,24 @@ aggregator starter: pick the modules you need.
   not extracted twice.
 | You are feeding files or documents in, rather than conversation turns.
 
+| `dice-metamodel`
+| Schema governance for DICE knowledge graphs: content-hash stamping, the declared-schema contract,
+  diffing, drift checking, and non-destructive quarantine.
+| You want to check a graph's schema against what you declared. `dice-storage-autoconfigure` brings
+  it in.
+
+| `dice-mcp-autoconfigure`
+| Spring Boot auto-configuration that exports DICE tools over MCP through the agent framework.
+| You are assembling the modules yourself. `dice-starter-mcp` brings it in for you.
+
 | `dice-store-conformance`
 | Abstract JUnit suites, one for each store interface, that a backend's tests extend. See
   <<how-to-verify-a-backend>>.
 | You are writing a storage backend and want its tests to check the documented behaviour of each
   store interface. Add it at test scope.
 |===
+
+A SQLite starter will follow in a later release.
 
 `dice-integration-tests` is test-only: it holds the cross-feature end-to-end harness and is not
 published for consumption.
