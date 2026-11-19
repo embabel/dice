@@ -23,7 +23,7 @@ Then start the server:
 ./mvnw -B -f examples/pom.xml -pl examples-mcp-desktop spring-boot:run
 ```
 
-The server listens at `http://localhost:8080/mcp` and keeps running until you stop it. It binds
+The server listens at `http://127.0.0.1:8080/mcp` and keeps running until you stop it. It binds
 `127.0.0.1` by default, so only clients on the same machine can reach it.
 
 To turn on `dice_store`, start it with writes enabled:
@@ -44,14 +44,14 @@ endpoint with `mcp-remote`. Merge it into your client's MCP server settings:
   "mcpServers": {
     "dice-memory": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://localhost:8080/mcp"]
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:8080/mcp"]
     }
   }
 }
 ```
 
 A client that speaks streamable HTTP itself needs no bridge. Point it at
-`http://localhost:8080/mcp` directly.
+`http://127.0.0.1:8080/mcp` directly.
 
 Ask the client what DICE remembers about Acme in the context `demo`, and it should call
 `dice_recall` or `dice_list` and answer with the three facts.
