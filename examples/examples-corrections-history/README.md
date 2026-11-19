@@ -43,3 +43,21 @@ to keep any package added under it free of dependency cycles.
 | Test | Behaviour |
 |---|---|
 | `ModularityTests.verifiesModuleStructure` | The package structure has no dependency cycle. |
+| `RevisionStoryTests.storesTheFirstClaimAsNew` | Turn 1, chat says Acme is on the Pro plan. Nothing similar is stored, so the fact is new. |
+| `RevisionStoryTests.mergesAWordForWordRepeatWithoutAskingTheModel` | Turn 2, chat repeats it word for word. The stored fact is merged, gains the second message as grounding, and the model is never asked to classify it. |
+| `RevisionStoryTests.reinforcesTheStoredClaimWhenBillingBacksItUp` | Turn 3, billing says Acme pays for the Pro plan. The stored fact is reinforced and keeps its own wording, with the invoice added to its grounding. |
+| `RevisionStoryTests.storesABroaderClaimAsAGeneralizationOfTheStoredOne` | Turn 4, billing says Acme is a paying customer. The fact is stored as a generalization of the Pro plan fact. |
+| `RevisionStoryTests.storesAClaimOnAnotherTopicAsNew` | Turn 5, chat says invoices are paid annually. It is on another topic, so it is new. |
+| `RevisionStoryTests.callsAConflictOnAFactThatDoesNotChangeAContradiction` | Turn 6, chat says invoices are paid monthly. Billing frequency carries no changing predicate, so this is a contradiction and the annual fact is marked `CONTRADICTED`. |
+| `RevisionStoryTests.callsANewerConflictOnTheCustomersPlanTheWorldMovingOn` | Turn 7, billing says Acme moved to the Basic plan. The plan is a `status` fact and the claim is newer, so the conflict is the world moving on, and the Pro plan fact is marked `CONTRADICTED`. |
+| `RevisionStoryTests.keepsTheCorrectedClaimsMarkedContradictedRatherThanDeletingThem` | After the story the store holds all five facts. The Pro plan and annual facts are `CONTRADICTED` and kept, not deleted. |
+| `HistoryAndTrustTests.defaultRecallLeavesOutTheContradictedClaims` | Default recall reads `ACTIVE` facts only, as DICE's `Memory` does, so it returns the monthly, Basic plan and paying customer facts. The `CONTRADICTED` facts are hidden from default recall. |
+| `HistoryAndTrustTests.aHistoryQueryAlsoReturnsTheContradictedClaims` | A query with no status filter is the history view. It also returns the Pro plan and annual facts, marked `CONTRADICTED`. |
+| `HistoryAndTrustTests.aFactOnlyChatSaidIsTrustedAsChat` | The annual fact came only from chat, so its `dice.trust.score` is 0.6, the default weight for `DERIVED`. |
+| `HistoryAndTrustTests.aFactOnlyBillingSaidIsTrustedAsBilling` | The paying customer fact came only from billing, so its `dice.trust.score` is 0.9, the default weight for `PRIMARY`. |
+| `HistoryAndTrustTests.aChatFactThatBillingBackedUpIsTrustedAsBilling` | The Pro plan fact was first said in chat. Billing reinforced it, its provenance gained a billing entry, and its `dice.trust.score` is 0.9. |
+| `HistoryAndTrustTests.trustRanksTwoFactsAndTheAppPicksOne` | Trust ranks, app code picks. A helper in the test picks the Pro plan fact over the annual fact because its score is higher. Choosing is the app's job, not DICE's. |
+
+DICE deliberately leaves a contradiction unscored. The monthly and Basic plan facts arrived as
+contradictions, so they carry no trust score and the tests do not read one. The facts they
+contradicted keep the score they had before.
