@@ -61,7 +61,7 @@ class WritableServerTests {
     @BeforeAll
     void connect() {
         client = McpClient
-                .sync(HttpClientStreamableHttpTransport.builder("http://localhost:" + port + "/mcp").build())
+                .sync(HttpClientStreamableHttpTransport.builder("http://127.0.0.1:" + port + "/mcp").build())
                 .requestTimeout(Duration.ofSeconds(30))
                 .build();
         handshake = client.initialize();
