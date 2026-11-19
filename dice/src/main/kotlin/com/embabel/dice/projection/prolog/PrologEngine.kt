@@ -154,6 +154,28 @@ class PrologEngine private constructor(
             .mapNotNull { it.bindings[variableName] }
     }
 
+    /**
+     * Solves a goal that is already a parsed term and returns every answer's bindings as terms, keyed by the
+     * goal's own variables, so callers can fill in the goal without going through text. Every answer is worked
+     * out before this returns. Empty when nothing is found or the solve fails.
+     *
+     * The engine leaves anonymous `_` variables out of the bindings, so give them names first if their values
+     * are wanted.
+     *
+     * @param goal the parsed goal
+     * @return one set of bindings per answer, in the order Prolog finds them
+     */
+    internal fun solveTerm(goal: Struct): List<Substitution.Unifier> =
+        try {
+            solver.solve(goal)
+                .filterIsInstance<Solution.Yes>()
+                .map { it.substitution }
+                .toList()
+        } catch (e: Exception) {
+            logger.error("Error executing query: {}", goal, e)
+            emptyList()
+        }
+
     private fun extractBindings(substitution: Substitution): Map<String, String> {
         if (substitution is Substitution.Unifier) {
             return substitution.entries

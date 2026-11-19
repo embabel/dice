@@ -504,6 +504,80 @@ class PrologEvidenceProviderTest {
     }
 
     @Nested
+    inner class StructuralTerms {
+
+        // In a rule, -N with N unbound is the compound -(N), so this proves negated(alice, -(5)), never -5.
+        private val negatedRule = "negated(X, -N) :- expert_in(X, _), N = 5."
+
+        private fun provable(conclusion: String, rules: String) =
+            PrologEngine.fromProjection(projection(baseFacts), PrologSchema.withRules(rules)).query(conclusion)
+
+        @Test
+        fun `a number filled in under a prefix minus keeps the compound the rule proved`() {
+            val exact = RuleDeclaration.of("negated(X, -N)").withInput("expert_in(X, T)").withGuard("N = 5")
+
+            val derived = only(
+                provider(rules = negatedRule).withDeclaration(exact).conclusions(RuleGoal.of("negated('alice',-N)"))
+            )
+
+            assertTrue(PrologEngine.fromTheory("").query("(${derived.conclusion}) == negated(alice, -(5))"))
+            assertTrue(provable(derived.conclusion, negatedRule), "${derived.conclusion} should be provable")
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+
+        @Test
+        fun `a generic declaration never gives a conclusion the rules can't prove`() {
+            val generic = RuleDeclaration.of("negated(X, Y)").withInput("expert_in(X, T)")
+
+            val conclusions = provider(rules = negatedRule).withDeclaration(generic)
+                .conclusions(RuleGoal.of("negated('alice',-N)"))
+
+            assertEquals(1, conclusions.size)
+            conclusions.forEach {
+                assertTrue(provable(it.conclusion, negatedRule), "${it.conclusion} should be provable")
+            }
+        }
+
+        @Test
+        fun `an input argument written in brackets cites the projected fact`() {
+            val rules = "knows_kotlin(X) :- expert_in(X, kotlin)."
+            val knows = RuleDeclaration.of("knows_kotlin(X)").withInput("expert_in(X, (kotlin))")
+
+            val derived = only(provider(rules = rules).withDeclaration(knows).conclusions(RuleGoal.of("knows_kotlin(X)")))
+
+            assertEquals("knows_kotlin('bob')", derived.conclusion)
+            assertEquals(listOf("prop-4"), derived.inputIds)
+        }
+
+        @Test
+        fun `an input argument in double quotes is read as the atom, so it cites the projected fact`() {
+            // The engine's parser reads "kotlin" as the atom kotlin, not a string or a code list.
+            val rules = "knows_kotlin(X) :- expert_in(X, kotlin)."
+            val knows = RuleDeclaration.of("knows_kotlin(X)").withInput("expert_in(X, \"kotlin\")")
+
+            val derived = only(provider(rules = rules).withDeclaration(knows).conclusions(RuleGoal.of("knows_kotlin(X)")))
+
+            assertEquals("knows_kotlin('bob')", derived.conclusion)
+            assertEquals(listOf("prop-4"), derived.inputIds)
+        }
+
+        @Test
+        fun `a goal holding a character code selects the declaration with its real arity`() {
+            // 0'A is the character code 65; its apostrophe doesn't open a quoted atom.
+            val rules = "help(P, C, T) :- expert_in(P, T), integer(C)."
+            val help = RuleDeclaration.of("help(P, C, T)").withInput("expert_in(P, T)")
+
+            val derived = only(
+                provider(rules = rules).withDeclaration(help).conclusions(RuleGoal.of("help('alice', 0'A, T)"))
+            )
+
+            assertTrue(PrologEngine.fromTheory("").query("(${derived.conclusion}) == help(alice, 65, kubernetes)"))
+            assertEquals("help/3", derived.rule.ruleId)
+            assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+    }
+
+    @Nested
     inner class AtomOnlyCitations {
 
         // tagged/1 reads value/1, which the schema states for itself next to the projected value facts.

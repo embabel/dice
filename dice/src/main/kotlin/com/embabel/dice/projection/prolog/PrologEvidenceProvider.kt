@@ -24,7 +24,19 @@ import com.embabel.dice.evidence.RuleGoal
 import com.embabel.dice.evidence.Searched
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStore
+import it.unibo.tuprolog.core.Atom
+import it.unibo.tuprolog.core.Cons
+import it.unibo.tuprolog.core.EmptyList
+import it.unibo.tuprolog.core.Integer
+import it.unibo.tuprolog.core.Real
+import it.unibo.tuprolog.core.Struct
+import it.unibo.tuprolog.core.Substitution
+import it.unibo.tuprolog.core.Term
+import it.unibo.tuprolog.core.Tuple
+import it.unibo.tuprolog.core.Var
+import it.unibo.tuprolog.core.parsing.parse
 import org.jetbrains.annotations.ApiStatus
+import java.math.BigDecimal
 import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
@@ -52,35 +64,38 @@ import java.time.ZoneOffset
  * and arity returns nothing without running a query, but a declared rule that loops would loop here too, because
  * every answer is worked out before the goal's limit is applied. Only ask declared rules that don't recurse.
  *
- * **Answers go back in as real terms.** Each answer's values are written into the goal and the declared clause as
- * text Prolog reads back as the same term: integers bare, atoms in single quotes exactly as they are, case included,
- * and compound terms as their term text. Prolog tells the provider which kind each value is, so an atom that looks
- * like a number, such as `'2024'`, stays an atom and a whole real such as `2.0` stays a real. The engine's own
- * display of a real can't always be read back (it shows 0.0000001 as `1E-7`), so every real, on its own or inside a
- * compound, is written with a digit on both sides of the decimal point, such as `1.0e-7`. A compound that isn't
- * closed by its own brackets, such as `a :- b`, is wrapped in parentheses, and a negative number written straight
- * after an operator gets a space, so the goal around it can't change how it reads. A lone `_` in a declared input
- * or guard gets its own variable name before the clause runs, so the fact it matched is known and only that fact
- * is cited.
+ * **Answers stay terms.** The goal and each declaration's head, inputs and guards are parsed into Prolog terms once,
+ * and every answer is put into them as terms, never pasted in as text, so a value always means exactly what Prolog
+ * bound. Declarations are picked by the parsed goal's name and arity. A lone `_`, in the goal or in a declared input
+ * or guard, gets a variable of its own so its value comes back: answers that differ only there stay separate
+ * conclusions, and an input with a `_` cites only the fact it matched.
+ *
+ * **Conclusion text reads back as the proved term.** The conclusion is the goal as written with each variable's
+ * value filled in: atoms in single quotes exactly as they are, case included, integers bare, a real always with a
+ * digit on both sides of the decimal point (such as `1.0e-7`), and compound terms written by name, such as
+ * `pair(alice, kubernetes)` or `'-'(5)`. The provider reads that text back and keeps it only when Prolog reads it as
+ * the very term the answer proved. When it doesn't, for example `negated('alice', -N)` with `N` as 5 would read as
+ * the number -5 rather than `-(5)`, the conclusion is the whole filled-in goal written out term by term instead, such
+ * as `negated('alice', '-'(5))`. An answer whose text can't be read back either way is left out.
  *
  * **Citations need atom arguments.** Facts are written to Prolog through [PrologFact.quoteAtom], which lower-cases
  * and replaces anything outside `a-z`, `0-9` and `_`, so every projected argument is an atom in that form. An input
- * cites a recorded fact only when each of its arguments is an atom spelled exactly as that normalised form: a number
- * such as `2024`, a compound term such as `f(a)`, or an atom such as `'Foo Bar'` that only normalises to `foo_bar`
- * cites nothing, because the proof can't have used the projected fact. Two recorded facts whose arguments only differ
- * in case or punctuation, such as `Alice-Smith` and `alice smith`, are the same projected fact and both are cited.
- * A quoted atom is compared by the text it stands for. Only the escapes `\\` and `\'` (and a doubled quote) are
- * read; an atom written with any other escape, such as `'a\nb'` or `'\x61\'`, cites nothing at all. That is safe
- * because a projected atom only ever holds `a-z`, `0-9` and `_`, and it is simpler to trust than decoding every
- * escape the engine accepts.
+ * cites a recorded fact only when each of its arguments, as Prolog parsed and proved it, is an atom equal to that
+ * normalised form. How a declaration spells the atom doesn't matter: `kotlin`, `'kotlin'`, `(kotlin)` and
+ * `"kotlin"` (which this engine reads as an atom) all cite the same fact. A number such as `2024`, a compound term
+ * such as `f(a)`, or an atom such as `'Foo Bar'` that only normalises to `foo_bar` cites nothing, because the proof
+ * can't have used the projected fact. Two recorded facts whose arguments only differ in case or punctuation, such as
+ * `Alice-Smith` and `alice smith`, are the same projected fact and both are cited. One kind of spelling never cites:
+ * a declared input written with a backslash escape other than `\\` or `\'`, such as `value('\x61\b')`, finds no
+ * fact even though Prolog reads it as `value(ab)`, so a citation never rests on an escape-built atom. Values the proof
+ * binds aren't affected by this, since they come from Prolog, not from the declaration's text.
  *
  * **Confidence** is the weakest input: each matched fact counts at the highest decayed confidence among its source
  * propositions found in the repository (an invalidated one counts at 0.0), or its own confidence when none is found
  * or no repository is set. With a repository the found propositions are also attached as the conclusion's inputs.
  *
- * Two answers with the same filled-in goal give one conclusion, citing the first proof found: declarations in the
- * order added, answers in Prolog's order. A lone `_` in the goal is filled in like any other variable, so answers
- * that differ only there stay separate conclusions. The goal's context is only used to name the search in a
+ * Two answers whose filled-in goals are the same term give one conclusion, citing the first proof found: declarations
+ * in the order added, answers in Prolog's order. The goal's context is only used to name the search in a
  * [Evidence.Missing]; the projection is taken to hold the facts for that context already.
  *
  * Not provable is not false. A [Evidence.Missing] only says the recorded facts and declared rules don't reach the
@@ -117,8 +132,11 @@ class PrologEvidenceProvider private constructor(
     private val theoryHash: String = sha256Hex(theory).take(16)
     private val engine: PrologEngine = PrologEngine.fromTheory(theory)
 
-    // Facts that can be cited, keyed by predicate and each argument's atom text as the projection wrote it to
-    // Prolog. Facts with no usable ids are left out.
+    // Each declaration parsed once, in the order added. One that Prolog can't parse can never trace anything.
+    private val parsedDeclarations: List<ParsedDeclaration> = this.declarations.mapNotNull(::parseDeclaration)
+
+    // Facts that can be cited, keyed by predicate and each argument's atom as the projection wrote it to Prolog.
+    // Facts with no usable ids are left out.
     private val citableFacts: Map<FactKey, List<CitableFact>> = projection.facts
         .mapNotNull { fact ->
             val ids = fact.sourcePropositionIds.filter { it.isNotBlank() }
@@ -165,94 +183,62 @@ class PrologEvidenceProvider private constructor(
      * @return the conclusions, one per distinct filled-in goal
      */
     fun conclusions(goal: RuleGoal): List<Evidence.Derived> {
-        val declared = declarations.filter { it.predicate == goal.predicate && it.arity == goal.arity }
+        val parsed = parseTerm(goal.goal) as? Struct ?: return emptyList()
+        val declared = parsedDeclarations.filter { it.head.functor == parsed.functor && it.head.arity == parsed.arity }
         if (declared.isEmpty()) return emptyList()
 
-        val goalVariables = variablesIn(goal.goal)
-        // Each lone _ in the goal gets a fresh name too, so its value comes back and is filled in. Left as _, two
-        // answers that differ only there would look like the same goal and one of them would be dropped.
-        val anonymous = freshNames("Anon_", goalVariables.toSet()).iterator()
-        val namedGoal = rewriteVariables(goal.goal) { if (it == "_") anonymous.next() else null }
-        val namedVariables = variablesIn(namedGoal)
-        // The engine hands back every value as text, so the goal also asks Prolog what kind each value is.
-        val kindOf = namedVariables.asSequence().zip(freshNames("Kind_", namedVariables.toSet())).toMap()
-        val probedGoal = (listOf("($namedGoal)") + kindOf.map { (name, kind) -> kindProbe(name, kind) })
-            .joinToString(", ")
+        val goalVariables = parsed.variables.filterNot { it.isAnonymous }.distinct().toList()
+        // The engine leaves a lone _ out of its answers, so each one gets a named variable of its own. Left as _,
+        // two answers that differ only there would fill in to the same goal and one of them would be dropped.
+        val anonymous = parsed.variables.filter { it.isAnonymous }.toList()
+        val named = anonymous.map { Var.of(ANONYMOUS_NAME) }
+        val namedGoal = parsed.apply(Substitution.of(anonymous.zip(named).toMap())) as Struct
 
         val seen = HashSet<String>()
         val conclusions = ArrayList<Evidence.Derived>()
-        for (answer in engine.queryAll(probedGoal)) {
+        for (answer in engine.solveTerm(namedGoal)) {
             if (conclusions.size >= goal.limit) break
-            if (!answer.success) continue
-            // A value the provider can't write so it reads back the same would ground the wrong goal, so the
-            // answer is left out instead.
-            var unwritable = false
-            val groundGoal = rewriteVariables(namedGoal) { name ->
-                val value = answer.bindings[name] ?: return@rewriteVariables null
-                termText(value, kindOf[name]?.let { answer.bindings[it] }).also { if (it == null) unwritable = true }
-            }
-            if (unwritable) continue
-            if (!seen.add(groundGoal)) continue
-            val facts = declared.firstNotNullOfOrNull { trace(it, groundGoal) } ?: continue
-            conclusions += derive(goal, groundGoal, goalVariables, answer.bindings, facts)
+            val filled = namedGoal.apply(answer) as Struct
+            if (!seen.add(termKey(filled))) continue
+            val facts = declared.firstNotNullOfOrNull { trace(it, filled) } ?: continue
+            val values = goalVariables.associate { it.name to it.apply(answer) }
+            // The text shown for an answer that can't be written so it reads back would name another term.
+            val text = conclusionText(goal.goal, values, named.map { it.apply(answer) }, filled) ?: continue
+            conclusions += derive(goal, parsed, text, values, facts)
         }
         return conclusions
     }
 
-    // Runs the declared clause against one ground answer and returns the recorded facts behind it, or null when
+    // Runs the declared clause against one filled-in answer and returns the recorded facts behind it, or null when
     // the clause doesn't prove it or some input has no citable fact.
-    private fun trace(declaration: RuleDeclaration, groundGoal: String): List<CitableFact>? {
-        // Each lone _ gets a fresh name, unused anywhere in the query, so its value comes back and the exact fact
-        // can be cited instead of the anonymous variable matching nothing.
-        val taken = (listOf(declaration.head, groundGoal) + declaration.inputs + declaration.guards)
-            .flatMap(::variablesIn).toSet()
-        val fresh = freshNames("Anon_", taken).iterator()
-        val name: (String) -> String = { text -> rewriteVariables(text) { if (it == "_") fresh.next() else null } }
-        val inputs = declaration.inputs.map(name)
-        val guards = declaration.guards.map(name)
+    private fun trace(declaration: ParsedDeclaration, filled: Struct): List<CitableFact>? {
+        if (declaration.inputs.isEmpty()) return null
+        val query = Tuple.wrapIfNeeded(
+            listOf(Struct.of("=", declaration.head, filled)) + declaration.inputs.map { it.term } + declaration.guards
+        ) as Struct
 
-        // Recorded facts only hold atoms, so the query also asks what kind of value each input variable ends up
-        // with. A number or compound there means the proof used something other than a projected fact.
-        val named = (listOf(declaration.head, groundGoal) + inputs + guards).flatMap(::variablesIn).toSet()
-        val inputVariables = inputs.flatMap(::variablesIn).distinct()
-        val kindOf = inputVariables.asSequence().zip(freshNames("Kind_", named)).toMap()
-
-        val query = buildList {
-            add("${declaration.head} = ($groundGoal)")
-            addAll(inputs)
-            // Bracketed so a guard using ; or -> can't swallow the goals around it.
-            guards.forEach { add("($it)") }
-            kindOf.forEach { (variable, kind) -> add(kindProbe(variable, kind)) }
-        }.joinToString(", ")
-
-        for (proof in engine.queryAll(query)) {
-            if (!proof.success) continue
-            val perInput = inputs.map { input ->
-                val atomsOnly = variablesIn(input).all { proof.bindings[kindOf.getValue(it)] == "a" }
-                if (!atomsOnly) emptyList()
-                else citableFactsFor(rewriteVariables(input) { proof.bindings[it]?.let(::quotedAtom) })
+        for (proof in engine.solveTerm(query)) {
+            val perInput = declaration.inputs.map { input ->
+                if (input.citable) citableFactsFor(input.term.apply(proof)) else emptyList()
             }
             if (perInput.any { it.isEmpty() }) continue
-            val facts = perInput.flatten()
-            if (facts.isNotEmpty()) return facts
+            return perInput.flatten()
         }
         return null
     }
 
-    private fun citableFactsFor(groundInput: String): List<CitableFact> {
-        val open = groundInput.indexOf('(')
-        if (open < 0 || !groundInput.endsWith(")")) return emptyList()
-        val predicate = groundInput.substring(0, open).trim()
-        val args = splitArguments(groundInput.substring(open + 1, groundInput.length - 1)).map(::atomText)
-        if (args.any { it == null }) return emptyList()
-        return citableFacts[FactKey(predicate, args.filterNotNull())].orEmpty()
+    // Recorded facts only hold atoms, so an input whose arguments aren't all atoms can't be any of them.
+    private fun citableFactsFor(input: Term): List<CitableFact> {
+        val struct = input as? Struct ?: return emptyList()
+        val atoms = struct.args.map { (it as? Atom)?.value ?: return emptyList() }
+        return citableFacts[FactKey(struct.functor, atoms)].orEmpty()
     }
 
     private fun derive(
         goal: RuleGoal,
-        groundGoal: String,
-        goalVariables: List<String>,
-        bindings: Map<String, String>,
+        parsed: Struct,
+        conclusion: String,
+        values: Map<String, Term>,
         facts: List<CitableFact>,
     ): Evidence.Derived {
         val inputIds = facts.flatMap { it.ids }.distinct()
@@ -266,15 +252,18 @@ class PrologEvidenceProvider private constructor(
         }
 
         var rule = DerivationRule.of("prolog")
-            .withRuleId("${goal.predicate}/${goal.arity}")
+            .withRuleId("${parsed.functor}/${parsed.arity}")
             .withExpression(goal.goal)
-        goalVariables.forEach { name -> bindings[name]?.let { rule = rule.withParameter("binding.$name", it) } }
+        // A variable the answer left unbound has no value to report.
+        values.forEach { (name, value) ->
+            if (value !is Var) rule = rule.withParameter("binding.$name", bindingText(value))
+        }
         rule = rule.withParameter("theory", theoryHash)
 
         // Items worked out at the same instant as the confidence above, so the two agree.
         val converter = EvidenceConverter.create().withClock(Clock.fixed(now, ZoneOffset.UTC))
         val inputs = inputIds.mapNotNull { found[it] }.filter { it.text.isNotBlank() }.map(converter::item)
-        return Evidence.derived(groundGoal, confidence, rule, inputIds).withInputs(inputs)
+        return Evidence.derived(conclusion, confidence, rule, inputIds).withInputs(inputs)
     }
 
     private fun searchedFor(goal: RuleGoal): Searched =
@@ -283,6 +272,12 @@ class PrologEvidenceProvider private constructor(
     private data class FactKey(val predicate: String, val args: List<String>)
 
     private class CitableFact(val fact: PrologFact, val ids: List<String>)
+
+    // A declared input as a term, and whether its spelling lets it be cited at all (see the class docs).
+    private class DeclaredInput(val term: Term, val citable: Boolean)
+
+    // A declaration whose head, inputs and guards share one set of variables, as they would in a single clause.
+    private class ParsedDeclaration(val head: Struct, val inputs: List<DeclaredInput>, val guards: List<Term>)
 
     companion object {
 
@@ -297,222 +292,170 @@ class PrologEvidenceProvider private constructor(
         fun of(projection: PrologProjectionResult, schema: PrologSchema): PrologEvidenceProvider =
             PrologEvidenceProvider(projection, schema, emptyList(), null)
 
-        private val QUOTES = setOf('\'', '"', '`')
+        // The name given to each lone _. Every one is still its own variable; only the name is shared.
+        private const val ANONYMOUS_NAME = "Anon"
 
-        private fun isNameChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_'
+        private fun parseTerm(text: String): Term? =
+            try {
+                Term.parse(text)
+            } catch (e: Exception) {
+                null
+            }
 
-        private const val SYMBOL_CHARS = "+-*/\\^<>=~:.?@#&$"
+        // Parses each part of a declaration on its own, then joins them up so one name is one variable across the
+        // head, inputs and guards. Each lone _ becomes a named variable of its own, so its value comes back.
+        private fun parseDeclaration(declaration: RuleDeclaration): ParsedDeclaration? {
+            val shared = HashMap<String, Var>()
+            fun join(text: String): Term? {
+                val term = parseTerm(text) ?: return null
+                val renaming = term.variables.distinct().associateWith { variable ->
+                    if (variable.isAnonymous) Var.of(ANONYMOUS_NAME)
+                    else shared.getOrPut(variable.name) { Var.of(variable.name) }
+                }
+                return term.apply(Substitution.of(renaming))
+            }
+            val head = join(declaration.head) as? Struct ?: return null
+            val inputs = declaration.inputs.map { DeclaredInput(join(it) ?: return null, !hasOtherEscape(it)) }
+            val guards = declaration.guards.map { join(it) ?: return null }
+            return ParsedDeclaration(head, inputs, guards)
+        }
 
-        // Rewrites every variable in a Prolog term with the value [replace] gives it, leaving quoted text alone.
-        // A variable is a name starting with an upper-case letter or `_`, the anonymous `_` included. A value that
-        // starts with a symbol, such as -5, gets a space after another symbol, or `X - -5` would read as `X --5`.
-        private fun rewriteVariables(text: String, replace: (String) -> String?): String = buildString {
-            var quote: Char? = null
+        // True when [text] holds a backslash escape other than \\ or \'.
+        private fun hasOtherEscape(text: String): Boolean {
             var i = 0
             while (i < text.length) {
-                val c = text[i]
-                if (quote != null) {
-                    append(c)
-                    when {
-                        c == '\\' && i + 1 < text.length -> append(text[++i])
-                        c == quote && text.getOrNull(i + 1) == quote -> append(text[++i])
-                        c == quote -> quote = null
-                    }
-                    i++
-                } else if (c in QUOTES) {
-                    quote = c
-                    append(c)
-                    i++
-                } else if (isNameChar(c)) {
-                    var end = i
-                    while (end < text.length && isNameChar(text[end])) end++
-                    val name = text.substring(i, end)
-                    val isVariable = name[0].isUpperCase() || name[0] == '_'
-                    val written = if (isVariable) replace(name) ?: name else name
-                    if (written.first() in SYMBOL_CHARS && lastOrNull()?.let { it in SYMBOL_CHARS } == true) append(' ')
-                    append(written)
-                    i = end
-                } else {
-                    append(c)
-                    i++
-                }
+                if (text[i] != '\\') i++
+                else if (text.getOrNull(i + 1) == '\\' || text.getOrNull(i + 1) == '\'') i += 2
+                else return true
             }
+            return false
         }
 
-        // Asks Prolog what kind of value a variable holds: i for an integer, r for a real, a for an atom, and t for
-        // anything else.
-        private fun kindProbe(variable: String, kind: String): String =
-            "(integer($variable) -> $kind = i ; float($variable) -> $kind = r ; atom($variable) -> $kind = a ; $kind = t)"
-
-        // Writes one answer value back as text Prolog reads as the same term, or null when that can't be done. The
-        // engine's display text is only a starting point: an atom comes back bare and is quoted again (also when
-        // its kind is unknown), and numbers are checked and rewritten where the display wouldn't read back.
-        private fun termText(value: String, kind: String?): String? = when (kind) {
-            "i" -> value.toBigIntegerOrNull()?.toString()
-            "r" -> realText(value)
-            "t" -> compoundText(value)
-            else -> quotedAtom(value)
+        // The text a caller sees for one answer. First the goal as written with each variable's value put in its
+        // place, kept only if Prolog reads it back as the filled-in term; otherwise the filled-in term written out
+        // whole. Null when neither reads back.
+        private fun conclusionText(
+            goal: String,
+            values: Map<String, Term>,
+            anonymousValues: List<Term>,
+            filled: Struct,
+        ): String? {
+            val key = termKey(filled)
+            val writer = TermWriter(forKey = false)
+            val spliced = fillVariables(goal) { name, anonymousIndex ->
+                val value = if (name == "_") anonymousValues.getOrNull(anonymousIndex) else values[name]
+                value?.let { writer.write(it, quoteAtoms = true) }
+            }
+            if (readsBackAs(spliced, key)) return spliced
+            val whole = TermWriter(forKey = false).writeGoal(filled)
+            return if (readsBackAs(whole, key)) whole else null
         }
 
-        private val INTEGER = Regex("-?\\d+")
+        private fun readsBackAs(text: String, key: String): Boolean = parseTerm(text)?.let(::termKey) == key
 
-        // A real Prolog reads back: digits, a decimal point, digits, and an optional exponent.
-        private val READABLE_REAL = Regex("-?\\d+\\.\\d+(?:[eE][+-]?\\d+)?")
-
-        // A real as Prolog reads it back. Display text that already reads back, such as 0.9, is kept; anything else,
-        // such as 1E-7, is rebuilt from its digits as one digit, a decimal point, the rest and the exponent: 1.0e-7.
-        private fun realText(display: String): String? {
-            if (READABLE_REAL.matches(display)) return display
-            val real = display.toBigDecimalOrNull() ?: return null
-            val digits = real.unscaledValue().abs().toString()
-            val exponent = digits.length - 1 - real.scale()
-            val sign = if (real.signum() < 0) "-" else ""
-            return "$sign${digits.first()}.${digits.drop(1).ifEmpty { "0" }}e$exponent"
-        }
-
-        // A number inside a compound's text. The engine shows a real there with ".0" added when its display has no
-        // decimal point, so 0.0000001 shows as 1E-7.0; the token takes that suffix along so it can be rewritten.
-        private val NUMBER_TOKEN = Regex("\\G\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?(?:\\.0)?")
-
-        // A compound's term text with every number made readable and, unless its own brackets close it, wrapped
-        // in parentheses. Atoms inside are already quoted and escaped by the engine and are copied as they are.
-        private fun compoundText(display: String): String? {
-            val text = buildString {
+        // Writes [goal] with each variable replaced by the text [value] gives it, leaving quoted text alone. A
+        // variable is a name starting with an upper-case letter or `_`; each lone `_` is passed with its position
+        // among the lone `_`s. A variable [value] has nothing for is left as it is.
+        private fun fillVariables(goal: String, value: (name: String, anonymousIndex: Int) -> String?): String =
+            buildString {
+                var quote: Char? = null
+                var anonymousIndex = 0
                 var i = 0
-                while (i < display.length) {
-                    val c = display[i]
-                    if (c in QUOTES) {
-                        val end = quotedEnd(display, i)
-                        append(display, i, end)
+                while (i < goal.length) {
+                    val c = goal[i]
+                    if (quote != null) {
+                        append(c)
+                        when {
+                            c == '\\' && i + 1 < goal.length -> append(goal[++i])
+                            c == quote && goal.getOrNull(i + 1) == quote -> append(goal[++i])
+                            c == quote -> quote = null
+                        }
+                        i++
+                    } else if (c in QUOTES) {
+                        quote = c
+                        append(c)
+                        i++
+                    } else if (isNameChar(c)) {
+                        var end = i
+                        while (end < goal.length && isNameChar(goal[end])) end++
+                        val name = goal.substring(i, end)
+                        val written = when {
+                            name == "_" -> value(name, anonymousIndex++)
+                            name[0].isUpperCase() || name[0] == '_' -> value(name, -1)
+                            else -> null
+                        }
+                        append(written ?: name)
                         i = end
-                    } else if (c.isDigit() && (i == 0 || !isNameChar(display[i - 1]))) {
-                        val token = NUMBER_TOKEN.find(display, i)!!.value
-                        val number = if (INTEGER.matches(token) || READABLE_REAL.matches(token)) token
-                        else realText(token.removeSuffix(".0")) ?: return null
-                        append(number)
-                        i += token.length
                     } else {
                         append(c)
                         i++
                     }
                 }
             }
-            return if (standsAlone(text)) text else "($text)"
+
+        private val QUOTES = setOf('\'', '"', '`')
+
+        private fun isNameChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_'
+
+        // An identity for a term, equal for two terms exactly when Prolog would call them the same term with
+        // variables renamed. Used to drop repeated answers and to check that written text reads back.
+        private fun termKey(term: Term): String = TermWriter(forKey = true).write(term, quoteAtoms = true)
+
+        // A binding's value as a rule parameter: an atom's own text, anything else as written in a conclusion.
+        private fun bindingText(value: Term): String =
+            if (value is Atom) value.value else TermWriter(forKey = false).write(value, quoteAtoms = false)
+
+        private val READABLE_REAL = Regex("-?\\d+\\.\\d+(?:[eE][+-]?\\d+)?")
+
+        // A real as Prolog reads it back. The engine's own display is kept when it already reads back, such as 0.9;
+        // anything else, such as 1E-7, is rebuilt from its digits as one digit, a decimal point, the rest and the
+        // exponent: 1.0e-7.
+        private fun realText(real: Real): String {
+            val display = real.value.toString()
+            if (READABLE_REAL.matches(display)) return display
+            val decimal = BigDecimal(display)
+            val digits = decimal.unscaledValue().abs().toString()
+            val exponent = digits.length - 1 - decimal.scale()
+            val sign = if (decimal.signum() < 0) "-" else ""
+            return "$sign${digits.first()}.${digits.drop(1).ifEmpty { "0" }}e$exponent"
         }
 
-        // True when the text is one name, or a functor, list, curly or bracketed term closed by its last character,
-        // so an operator next to it can't pull part of it away.
-        private fun standsAlone(text: String): Boolean {
-            var depth = 0
-            var opened = false
-            var i = 0
-            while (i < text.length) {
-                val c = text[i]
-                if (opened && depth == 0) return false
-                when (c) {
-                    in QUOTES -> {
-                        i = quotedEnd(text, i)
-                        continue
-                    }
-                    '(', '[', '{' -> { depth++; opened = true }
-                    ')', ']', '}' -> depth--
-                    else -> if (depth == 0 && !isNameChar(c)) return false
-                }
-                i++
+        // Writes terms as Prolog text. Compound terms are written by name, such as '-'(5), and lists in brackets,
+        // so no operator in the surrounding text can regroup them. With [forKey] every atom is quoted and each real
+        // is written by value, giving the identity text termKey compares rather than text to show anyone.
+        private class TermWriter(private val forKey: Boolean) {
+
+            // Unbound variables are named by first appearance, so two terms that differ only in variable names
+            // write the same.
+            private val names = HashMap<Var, String>()
+
+            fun writeGoal(goal: Struct): String =
+                functor(goal.functor) + goal.args.joinToString(", ", "(", ")") { write(it, quoteAtoms = true) }
+
+            fun write(term: Term, quoteAtoms: Boolean): String = when (term) {
+                is Var -> names.getOrPut(term) { "_V${names.size + 1}" }
+                is Integer -> term.value.toString()
+                is Real -> if (forKey) "#${BigDecimal(term.value.toString()).stripTrailingZeros()}#" else realText(term)
+                is Atom -> if (quoteAtoms || forKey) Struct.enquoteFunctor(Struct.escapeFunctor(term.value))
+                    else functor(term.value)
+                is Cons -> if (forKey) compound(term) else list(term)
+                is Struct -> compound(term)
+                else -> term.toString()
             }
-            return depth == 0
-        }
 
-        // The index just past the quoted text that opens at [start], read the same way as the other scanners here:
-        // a backslash escapes the next character and a doubled quote stands for one quote. The end of [text] when
-        // the quote never closes.
-        private fun quotedEnd(text: String, start: Int): Int {
-            val quote = text[start]
-            var i = start + 1
-            while (i < text.length) {
-                val c = text[i]
-                when {
-                    c == '\\' -> i += 2
-                    c == quote && text.getOrNull(i + 1) == quote -> i += 2
-                    c == quote -> return i + 1
-                    else -> i++
-                }
+            private fun compound(term: Struct): String =
+                (if (forKey) Struct.enquoteFunctor(Struct.escapeFunctor(term.functor)) else functor(term.functor)) +
+                    term.args.joinToString(", ", "(", ")") { write(it, quoteAtoms = false) }
+
+            private fun list(term: Cons): String {
+                val items = term.unfoldedList
+                val tail = items.last()
+                val head = items.dropLast(1).joinToString(", ") { write(it, quoteAtoms = false) }
+                return if (tail is EmptyList) "[$head]" else "[$head | ${write(tail, quoteAtoms = false)}]"
             }
-            return text.length
-        }
 
-        // Quotes an atom exactly as it is. The backslash and the quote are escaped, and so are line feeds, carriage
-        // returns and tabs, which would otherwise break the query the atom is written into.
-        private fun quotedAtom(value: String): String =
-            "'" + value.replace("\\", "\\\\").replace("'", "\\'")
-                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "'"
-
-        // Names not in [taken], such as Anon_1, Anon_2 and so on.
-        private fun freshNames(prefix: String, taken: Set<String>): Sequence<String> =
-            generateSequence(1) { it + 1 }.map { "$prefix$it" }.filter { it !in taken }
-
-        // The named variables in a term, in order of first appearance; the anonymous `_` doesn't count.
-        private fun variablesIn(text: String): List<String> {
-            val names = LinkedHashSet<String>()
-            rewriteVariables(text) { name -> if (name != "_") names += name; null }
-            return names.toList()
-        }
-
-        // Splits a term's argument text on the commas at the top level, outside quotes and nested brackets.
-        private fun splitArguments(text: String): List<String> {
-            val args = ArrayList<String>()
-            val current = StringBuilder()
-            var depth = 0
-            var quote: Char? = null
-            var i = 0
-            while (i < text.length) {
-                val c = text[i]
-                if (quote != null) {
-                    current.append(c)
-                    when {
-                        c == '\\' && i + 1 < text.length -> current.append(text[++i])
-                        c == quote && text.getOrNull(i + 1) == quote -> current.append(text[++i])
-                        c == quote -> quote = null
-                    }
-                } else when (c) {
-                    in QUOTES -> { quote = c; current.append(c) }
-                    '(', '[', '{' -> { depth++; current.append(c) }
-                    ')', ']', '}' -> { depth--; current.append(c) }
-                    ',' -> if (depth == 0) { args += current.toString(); current.clear() } else current.append(c)
-                    else -> current.append(c)
-                }
-                i++
-            }
-            args += current.toString()
-            return args.map { it.trim() }
-        }
-
-        private val BARE_ATOM = Regex("[a-z][a-zA-Z0-9_]*")
-
-        // The text of an argument that is an atom, either quoted or bare, or null for a number, a compound term or
-        // anything else, which can never be a projected fact's argument. Inside quotes only \\, \' and a doubled
-        // quote are read; any other escape gives null, so the atom is never cited (see the class docs).
-        private fun atomText(arg: String): String? {
-            if (BARE_ATOM.matches(arg)) return arg
-            if (arg.length < 2 || !arg.startsWith('\'') || !arg.endsWith('\'')) return null
-            val inner = arg.substring(1, arg.length - 1)
-            val bare = buildString {
-                var i = 0
-                while (i < inner.length) {
-                    val c = inner[i]
-                    when {
-                        c == '\\' -> when (val next = inner.getOrNull(i + 1)) {
-                            '\\', '\'' -> { append(next); i += 2 }
-                            else -> return null
-                        }
-                        c == '\'' && inner.getOrNull(i + 1) == '\'' -> { append(c); i += 2 }
-                        // A lone quote closes the atom early, so this is a term such as 'f'('a'), not one atom.
-                        c == '\'' -> return null
-                        else -> { append(c); i++ }
-                    }
-                }
-            }
-            return bare
+            private fun functor(name: String): String =
+                Struct.enquoteFunctorIfNecessary(Struct.escapeFunctorIfNecessary(name))
         }
 
         private fun sha256Hex(text: String): String =
