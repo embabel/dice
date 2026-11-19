@@ -180,6 +180,14 @@ class DrivinePropositionRepository(
      */
     private val callerTransactionHoldsWriteLock: Boolean by lazy { persistenceManager.type == DatabaseType.SQLITE }
 
+    /**
+     * Whether this thread is in a transaction of the graph's own, and so on SQLite holds the file's
+     * write lock. A transaction of another manager holds nothing of the graph's.
+     */
+    private fun inGraphWriteTransaction(): Boolean =
+        callerTransactionHoldsWriteLock &&
+            (persistenceManager as? DelegatingPersistenceManager)?.contextHolder?.currentTransaction != null
+
     /** Reads in one read-only transaction, the caller's when there is one (see [findClusters]). */
     private val readOnlyTransaction = TransactionTemplate(transactionManager).apply { isReadOnly = true }
 
@@ -193,8 +201,8 @@ class DrivinePropositionRepository(
      * duplicate rows. The stripe lock is held across the transaction COMMIT — the find-then-insert
      * runs inside [txTemplate], which commits before the lock is released — so a concurrent sibling
      * on the same stripe cannot read pre-commit and slip a duplicate past the existence check.
-     * On SQLite a save inside a caller's transaction takes no stripe: that transaction already holds
-     * the file's write lock, which does the same job.
+     * On SQLite a save inside a caller's Drivine transaction takes no stripe: that transaction
+     * already holds the file's write lock, which does the same job.
      *
      * Propositions with blank text have nothing to dedup on and are persisted directly.
      *
@@ -228,7 +236,7 @@ class DrivinePropositionRepository(
             return doPersist(proposition)
         }
         val contextId = proposition.contextId.value
-        if (callerTransactionHoldsWriteLock) {
+        if (inGraphWriteTransaction()) {
             return findOrPersist(proposition, contextId, text)
         }
         return synchronized(lockFor(contextId, text)) {
@@ -1154,8 +1162,9 @@ class DrivinePropositionRepository(
      */
     // SUPPORTS for SQLite, which takes the file's write lock for a read-only transaction too, and
     // would hold it through every anchor's search. Standalone, each statement there reads on its
-    // own; a caller's transaction is joined. Every other backend reads in one read-only transaction,
-    // its own or the caller's, so the candidates and their neighbours come from one state.
+    // own, so a write landing between the candidates and their scores can show in a cluster; a
+    // caller's transaction is joined for one state. Every other backend reads in one read-only
+    // transaction, its own or the caller's, so the candidates and their neighbours agree.
     @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
     override fun findClusters(
         similarityThreshold: ZeroToOne,
@@ -1277,8 +1286,8 @@ class DrivinePropositionRepository(
      * touch's own could not commit until the caller's ended. SQLite's read-only transactions still
      * take writes. Empty [ids] is a no-op — no need to open a transaction for nothing.
      */
-    // SUPPORTS and read-only so a read-only caller's transaction can be joined at all: Spring refuses
-    // a read-write participant in one. A failed touch never marks the caller's transaction: elsewhere
+    // SUPPORTS so a caller's SQLite transaction can be joined, and read-only so a read-only caller's
+    // is joined without complaint where Spring validates participants. A failed touch never marks the caller's transaction: elsewhere
     // it runs in a transaction of its own, as it always has.
     @Transactional(propagation = Propagation.SUPPORTS, readOnly = true, noRollbackFor = [Throwable::class])
     override fun touchAccessed(ids: Collection<String>) {
@@ -1289,7 +1298,7 @@ class DrivinePropositionRepository(
                     .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
             )
         }
-        if (callerTransactionHoldsWriteLock && TransactionSynchronizationManager.isActualTransactionActive()) {
+        if (inGraphWriteTransaction()) {
             touch()
         } else {
             txTemplate.executeWithoutResult { touch() }

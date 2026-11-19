@@ -143,6 +143,7 @@ class SqliteWriterContentionIntegrationTest {
             writer.get(10, TimeUnit.SECONDS)
         } finally {
             executor.shutdownNow()
+            dataSource.connection.use { it.createStatement().execute("DROP TABLE IF EXISTS decay_holder") }
         }
         val refreshed = persistenceManager.query(
             cypherQuery("MATCH (p:Proposition {id: ${'$'}id}) WHERE p.decayUpdatedAt IS NOT NULL RETURN p.id")
