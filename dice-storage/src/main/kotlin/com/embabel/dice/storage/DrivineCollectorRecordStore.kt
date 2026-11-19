@@ -21,6 +21,7 @@ import com.embabel.dice.projection.lineage.CollectorRun
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.transaction.annotation.Transactional
 
 /**
@@ -66,6 +67,7 @@ import org.springframework.transaction.annotation.Transactional
  * header read as domain drift.
  */
 @Transactional
+@Qualifier(DiceStorageTransactions.MANAGER)
 class DrivineCollectorRecordStore(
     private val persistenceManager: PersistenceManager,
 ) : CollectorRecordStore {

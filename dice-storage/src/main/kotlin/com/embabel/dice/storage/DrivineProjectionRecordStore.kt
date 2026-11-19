@@ -21,6 +21,7 @@ import com.embabel.dice.projection.lineage.ProjectionRecordStore
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.transaction.annotation.Transactional
 
 /**
@@ -34,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional
  * dead. Every statement is parameterized; user-derived values are never interpolated into Cypher.
  */
 @Transactional
+@Qualifier(DiceStorageTransactions.MANAGER)
 class DrivineProjectionRecordStore(
     private val persistenceManager: PersistenceManager,
 ) : ProjectionRecordStore {

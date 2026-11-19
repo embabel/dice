@@ -55,6 +55,7 @@ import org.drivine.query.QueryLoader
 import org.drivine.query.QuerySpecification
 import org.drivine.query.dsl.*
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Propagation
@@ -127,6 +128,7 @@ internal object SourceProvenanceQueryStatements {
  * - Detached re-saves with changed mentions may leave orphan Mention nodes (load-then-save avoids it).
  */
 @Transactional
+@Qualifier(DiceStorageTransactions.MANAGER)
 class DrivinePropositionRepository(
     private val graphObjectManager: StatelessGraphObjectManager,
     private val persistenceManager: PersistenceManager,

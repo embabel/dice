@@ -25,6 +25,7 @@ import org.drivine.model.Stamps
 import org.jetbrains.annotations.ApiStatus
 import org.drivine.query.QuerySpecification
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.transaction.annotation.Transactional
 
 /**
@@ -78,6 +79,7 @@ import org.springframework.transaction.annotation.Transactional
  */
 @ApiStatus.Experimental
 @Transactional
+@Qualifier(DiceStorageTransactions.MANAGER)
 open class DrivinePropositionRunLinkStore(
     private val persistenceManager: PersistenceManager,
 ) : PropositionRunLinkStore {

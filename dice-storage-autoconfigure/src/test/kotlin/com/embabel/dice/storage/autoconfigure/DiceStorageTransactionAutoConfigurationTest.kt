@@ -16,7 +16,9 @@
 package com.embabel.dice.storage.autoconfigure
 
 import com.embabel.agent.api.common.Ai
+import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.EmbeddingService
+import com.embabel.dice.incremental.ChunkHistoryStore
 import com.embabel.dice.proposition.PropositionRepository
 import jakarta.persistence.EntityManager
 import jakarta.persistence.EntityManagerFactory
@@ -32,6 +34,8 @@ import org.drivine.transaction.DrivineTransactionManager
 import org.drivine.transaction.TransactionContextHolder
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
+import org.mockito.kotlin.any
+import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import org.springframework.aop.framework.Advised
@@ -134,6 +138,33 @@ class DiceStorageTransactionAutoConfigurationTest {
                 val saves = ReflectionTestUtils.getField(repository, "txTemplate") as TransactionTemplate
 
                 assertThat(saves.transactionManager).isInstanceOf(DrivineTransactionManager::class.java)
+            }
+    }
+
+    /**
+     * A store method that only carries `@Transactional`, with no template of its own, runs in a
+     * Drivine transaction too when the host brings a manager of its own, so its statements commit
+     * together. The host's own `@Transactional` code still gets the host's manager.
+     */
+    @Test
+    fun `with a host's own transaction manager, an annotated store method runs in a Drivine transaction`() {
+        val holder = TransactionContextHolder(mock<DatabaseRegistry>())
+        val seen = mutableListOf<Any?>()
+        baseRunner
+            .withConfiguration(
+                AutoConfigurations.of(DiceStorageAutoConfiguration::class.java, TransactionAutoConfiguration::class.java),
+            )
+            .withBean(TransactionContextHolder::class.java, { holder })
+            .run { ctx ->
+                val hostManager = ctx.getBean<PlatformTransactionManager>()
+                doAnswer { seen += holder.currentTransaction; null }
+                    .whenever(ctx.getBean<PersistenceManager>()).execute(any())
+
+                ctx.getBean<ChunkHistoryStore>().clearByContext(ContextId("annotated"))
+
+                assertThat(seen).hasSize(1)
+                assertThat(seen.single()).isNotNull()
+                assertThat(hostManager).isSameAs(ctx.getBean("platformTransactionManager"))
             }
     }
 

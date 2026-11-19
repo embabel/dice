@@ -24,6 +24,7 @@ import com.embabel.dice.incremental.ProcessedChunkRecord
 import com.embabel.dice.storage.model.ProcessedChunkNode
 import org.drivine.manager.*
 import org.drivine.query.QuerySpecification
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.transaction.annotation.Transactional
 
 /**
@@ -33,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional
  * consumer needs no hand-rolled store.
  */
 @Transactional
+@Qualifier(DiceStorageTransactions.MANAGER)
 class DrivineChunkHistoryStore(
     private val graphObjectManager: StatelessGraphObjectManager,
     private val persistenceManager: PersistenceManager,

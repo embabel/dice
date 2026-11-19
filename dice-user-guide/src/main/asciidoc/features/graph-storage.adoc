@@ -66,6 +66,16 @@ With `type=graph`, `DiceStorageAutoConfiguration` provides:
 
 Every one is `@ConditionalOnMissingBean`, so your own bean always wins.
 
+==== Transactions
+
+The graph stores run their transactions in Drivine's transaction manager, even when your
+application brings a manager of its own for another database. The auto-configuration registers it
+as `diceTransactionManager`, and each store's `@Transactional` methods look it up by that name. It
+is never injected by type, so your own `@Transactional` code keeps your manager. If you wire the
+stores yourself next to a manager of your own, register Drivine's manager under
+`DiceStorageTransactions.MANAGER` to get the same; without one, the stores fall back to the
+context's default manager.
+
 ==== The graph model
 
 `dice-storage` maps propositions onto typed nodes: `PropositionNode`, `SourceNode`,

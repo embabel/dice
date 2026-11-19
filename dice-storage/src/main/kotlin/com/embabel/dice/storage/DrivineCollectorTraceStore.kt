@@ -20,6 +20,7 @@ import com.embabel.dice.spi.*
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
 
@@ -53,6 +54,7 @@ import java.time.Instant
  * map is logged and skipped rather than failing the whole read.
  */
 @Transactional
+@Qualifier(DiceStorageTransactions.MANAGER)
 class DrivineCollectorTraceStore(
     private val persistenceManager: PersistenceManager,
 ) : CollectorTraceStore, CollectorTraceQuery {

@@ -23,6 +23,7 @@ import com.embabel.dice.metamodel.DriftReportStore
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
 
@@ -67,6 +68,7 @@ import java.time.Instant
  *
  * @param persistenceManager Drivine's handle on the `neo` datasource.
  */
+@Qualifier(DiceStorageTransactions.MANAGER)
 open class DrivineDriftReportStore(
     private val persistenceManager: PersistenceManager,
 ) : DriftReportStore {

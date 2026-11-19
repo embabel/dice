@@ -32,6 +32,7 @@ import com.embabel.dice.proposition.extraction.PropositionRunLinkStore
 import com.embabel.dice.proposition.store.InMemoryDecayManager
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.storage.DiceStorageSchema
+import com.embabel.dice.storage.DiceStorageTransactions
 import com.embabel.dice.storage.DrivineChunkHistoryStore
 import com.embabel.dice.storage.DrivineCollectorRecordStore
 import com.embabel.dice.storage.DrivineExtractionRunStore
@@ -287,6 +288,24 @@ class DiceStorageAutoConfiguration {
     }
 
     // ---- Graph backend (embabel.dice.store.type=graph) ----
+
+    /**
+     * The transaction manager the graph stores' `@Transactional` methods run in, under the name
+     * each store is qualified with ([DiceStorageTransactions.MANAGER]): the manager [drivineTransactions]
+     * picks, as the stores' own templates use. Without it, a method that only carries the annotation
+     * would run in the host's default manager, whose transactions Drivine's statements do not join,
+     * and each of its statements would commit on its own.
+     *
+     * It is never an autowire candidate, so the host's own `@Transactional` code, its injection
+     * points, and Boot's conditions on a single transaction manager still see only the host's.
+     */
+    @Bean(name = [DiceStorageTransactions.MANAGER], autowireCandidate = false)
+    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnMissingBean(name = [DiceStorageTransactions.MANAGER])
+    fun diceTransactionManager(
+        persistenceManager: PersistenceManager,
+        transactionManager: PlatformTransactionManager,
+    ): PlatformTransactionManager = drivineTransactions(transactionManager, persistenceManager)
 
     @Bean
     @ConditionalOnBean(Ai::class)

@@ -22,6 +22,7 @@ import com.embabel.dice.metamodel.ObservedSchema
 import com.embabel.dice.metamodel.ObservedSchemaSource
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 
@@ -118,6 +119,7 @@ val INFRASTRUCTURE_LABELS: Set<String> = setOf(
  *   a drift report's natural key, so a test has to be able to choose whether two checks record one
  *   observation or two.
  */
+@Qualifier(DiceStorageTransactions.MANAGER)
 open class DrivineObservedSchemaSource(
     private val persistenceManager: PersistenceManager,
     private val ownedSchema: DiceOwnedSchema,

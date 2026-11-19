@@ -32,6 +32,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunTransitionResult
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
@@ -161,6 +162,7 @@ import java.util.UUID
  *   wrap it in `SafeDiceEventListener` for graceful degradation.
  */
 @Transactional
+@Qualifier(DiceStorageTransactions.MANAGER)
 open class DrivineExtractionRunStore @JvmOverloads constructor(
     private val persistenceManager: PersistenceManager,
     private val transactionManager: PlatformTransactionManager,

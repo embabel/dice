@@ -21,6 +21,7 @@ import com.embabel.dice.metamodel.SweptBaselineStore
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.QuerySpecification
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 
@@ -85,6 +86,7 @@ import java.time.Clock
  *   the instants of two saves.
  */
 @Transactional
+@Qualifier(DiceStorageTransactions.MANAGER)
 class DrivineMetamodelVersionStore(
     private val persistenceManager: PersistenceManager,
     private val clock: Clock = Clock.systemUTC(),

@@ -91,6 +91,7 @@ public class com/embabel/dice/storage/autoconfigure/DiceDecaySchedulingConfigura
 
 public class com/embabel/dice/storage/autoconfigure/DiceStorageAutoConfiguration {
 	public fun <init> ()V
+	public fun diceTransactionManager (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;)Lorg/springframework/transaction/PlatformTransactionManager;
 	public fun drivineChunkHistoryStore (Lorg/drivine/manager/StatelessGraphObjectManager;Lorg/drivine/manager/PersistenceManager;)Lcom/embabel/dice/incremental/ChunkHistoryStore;
 	public fun drivineCollectorRecordStore (Lorg/drivine/manager/PersistenceManager;)Lcom/embabel/dice/projection/lineage/CollectorRecordStore;
 	public fun drivineExtractionRunStore (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;)Lcom/embabel/dice/proposition/extraction/ExtractionRunStore;

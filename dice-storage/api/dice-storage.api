@@ -46,6 +46,11 @@ public final class com/embabel/dice/storage/DiceStorageSchemaKt {
 	public static final fun diceStorageCatalog (Ljava/util/List;)Lorg/drivine/schema/SchemaCatalog;
 }
 
+public final class com/embabel/dice/storage/DiceStorageTransactions {
+	public static final field INSTANCE Lcom/embabel/dice/storage/DiceStorageTransactions;
+	public static final field MANAGER Ljava/lang/String;
+}
+
 public final class com/embabel/dice/storage/DriftReportRowMapper {
 	public static final field GLOBAL_CONTEXT_KEY Ljava/lang/String;
 	public static final field INSTANCE Lcom/embabel/dice/storage/DriftReportRowMapper;
