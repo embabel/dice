@@ -78,7 +78,8 @@ fun interface GateContextFactory {
  *
  * @property revisionResult The revision result the verdict is for, or null when no revision ran.
  * @property propositions Every proposition the result would write.
- * @property gated What the pipeline said about the claim it was asked about.
+ * @property gated What the pipeline said about the claim it was asked about. For a result withheld
+ *   because it builds on an earlier withheld result, no gate ran and the entry has no evaluations.
  * @property decision The decision that applies to the whole result.
  */
 @ApiStatus.Experimental
@@ -154,6 +155,15 @@ class GatedChunk(
  * the whole result; Demote and SkipProjection keep it and leave the decision on the verdict for
  * the host to act on. When the chunk had no revision, each proposition is its own result.
  *
+ * Results are decided in chunk order, and a withheld result takes later ones down with it. The
+ * reviser builds each result on the copies the earlier ones produced, so once a result that
+ * changes a stored proposition is rejected or reviewed, every later result that changes the same
+ * stored proposition starts from evidence the gates held back. Each of those is withheld too,
+ * without asking the gates, with the same kind of decision (Reject or RouteToReview) and a reason
+ * naming the stored proposition. It gets its own verdict, goes to the review sink when reviewed
+ * and sends events like any other withheld result. Results that add a new proposition, such as a
+ * generalization, change no stored proposition and are never held back this way.
+ *
  * Replays (a merge or reinforcement that changed nothing) are never gated themselves and get no
  * verdict, sink call or event. A replay can start from the copy another result in the same chunk
  * just produced, so it follows that result: when a result that changed the same stored
@@ -215,7 +225,8 @@ class GateApplier private constructor(
     /**
      * Gates every result in [result] and returns what to persist plus a verdict for each.
      *
-     * Results are gated in order. Exceptions from a gate or from the review sink are not caught.
+     * Results are gated in order, and a result building on an earlier withheld one is withheld with
+     * it. Exceptions from a gate or from the review sink are not caught.
      *
      * @param result One chunk's extraction result.
      * @return The chunk to persist and the verdicts; a failed chunk comes back unchanged with none.
@@ -232,24 +243,32 @@ class GateApplier private constructor(
     }
 
     private fun applyToRevisions(chunk: ChunkPropositionResult.Success): GatedChunk {
-        // Decide every non-replay result first, because a replay can come before the result it
-        // follows and has to know that result's verdict.
+        // Decide every non-replay result first, in chunk order, because a replay can come before
+        // the result it follows and has to know that result's verdict. A result that changes a
+        // stored proposition an earlier result was withheld for was built on the withheld copy,
+        // so it is withheld the same way instead of being gated on its own.
         val verdicts = mutableListOf<ResultVerdict>()
         val dropped = Collections.newSetFromMap(IdentityHashMap<RevisionResult, Boolean>())
         val droppedIds = mutableSetOf<String>()
-        val droppedStoredIds = mutableSetOf<String>()
+        val withheldStored = mutableMapOf<String, GateDecision>()
         for (revision in chunk.revisionResults) {
             if (revision.isReplay) continue
-            val verdict = judge(revision, gatedClaim(revision), written(revision))
+            val storedId = changedStoredId(revision)
+            val withholding = storedId?.let { withheldStored[it] }
+            val verdict = if (storedId != null && withholding != null) {
+                dependent(revision, storedId, withholding)
+            } else {
+                judge(revision, gatedClaim(revision), written(revision))
+            }
             verdicts += verdict
             if (!verdict.isAdmitted) {
                 dropped += revision
                 extractedId(revision)?.let { droppedIds += it }
-                changedStoredId(revision)?.let { droppedStoredIds += it }
+                storedId?.let { withheldStored.putIfAbsent(it, verdict.decision) }
             }
         }
         val keptResults = chunk.revisionResults.filter { revision ->
-            if (revision.isReplay) replayedStoredId(revision) !in droppedStoredIds else revision !in dropped
+            if (revision.isReplay) replayedStoredId(revision) !in withheldStored else revision !in dropped
         }
         // With no revision results left, propositionsToPersist() would fall back to every
         // extracted proposition, so the list has to be emptied as well.
@@ -261,7 +280,25 @@ class GateApplier private constructor(
     /** Asks the pipeline about [claim], then reports and routes the result by the decision. */
     private fun judge(revision: RevisionResult?, claim: Proposition, written: List<Proposition>): ResultVerdict {
         val gated = pipeline.evaluate(claim, contextFactory.contextFor(claim, revision))
-        val verdict = ResultVerdict(revision, written, listOf(gated), gated.finalDecision)
+        return route(ResultVerdict(revision, written, listOf(gated), gated.finalDecision))
+    }
+
+    /**
+     * Withholds [revision] without asking the gates, because it builds on the copy of [storedId]
+     * an earlier result was withheld for. It gets the same kind of decision as that result.
+     */
+    private fun dependent(revision: RevisionResult, storedId: String, withholding: GateDecision): ResultVerdict {
+        val reason = "builds on a withheld result for stored fact $storedId"
+        val decision =
+            if (withholding is GateDecision.RouteToReview) GateDecision.RouteToReview(reason) else GateDecision.Reject(reason)
+        val claim = gatedClaim(revision)
+        val gated = GatedPropositionResult(claim, emptyList(), decision)
+        return route(ResultVerdict(revision, written(revision), listOf(gated), decision))
+    }
+
+    /** Sends the events and the review sink call a verdict calls for. */
+    private fun route(verdict: ResultVerdict): ResultVerdict {
+        val written = verdict.propositions
         when (val decision = verdict.decision) {
             is GateDecision.Reject -> {
                 listener?.let { l -> written.forEach { l.onEvent(PropositionRejected(it, decision.reason)) } }

@@ -551,6 +551,111 @@ class GateApplierTest {
         assertEquals(listOf(storedB), gated.admitted.propositionsToPersist())
     }
 
+    // --- Ruling: dependent results ---
+
+    @Test
+    fun `dependent results follow a reviewed merge so a later contradiction on the same stored id is reviewed too`() {
+        val listener = RecordingDiceEventListener()
+        val reviewed = mutableListOf<ResultVerdict>()
+        val demoted = storedAWithSecondSource.copy(status = PropositionStatus.CONTRADICTED, confidence = 0.2)
+        val merge = RevisionResult.Merged(storedA, storedAWithSecondSource)
+        val contradiction = RevisionResult.Contradicted(demoted, contradictingNew)
+        // The merge is reviewed; the contradicting claim on its own would be admitted.
+        val pipeline = ExtractionGatePipeline(listOf(gateFor(storedA.id, GateDecision.RouteToReview("second source"))))
+
+        val gated = GateApplier.of(pipeline)
+            .withReviewSink { reviewed += it }
+            .withListener(listener)
+            .apply(chunk(listOf(storedA, contradictingNew), listOf(merge, contradiction)))
+
+        assertTrue(gated.admitted.propositionsToPersist().isEmpty())
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+        assertEquals(listOf(merge, contradiction), reviewed.map { it.revisionResult })
+        val dependentReason = (reviewed[1].decision as GateDecision.RouteToReview).reason
+        assertTrue(dependentReason.contains(storedA.id), dependentReason)
+        assertEquals(listOf(merge, contradiction), gated.reviewed().map { it.revisionResult })
+        assertEquals(listOf(demoted, contradictingNew), gated.verdicts[1].propositions)
+        assertEquals(contradictingNew, gated.verdicts[1].gated.single().proposition)
+        val events = listener.events.map { it as PropositionRoutedToReview }
+        assertEquals(listOf(storedAWithSecondSource, demoted, contradictingNew), events.map { it.proposition })
+        assertEquals(dependentReason, events.last().reason)
+    }
+
+    @Test
+    fun `dependent results follow a rejected merge so a later contradiction on the same stored id is rejected too`() {
+        val listener = RecordingDiceEventListener()
+        val reviewed = mutableListOf<ResultVerdict>()
+        val demoted = storedAWithSecondSource.copy(status = PropositionStatus.CONTRADICTED, confidence = 0.2)
+        val merge = RevisionResult.Merged(storedA, storedAWithSecondSource)
+        val contradiction = RevisionResult.Contradicted(demoted, contradictingNew)
+
+        val gated = applier(rejecting(storedA.id))
+            .withReviewSink { reviewed += it }
+            .withListener(listener)
+            .apply(chunk(listOf(storedA, contradictingNew), listOf(merge, contradiction)))
+
+        assertTrue(gated.admitted.propositionsToPersist().isEmpty())
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+        assertTrue(reviewed.isEmpty())
+        assertEquals(listOf(merge, contradiction), gated.rejected().map { it.revisionResult })
+        val dependentReason = (gated.verdicts[1].decision as GateDecision.Reject).reason
+        assertTrue(dependentReason.contains(storedA.id), dependentReason)
+        val events = listener.events.map { it as PropositionRejected }
+        assertEquals(listOf(storedAWithSecondSource, demoted, contradictingNew), events.map { it.proposition })
+    }
+
+    @Test
+    fun `dependent results follow a withheld merge so a later merge on the same stored id is withheld too`() {
+        val reviewed = mutableListOf<ResultVerdict>()
+        val thirdSource = storedAWithSecondSource.copy(grounding = listOf("chunk-1", "chunk-2", "chunk-3"))
+        val first = RevisionResult.Merged(storedA, storedAWithSecondSource)
+        val second = RevisionResult.Merged(storedAWithSecondSource, thirdSource)
+        // Only the first merge's copy is reviewed; the second has the same id but more evidence.
+        val pipeline = ExtractionGatePipeline(
+            listOf(
+                ExtractionGate { p, _ ->
+                    val decision = if (p == storedAWithSecondSource) GateDecision.RouteToReview("second source") else GateDecision.Persist
+                    GateEvaluation("by-copy", p, decision)
+                },
+            ),
+        )
+
+        val gated = GateApplier.of(pipeline)
+            .withReviewSink { reviewed += it }
+            .apply(chunk(listOf(storedA), listOf(first, second)))
+
+        assertTrue(gated.admitted.propositionsToPersist().isEmpty())
+        assertTrue(gated.admitted.revisionResults.isEmpty())
+        assertEquals(listOf(first, second), reviewed.map { it.revisionResult })
+        assertEquals(listOf(first, second), gated.reviewed().map { it.revisionResult })
+    }
+
+    @Test
+    fun `dependent results leave a later result for a different stored id unaffected`() {
+        val merge = RevisionResult.Merged(storedA, storedAWithSecondSource)
+        val other = RevisionResult.Reinforced(storedB, storedBRevised)
+
+        val gated = applier(rejecting(storedA.id)).apply(chunk(listOf(storedA, storedB), listOf(merge, other)))
+
+        assertEquals(listOf(other), gated.admitted.revisionResults)
+        assertEquals(listOf(storedBRevised), gated.admitted.propositionsToPersist())
+        assertEquals(GateDecision.Persist, gated.verdicts[1].decision)
+    }
+
+    @Test
+    fun `dependent results only follow earlier results so an admitted result before a withheld one stays`() {
+        val demoted = storedA.copy(status = PropositionStatus.CONTRADICTED, confidence = 0.2)
+        val contradiction = RevisionResult.Contradicted(demoted, contradictingNew)
+        val merge = RevisionResult.Merged(demoted, demoted.copy(grounding = listOf("chunk-1", "chunk-2")))
+
+        val gated = applier(rejecting(storedA.id))
+            .apply(chunk(listOf(contradictingNew, storedA), listOf(contradiction, merge)))
+
+        assertEquals(listOf(contradiction), gated.admitted.revisionResults)
+        assertTrue(gated.verdicts[0].isAdmitted)
+        assertEquals(GateDecision.Reject("rejected ${storedA.id}"), gated.verdicts[1].decision)
+    }
+
     // --- Ruling: events ---
 
     @Test
