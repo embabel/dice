@@ -89,8 +89,38 @@ internal class LocalScopedReads(private val propositions: () -> Collection<Propo
     private data class Match(val proposition: Proposition, val tokenCount: Int)
 
     private companion object {
-        val supportedCriteria = ReadCriterion.entries.toSet()
-        val orders = ReadOrder.entries.toSet()
+        val supportedCriteria = setOf(
+            ReadCriterion.ENTITY_ID,
+            ReadCriterion.ANY_ENTITY_IDS,
+            ReadCriterion.ALL_ENTITY_IDS,
+            ReadCriterion.STATUSES,
+            ReadCriterion.MIN_LEVEL,
+            ReadCriterion.MAX_LEVEL,
+            ReadCriterion.CREATED_AFTER,
+            ReadCriterion.CREATED_BEFORE,
+            ReadCriterion.REVISED_AFTER,
+            ReadCriterion.REVISED_BEFORE,
+            ReadCriterion.ACCESSED_AFTER,
+            ReadCriterion.ACCESSED_BEFORE,
+            ReadCriterion.MIN_CONFIDENCE,
+            ReadCriterion.MIN_EFFECTIVE_CONFIDENCE,
+            ReadCriterion.BELOW_EFFECTIVE_CONFIDENCE,
+            ReadCriterion.EFFECTIVE_CONFIDENCE_AS_OF,
+            ReadCriterion.DECAY_K,
+            ReadCriterion.MIN_IMPORTANCE,
+            ReadCriterion.MIN_REINFORCE_COUNT,
+            ReadCriterion.MIN_TRUST_SCORE,
+            ReadCriterion.PINNED,
+        )
+        val orders = setOf(
+            ReadOrder.NONE,
+            ReadOrder.EFFECTIVE_CONFIDENCE_DESC,
+            ReadOrder.CREATED_DESC,
+            ReadOrder.REVISED_DESC,
+            ReadOrder.LAST_ACCESSED_DESC,
+            ReadOrder.REINFORCE_COUNT_DESC,
+            ReadOrder.IMPORTANCE_DESC,
+        )
         val capability = StoreCapability.SCOPED_READS
 
         /**
