@@ -2435,8 +2435,13 @@ yourself still wins (`@ConditionalOnMissingBean`), so call sites are unchanged.
 
 If Drivine is configured but some of DICE's stores still ended up in memory (for example because
 your own auto-configuration registered the `PersistenceManager` after DICE's), startup fails and
-names those stores, so data is never quietly kept in memory. The deprecated `embabel.dice.store.type`
-property is no longer needed. A SQLite starter will follow in a later release.
+names those stores, so data is never quietly kept in memory. With the starter, the deprecated
+`embabel.dice.store.type` property is no longer needed. A SQLite starter will follow in a later release.
+
+Adding `dice-starter-neo4j` is what turns this detection on. An app that uses Drivine for its own data
+without the starter keeps DICE's in-memory stores, as before, and DICE builds no Drivine managers
+for it and writes no schema to its database. Such an app can still set `embabel.dice.store.type=graph`
+to get DICE's Drivine stores on its own `PersistenceManager` and `StatelessGraphObjectManager`.
 
 Everything is pushed into the database rather than scanned in memory:
 

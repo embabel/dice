@@ -1,9 +1,10 @@
 [[features-graph-storage]]
 === Graph-backed storage
 
-*Activation*: Drivine is configured, meaning the application has a Drivine `PersistenceManager` bean.
-With `dice-starter-neo4j` and one data source, DICE builds that bean for you. No DICE property is
-needed.
+*Activation*: `dice-starter-neo4j` is on the classpath and Drivine is configured, meaning the
+application has a Drivine `PersistenceManager` bean. With the starter and one data source, DICE builds
+that bean for you. No DICE property is needed. Without the starter, DICE keeps its in-memory stores
+unless the deprecated `embabel.dice.store.type=graph` is set.
 
 *Availability*: `dice-starter-neo4j`, which brings in `dice-storage`, `dice-storage-autoconfigure` and
 Drivine, from DICE {dice-version}. Costs a Neo4j instance.
@@ -57,9 +58,16 @@ Without a `PersistenceManager` bean, DICE uses its in-memory stores. The depreca
 `embabel.dice.store.type` property can still force `in-memory` while Drivine is present; see
 <<reference-configuration-properties>>.
 
+All of this happens only because `dice-starter-neo4j` is on the classpath. An application that uses
+Drivine for its own data and never added the starter keeps DICE's in-memory stores, as before: DICE
+builds no Drivine managers for it, doesn't check its store choice against Drivine, and writes no
+schema to its database. Such an application can still set `embabel.dice.store.type=graph`, and DICE
+then uses its Drivine stores on the `PersistenceManager` and `StatelessGraphObjectManager` the
+application defines itself.
+
 ==== What you get
 
-When Drivine is configured, `DiceStorageAutoConfiguration` provides:
+When DICE uses its Drivine stores, `DiceStorageAutoConfiguration` provides:
 
 [cols="1,2", options="header"]
 |===

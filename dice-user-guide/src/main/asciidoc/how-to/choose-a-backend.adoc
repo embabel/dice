@@ -4,20 +4,27 @@
 *Prerequisites*: a DICE starter on the classpath. `dice-starter` gives you the in-memory stores and
 `dice-starter-neo4j` gives you the Drivine stores on Neo4j. Both bring in `dice-storage-autoconfigure`.
 
-You don't choose the backend with a property. It follows from what your application sets up: when
-Drivine is configured, DICE uses its Drivine stores, and when it isn't, DICE uses its in-memory
-stores. The code you write against `PropositionRepository` is the same either way.
+The starter you add is what decides. With `dice-starter-neo4j` on the classpath, DICE looks at what
+your application sets up: when Drivine is configured, it uses its Drivine stores, and when it isn't,
+it uses its in-memory stores. You don't set a property for that. The code you write against
+`PropositionRepository` is the same either way.
 
-Drivine counts as configured when your application has a Drivine `PersistenceManager` bean. You
-don't write that bean yourself: once Drivine has a data source, DICE builds it for you. Which
-database it talks to is decided by Drivine's own configuration, not by DICE.
+Drivine counts as configured when your application has a Drivine `PersistenceManager` bean. With
+`dice-starter-neo4j` you don't write that bean yourself: once Drivine has a data source, DICE builds
+it for you. Which database it talks to is decided by Drivine's own configuration, not by DICE.
+
+Without `dice-starter-neo4j`, DICE keeps its in-memory stores, just as it always has, even if your
+application uses Drivine for its own data. It builds no Drivine managers for you and writes no schema
+to your database. Without the starter, DICE wires its Drivine stores only when you set the
+deprecated `embabel.dice.store.type=graph`, and then they run on the `PersistenceManager` and
+`StatelessGraphObjectManager` your application defines.
 
 [cols="1,2,3", options="header"]
 |===
 | Backend | How you get it | Choose it when
 
 | In-memory
-| The default. Add `dice-starter` and leave Drivine without a data source.
+| The default. Add `dice-starter`, or add `dice-starter-neo4j` and give Drivine no data source.
 | Development, tests, single-process applications, and anything where losing the store on restart is
   acceptable. Needs an `Ai` bean for embeddings.
 
@@ -101,8 +108,10 @@ embabel:
 With several data sources and none named, or with a name Drivine doesn't have, startup stops and
 lists the data sources that are configured. With only one, you can leave the property out.
 
-If your configuration still sets `embabel.dice.store.type`, you can remove it. It is deprecated, and
-<<reference-configuration-properties>> lists what each value still does.
+If your configuration still sets `embabel.dice.store.type`, you can remove it once
+`dice-starter-neo4j` is on the classpath. It is deprecated, and <<reference-configuration-properties>>
+lists what each value still does. Don't remove `graph` without adding the starter, though: without
+it, DICE would go back to its in-memory stores.
 
 See <<features-graph-storage>> for the full activation detail.
 
@@ -139,11 +148,14 @@ See <<features-graph-storage>> for the full activation detail.
 
 ==== Using your own Drivine beans
 
-You only need this when DICE's choice of Drivine beans doesn't suit you, for example when the
-`PersistenceManager` should come from somewhere other than one of Drivine's factories. Define both
+This is for apps with `dice-starter-neo4j`. You only need it when DICE's choice of Drivine beans
+doesn't suit you, for example when the `PersistenceManager` should come from somewhere other than one
+of Drivine's factories. Define both
 beans yourself, on the same database, and DICE uses them instead of building its own. Define only one
 and startup fails: DICE never builds one manager to sit beside yours, because the two could end up on
-different databases.
+different databases. The exception is an app that still sets `embabel.dice.store.type=graph`. There
+DICE builds neither manager, so startup works if your own beans cover every store that needs the
+missing one, and otherwise fails because that bean doesn't exist.
 
 [source,java]
 ----
