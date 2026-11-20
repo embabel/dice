@@ -60,7 +60,8 @@ import java.time.ZoneOffset
  * this becomes a Datalog one. Declarations are tried in the order they were added. The first to prove the
  * answer and find a recorded fact with source ids for every input is the one cited. Guards such as `X \= Y`
  * run alongside the inputs in the order they were added. Only the inputs are cited. The provider leaves
- * out answers it can't trace to recorded facts with source ids. Each answer runs its own replay, so a goal
+ * out answers it can't trace to recorded facts with source ids. If an answer leaves variables free, its
+ * proof must preserve those variables and which arguments share them. Each answer runs its own replay, so a goal
  * with unbound variables can visit the same inputs many times.
  *
  * **Recursive rules are not supported.** A rule that calls itself, such as a chain of managers, can't be
@@ -236,7 +237,10 @@ class PrologEvidenceProvider private constructor(
                 Struct.of("=", declaration.head, filled)
         ) as Struct
 
+        val openAnswerKey = if (filled.isGround) null else termKey(filled)
         for (proof in engine.solveTerm(query)) {
+            // Unification can bind a free variable or make two independent variables equal.
+            if (openAnswerKey != null && termKey(declaration.head.apply(proof)) != openAnswerKey) continue
             val perInput = declaration.inputs.map { citableFactsFor(it.apply(proof)) }
             if (perInput.any { it.isEmpty() }) continue
             return perInput.flatten()

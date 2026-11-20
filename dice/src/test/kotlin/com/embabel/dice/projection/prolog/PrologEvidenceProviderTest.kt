@@ -591,6 +591,38 @@ class PrologEvidenceProviderTest {
     @Nested
     inner class StructuralTerms {
 
+        @Test
+        fun `a ground fact only cites the instance it proves`() {
+            val facts = listOf(
+                fact("admin", "a", confidence = 0.9, ids = listOf("admin-a")),
+                fact("pair", "a", "b", confidence = 0.8, ids = listOf("pair-ab")),
+            )
+            val rules = "r(X, _) :- admin(X).\nr(X, Y) :- pair(X, Y)."
+            val provider = provider(facts, rules)
+                .withDeclaration(RuleDeclaration.of("r(X, Y)").withInput("pair(X, Y)"))
+            val goal = RuleGoal.of("r(a, Y)")
+
+            val instance = only(provider.conclusions(goal))
+            assertEquals("r(a, 'b')", instance.conclusion)
+            assertEquals(listOf("pair-ab"), instance.inputIds)
+
+            val both = provider.withDeclaration(RuleDeclaration.of("r(X, _)").withInput("admin(X)"))
+                .conclusions(goal)
+            assertEquals(listOf(listOf("admin-a"), listOf("pair-ab")), both.map { it.inputIds })
+        }
+
+        @Test
+        fun `a proof requiring equal arguments cannot cite an answer with two independent variables`() {
+            val facts = listOf(fact("admin", "a", confidence = 0.9, ids = listOf("admin-a")))
+            val rules = "r(X, _, _) :- admin(X).\nr(X, V, V) :- admin(X)."
+            val equal = RuleDeclaration.of("r(X, V, V)").withInput("admin(X)")
+
+            val derived = only(provider(facts, rules).withDeclaration(equal).conclusions(RuleGoal.of("r(a, Y, Z)")))
+
+            assertTrue(PrologEngine.fromTheory("").query("(${derived.conclusion}) = r(a, Y, Z), var(Y), Y == Z"))
+            assertEquals(listOf("admin-a"), derived.inputIds)
+        }
+
         // In a rule, -N with N unbound is the compound -(N), so this proves negated(alice, -(5)), never -5.
         private val negatedRule = "negated(X, -N) :- expert_in(X, _), N = 5."
 
