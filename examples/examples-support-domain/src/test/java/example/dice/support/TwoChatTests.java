@@ -15,6 +15,10 @@
  */
 package example.dice.support;
 
+import com.embabel.agent.core.DataDictionary;
+import com.embabel.dice.common.Relations;
+import com.embabel.dice.projection.graph.ProjectedRelationship;
+import com.embabel.dice.projection.graph.RelationBasedGraphProjector;
 import com.embabel.dice.proposition.EntityMention;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
@@ -27,6 +31,7 @@ import org.junit.jupiter.api.TestInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.annotation.DirtiesContext;
@@ -37,6 +42,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * Two support chats about Acme go through the real pipeline, with the model's replies recorded.
@@ -62,6 +68,7 @@ class TwoChatTests {
     @Autowired SupportDesk desk;
     @Autowired InMemoryPropositionRepository propositions;
     @Autowired ScriptedChatModel model;
+    @Autowired @Qualifier("supportDictionary") DataDictionary dictionary;
 
     @BeforeAll
     void runBothChats() {
@@ -118,6 +125,34 @@ class TwoChatTests {
         assertSourcedFrom(fact(PRO), CHAT_1);
         assertSourcedFrom(fact(DANA), CHAT_2);
         assertSourcedFrom(fact(BASIC), CHAT_2);
+    }
+
+    @Test
+    void projectsTheChatsToEdgesThatCiteTheirStoredFacts() {
+        var relations = Relations.empty()
+                .withSemanticBetween("Customer", "Plan", "is on", "has a subscription")
+                .withSemanticBetween("Contact", "Customer", "is the admin at", "administers an account")
+                .withSemanticBetween("Customer", "Plan", "moved back to", "changed its subscription");
+        var graph = RelationBasedGraphProjector.from(relations).projectAll(facts(), dictionary);
+        var acme = mention(PRO, "Acme").getResolvedId();
+
+        assertThat(graph.getProjected())
+                .extracting(ProjectedRelationship::getSourceId, ProjectedRelationship::getType,
+                        ProjectedRelationship::getTargetId, ProjectedRelationship::getConfidence,
+                        ProjectedRelationship::getSourcePropositionIds)
+                .containsExactlyInAnyOrder(
+                        tuple(acme, "IS_ON", mention(PRO, "Pro plan").getResolvedId(), 0.95, List.of(fact(PRO).getId())),
+                        tuple(mention(DANA, "Dana").getResolvedId(), "IS_THE_ADMIN_AT", acme, 0.9,
+                                List.of(fact(DANA).getId())),
+                        tuple(acme, "MOVED_BACK_TO", mention(BASIC, "Basic plan").getResolvedId(), 0.9,
+                                List.of(fact(BASIC).getId())));
+
+        for (var edge : graph.getProjected()) {
+            String sourceId = edge.getSourcePropositionIds().getFirst();
+            var source = propositions.findById(sourceId);
+            assertThat(source).isNotNull();
+            assertSourcedFrom(source, edge.getType().equals("IS_ON") ? CHAT_1 : CHAT_2);
+        }
     }
 
     @Test

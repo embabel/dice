@@ -27,6 +27,7 @@ start. `SupportDesk.chat(chatId, text)` is the only entry point they call.
 | Resolve entities | `SupportMemory.supportResolver` | `EscalatingEntityResolver` looks mentions up by name in the entity store, so "Acme" in chat 2 is the entity chat 1 created. |
 | Store as one unit | `SupportMemory.supportWriter`, `SupportDesk.chat` | `processText` returns unsaved results. `PersistUnitWriter.inMemory` stores the facts and new entities as one `PersistUnit` and puts both stores back when a step fails. |
 | Keep the source | `SupportDesk.chat` | The chat is the `SourceLocator`, a `ConnectorRef` named `chat`, and its id is the chunk id, so every fact points back at the chat it came from. |
+| Project the graph | `TwoChatTests.projectsTheChatsToEdgesThatCiteTheirStoredFacts` | `RelationBasedGraphProjector` turns the stored facts into edges over the resolved entities. Each edge carries its confidence and the fact id used to find the source chat. |
 
 `PersistUnit` and `PersistUnitWriter` are marked experimental in DICE.
 
@@ -40,6 +41,7 @@ start. `SupportDesk.chat(chatId, text)` is the only entry point they call.
 | `TwoChatTests.theSecondChatTagsTheContactAndThePlan` | Chat 2, admin Dana saying Acme moved back to Basic, gives facts that mention a `Contact` and a `Plan`. |
 | `TwoChatTests.acmeIsTheSameEntityInBothChats` | "Acme" in both chats resolves to the same entity id. |
 | `TwoChatTests.everyFactNamesItsChatInProvenanceAndGrounding` | Every fact names the chat it came from, in its provenance and in its grounding. |
+| `TwoChatTests.projectsTheChatsToEdgesThatCiteTheirStoredFacts` | Dana and both plans connect to the same Acme entity. Each edge keeps the recorded confidence and links through its fact to the right chat. |
 | `TwoChatTests.keepsTheScoresTheModelGaveEachFact` | Confidence, importance and decay are the values the model gave. |
 | `TwoChatTests.storesTheProAndTheBasicClaimsSideBySide` | With no reviser, the Pro claim and the Basic claim are both kept. The corrections-history example shows revision. |
 | `TwoChatTests.sendsEachChatToTheScriptedModelOnce` | Each chat reaches the scripted model once; no real model is called. |
