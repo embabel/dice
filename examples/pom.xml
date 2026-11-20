@@ -35,6 +35,7 @@
         <module>examples-kotlin</module>
         <module>examples-decision-revision</module>
         <module>examples-backend-swap</module>
+        <module>examples-graph-reasoning</module>
     </modules>
 
     <properties>
