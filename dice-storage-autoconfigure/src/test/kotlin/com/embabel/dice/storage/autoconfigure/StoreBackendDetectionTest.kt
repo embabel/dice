@@ -548,7 +548,7 @@ class StoreBackendDetectionTest {
         }
 
         @Test
-        fun `type=graph wires the Drivine stores, as it always has`() {
+        fun `type=graph wires the Drivine stores and its warning names no database`(output: CapturedOutput) {
             plain
                 .withUserConfiguration(StubDrivine::class.java)
                 .withPropertyValues("embabel.dice.store.type=graph")
@@ -556,6 +556,9 @@ class StoreBackendDetectionTest {
                     assertThat(ctx).hasNotFailed()
                     assertDrivineStores(ctx)
                     assertThat(ctx.getBean<CollectorTraceStore>()).isInstanceOf(DrivineCollectorTraceStore::class.java)
+                    assertThat(storeWarnings(output)).singleElement().asString()
+                        .contains(DEPRECATION_MARKER, "automatic store detection")
+                        .doesNotContainIgnoringCase("neo4j")
                 }
         }
 
