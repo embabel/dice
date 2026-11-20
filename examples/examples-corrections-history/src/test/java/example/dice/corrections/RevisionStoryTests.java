@@ -15,6 +15,9 @@
  */
 package example.dice.corrections;
 
+import com.embabel.dice.evidence.Evidence;
+import com.embabel.dice.evidence.EvidenceConverter;
+import com.embabel.dice.evidence.EvidenceItem;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.revision.RevisionResult;
@@ -142,6 +145,10 @@ class RevisionStoryTests {
             assertThat(contradicted.getNew().getText()).isEqualTo(MONTHLY);
             // Neither invoice fact mentions a plan, so neither carries the status predicate.
             assertThat(contradicted.getConflictType() instanceof ConflictType.Contradiction).isTrue();
+            assertThat(EvidenceConverter.create().fromContradiction(contradicted))
+                    .isInstanceOfSatisfying(Evidence.Conflicting.class, conflict ->
+                            assertThat(conflict.getItems()).extracting(EvidenceItem::getText)
+                                    .containsExactly(ANNUAL, MONTHLY));
         });
     }
 
@@ -157,6 +164,14 @@ class RevisionStoryTests {
             assertThat(contradicted.getNew().getText()).isEqualTo(BASIC);
             // Both plan facts carry the status predicate, and the Basic plan claim is newer.
             assertThat(contradicted.getConflictType() instanceof ConflictType.WorldProgression).isTrue();
+            assertThat(EvidenceConverter.create().fromContradiction(contradicted))
+                    .isInstanceOfSatisfying(Evidence.Superseded.class, evidence -> {
+                        assertThat(evidence.getCurrent().getText()).isEqualTo(BASIC);
+                        assertThat(evidence.getPrevious()).singleElement().satisfies(previous -> {
+                            assertThat(previous.getText()).isEqualTo(PRO);
+                            assertThat(previous.getStatus()).isEqualTo(PropositionStatus.SUPERSEDED);
+                        });
+                    });
         });
     }
 

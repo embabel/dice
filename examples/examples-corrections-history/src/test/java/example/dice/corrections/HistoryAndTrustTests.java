@@ -15,7 +15,11 @@
  */
 package example.dice.corrections;
 
+import com.embabel.dice.agent.Memory;
 import com.embabel.dice.common.DiceMetadataKeys;
+import com.embabel.dice.evidence.Evidence;
+import com.embabel.dice.evidence.EvidenceConverter;
+import com.embabel.dice.evidence.Searched;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionQuery;
 import com.embabel.dice.proposition.PropositionStatus;
@@ -75,13 +79,24 @@ class HistoryAndTrustTests {
     @Test
     void defaultRecallLeavesOutTheContradictedClaims() {
 
-        // The status filter DICE's Memory puts on every recall, so corrected facts never
-        // reach the model's context.
-        var recalled = facts.query(PropositionQuery.againstContext(CorrectionsDesk.ACCOUNT)
-                .withStatuses(Set.of(PropositionStatus.ACTIVE)));
+        var recalled = Memory.forContext(CorrectionsDesk.ACCOUNT)
+                .withRepository(facts)
+                .withMinConfidence(0.0)
+                .withEagerQuery(query -> query)
+                .eagerSelection().getSelected();
 
         assertThat(recalled).extracting(Proposition::getText)
                 .containsExactlyInAnyOrder(MONTHLY, BASIC, PAYING);
+    }
+
+    @Test
+    void anAccountWithNoClaimsProducesMissingEvidence() {
+        var claims = facts.query(PropositionQuery.againstContext("globex"));
+        var searched = Searched.of("globex");
+
+        assertThat(EvidenceConverter.create().fromPropositions(claims, searched))
+                .isInstanceOfSatisfying(Evidence.Missing.class,
+                        missing -> assertThat(missing.getSearched()).isEqualTo(searched));
     }
 
     @Test
