@@ -26,8 +26,10 @@ import com.embabel.dice.storage.TestApplication
 import com.embabel.dice.storage.cypherQuery
 import org.drivine.connection.DatabaseRegistry
 import org.drivine.connection.NativeDriverSource
+import org.drivine.manager.DelegatingPersistenceManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.transaction.Transactions
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -112,6 +114,25 @@ class SqliteWriterContentionIntegrationTest {
             executor.shutdownNow()
             executor.awaitTermination(60, TimeUnit.SECONDS)
         }
+    }
+
+    @Test
+    fun `a save inside a Drivine transaction joins it without Spring`() {
+        val holder = (persistenceManager as DelegatingPersistenceManager).contextHolder
+        val noSpring = object : PlatformTransactionManager by transactionManager {
+            override fun getTransaction(definition: TransactionDefinition?): TransactionStatus =
+                error("A Drivine transaction is already active")
+        }
+        val direct = DrivinePropositionRepository(graphObjectManager, persistenceManager, embeddingService, noSpring)
+        val context = ContextId("native-transaction")
+        val fact = ghost("The ghost watches the front door", context)
+
+        Transactions(holder).transactionWithoutResult(rollback = true) {
+            assertEquals(fact.id, direct.save(fact).id)
+            assertEquals(fact.id, direct.findById(fact.id)?.id)
+        }
+
+        assertTrue(repository.findByContextId(context).isEmpty())
     }
 
     /**

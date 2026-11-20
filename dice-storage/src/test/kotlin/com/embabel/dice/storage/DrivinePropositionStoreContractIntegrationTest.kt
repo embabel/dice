@@ -25,7 +25,6 @@ import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.storage.model.PropositionView
 import org.drivine.StaleObjectException
-import org.drivine.connection.DatabaseType
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.load
@@ -45,6 +44,8 @@ import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.TransactionStatus
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
 import org.springframework.transaction.interceptor.TransactionInterceptor
+import org.springframework.transaction.support.TransactionTemplate
+import java.time.Instant
 
 /**
  * Runs the [AbstractPropositionStoreContractTest] suite against
@@ -97,13 +98,9 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         assertEquals(setOf(first.id, second.id), setOf(clusters.single().anchor.id) + clusters.single().similar.map { it.match.id })
     }
 
-    /**
-     * Through Spring's transaction advice, as the bean has it. On SQLite a transaction of its own
-     * would hold the file's write lock through every anchor's search, so a standalone pass opens
-     * none. Every other backend reads in one read-only transaction of its own.
-     */
+    /** Spring keeps candidate selection and similarity in the same read transaction. */
     @Test
-    fun `findClusters opens a read-only transaction everywhere but SQLite`() {
+    fun `findClusters opens one read-only transaction`() {
         fun ghost(text: String, context: String) = Proposition(
             contextId = ContextId(context),
             text = text,
@@ -123,8 +120,30 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         val clusters = clustering.findClusters(similarityThreshold = 0.95, topK = 10, query = PropositionQuery())
 
         assertEquals(1, clusters.size)
-        val expected = if (persistenceManager.type == DatabaseType.SQLITE) emptyList() else listOf(true)
-        assertEquals(expected, recording.opened)
+        assertEquals(listOf(true), recording.opened)
+    }
+
+    @Test
+    fun `a directly constructed repository keeps an access update in the caller's transaction`() {
+        val saved = repository.save(
+            Proposition(
+                contextId = ContextId("direct-touch"),
+                text = "The ghost haunts the stairs",
+                mentions = emptyList(),
+                confidence = 0.9,
+                lastAccessed = Instant.EPOCH,
+            ),
+        )
+        val recording = OpenedTransactionRecorder(transactionManager)
+        val direct = DrivinePropositionRepository(graphObjectManager, persistenceManager, embeddingService, recording)
+
+        TransactionTemplate(transactionManager).executeWithoutResult { status ->
+            direct.touchAccessed(listOf(saved.id))
+            status.setRollbackOnly()
+        }
+
+        assertEquals(emptyList<Boolean>(), recording.opened)
+        assertEquals(Instant.EPOCH, repository.findById(saved.id)!!.lastAccessed)
     }
 
     @Test

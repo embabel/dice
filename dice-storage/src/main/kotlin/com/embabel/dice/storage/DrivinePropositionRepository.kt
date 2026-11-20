@@ -59,6 +59,7 @@ import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.interceptor.TransactionAspectSupport
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
@@ -188,9 +189,6 @@ class DrivinePropositionRepository(
         callerTransactionHoldsWriteLock &&
             (persistenceManager as? DelegatingPersistenceManager)?.contextHolder?.currentTransaction != null
 
-    /** Reads in one read-only transaction, the caller's when there is one (see [findClusters]). */
-    private val readOnlyTransaction = TransactionTemplate(transactionManager).apply { isReadOnly = true }
-
     override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
 
     override val luceneSyntaxNotes: String get() = "no lucene support"
@@ -223,20 +221,22 @@ class DrivinePropositionRepository(
      *   one and can commit.
      */
     @Transactional(propagation = Propagation.SUPPORTS)
-    override fun save(proposition: Proposition): Proposition =
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            saveInCallerTransaction(proposition)
+    override fun save(proposition: Proposition): Proposition {
+        val graphWrite = inGraphWriteTransaction()
+        return if (graphWrite || TransactionSynchronizationManager.isActualTransactionActive()) {
+            saveInCallerTransaction(proposition, graphWrite)
         } else {
             saveInOwnedTransaction(proposition)
         }
+    }
 
-    private fun saveInCallerTransaction(proposition: Proposition): Proposition {
+    private fun saveInCallerTransaction(proposition: Proposition, graphWrite: Boolean): Proposition {
         val text = proposition.text
         if (text.isBlank()) {
             return doPersist(proposition)
         }
         val contextId = proposition.contextId.value
-        if (inGraphWriteTransaction()) {
+        if (graphWrite) {
             return findOrPersist(proposition, contextId, text)
         }
         return synchronized(lockFor(contextId, text)) {
@@ -1160,24 +1160,8 @@ class DrivinePropositionRepository(
      * a later id, as the in-memory store pairs them. That reads every pair above the threshold, so
      * its cost and memory grow with the square of the number of candidates.
      */
-    // SUPPORTS for SQLite, which takes the file's write lock for a read-only transaction too, and
-    // would hold it through every anchor's search. Standalone, each statement there reads on its
-    // own, so a write landing between the candidates and their scores can show in a cluster; a
-    // caller's transaction is joined for one state. Every other backend reads in one read-only
-    // transaction, its own or the caller's, so the candidates and their neighbours agree.
-    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
+    @Transactional(readOnly = true)
     override fun findClusters(
-        similarityThreshold: ZeroToOne,
-        topK: Int,
-        query: PropositionQuery,
-    ): List<Cluster<Proposition>> =
-        if (persistenceManager.type == DatabaseType.SQLITE) {
-            clustersOf(similarityThreshold, topK, query)
-        } else {
-            readOnlyTransaction.execute { clustersOf(similarityThreshold, topK, query) }.orEmpty()
-        }
-
-    private fun clustersOf(
         similarityThreshold: ZeroToOne,
         topK: Int,
         query: PropositionQuery,
@@ -1286,9 +1270,8 @@ class DrivinePropositionRepository(
      * touch's own could not commit until the caller's ended. SQLite's read-only transactions still
      * take writes. Empty [ids] is a no-op — no need to open a transaction for nothing.
      */
-    // SUPPORTS so a caller's SQLite transaction can be joined, and read-only so a read-only caller's
-    // is joined without complaint where Spring validates participants. A failed touch never marks the caller's transaction: elsewhere
-    // it runs in a transaction of its own, as it always has.
+    // SUPPORTS lets SQLite join the caller. Only the separate transaction can be rolled back
+    // on the other backends.
     @Transactional(propagation = Propagation.SUPPORTS, readOnly = true, noRollbackFor = [Throwable::class])
     override fun touchAccessed(ids: Collection<String>) {
         if (ids.isEmpty()) return
@@ -1300,8 +1283,33 @@ class DrivinePropositionRepository(
         }
         if (inGraphWriteTransaction()) {
             touch()
-        } else {
-            txTemplate.executeWithoutResult { touch() }
+            return
+        }
+
+        AccessUpdateAdvice.runTouch(this, touch)
+    }
+
+    private object AccessUpdateAdvice : TransactionAspectSupport() {
+
+        /**
+         * A direct call uses the caller's transaction, if any. An advised call uses the same manager
+         * Spring selected for the method, so it can still write from a read-only caller on Neo4j.
+         *
+         * @param target the repository receiving the call
+         * @param touch updates the access stamps
+         */
+        fun runTouch(target: DrivinePropositionRepository, touch: () -> Unit) {
+            val name = "${target.javaClass.name}.touchAccessed"
+            val info = currentTransactionInfo()?.takeIf { it.joinpointIdentification == name }
+            val manager = info?.transactionManager
+            if (manager == null) {
+                touch()
+                return
+            }
+            TransactionTemplate(manager).apply {
+                propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
+                setName(name)
+            }.executeWithoutResult { touch() }
         }
     }
 
