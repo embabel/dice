@@ -54,13 +54,14 @@ import java.time.ZoneOffset
  * the proof used. Nothing is stored; recorded claims and derived conclusions stay apart.
  *
  * **Inputs are declared.** The engine doesn't report which facts a proof touched, so each rule clause gets a
- * [RuleDeclaration] naming the facts it reads. For every answer the provider runs the declared clause against
- * that answer, then matches each declared input to the projected facts. Keeping this out of Prolog itself
- * means the same declarations still work if the engine behind this becomes a Datalog one. Declarations are
- * tried in the order they were added; the first that proves the answer and finds a recorded fact with source
- * ids for every input is the one cited. Guards such as `X \= Y` run with the clause but are never cited; inputs
- * and guards run in the order they were added, interleaved, so a guard added before an input runs before it. An
- * answer no declaration can trace is left out, and so is one whose facts carry no source ids.
+ * [RuleDeclaration] naming the facts it reads. For every answer the provider replays the declared clause with
+ * the goal's original bindings and matches each declared input to the projected facts once the replay reaches
+ * that answer. Keeping this out of Prolog itself means the same declarations still work if the engine behind
+ * this becomes a Datalog one. Declarations are tried in the order they were added. The first to prove the
+ * answer and find a recorded fact with source ids for every input is the one cited. Guards such as `X \= Y`
+ * run alongside the inputs in the order they were added. Only the inputs are cited. The provider leaves
+ * out answers it can't trace to recorded facts with source ids. Each answer runs its own replay, so a goal
+ * with unbound variables can visit the same inputs many times.
  *
  * **Recursive rules are not supported.** A rule that calls itself, such as a chain of managers, can't be
  * declared this way; a proof-tree engine can supply those later. A goal with no declaration for its predicate
@@ -68,8 +69,8 @@ import java.time.ZoneOffset
  * every answer is worked out before the goal's limit is applied. Only ask declared rules that don't recurse.
  *
  * **Answers stay terms.** The goal and each declaration's head, inputs and guards are parsed into Prolog terms once,
- * and every answer is put into them as terms for tracing, citing and spotting repeats, never pasted in as text, so a
- * value always means exactly what Prolog bound. Declarations are picked by the parsed goal's name and arity. A lone
+ * and tracing, citing and spotting repeats all use Prolog terms, so a value always means exactly what Prolog
+ * bound. Declarations are picked by the parsed goal's name and arity. A lone
  * `_`, in the goal or in a declared input or guard, gets a variable of its own so its value comes back: answers that
  * differ only there stay separate conclusions, and an input with a `_` cites only the fact it matched.
  *
@@ -203,7 +204,7 @@ class PrologEvidenceProvider private constructor(
             if (conclusions.size >= goal.limit) break
             val filled = namedGoal.apply(answer) as Struct
             if (!seen.add(termKey(filled))) continue
-            val facts = declared.firstNotNullOfOrNull { trace(it, filled) } ?: continue
+            val facts = declared.firstNotNullOfOrNull { trace(it, namedGoal, filled) } ?: continue
             val values = goalVariables.associate { it.name to it.apply(answer) }
             // The text shown for an answer that can't be written so it reads back would name another term.
             val text = conclusionText(goal.goal, values, named.map { it.apply(answer) }, filled)
@@ -219,12 +220,20 @@ class PrologEvidenceProvider private constructor(
         return conclusions
     }
 
-    // Runs the declared clause against one filled-in answer and returns the recorded facts behind it, or null when
-    // the clause doesn't prove it or some input has no citable fact.
-    private fun trace(declaration: ParsedDeclaration, filled: Struct): List<CitableFact>? {
+    /**
+     * Finds the recorded facts behind the first citable proof of one answer.
+     *
+     * @param declaration the clause to replay
+     * @param namedGoal the goal as asked, with each anonymous variable given a name
+     * @param filled the answer the replay must reach
+     * @return the cited facts, or null when no matching proof has a recorded fact for every input
+     */
+    private fun trace(declaration: ParsedDeclaration, namedGoal: Struct, filled: Struct): List<CitableFact>? {
         if (declaration.inputs.isEmpty()) return null
+        // Match the goal first so guards see the caller's bindings. Check the answer after the body runs.
         val query = Tuple.wrapIfNeeded(
-            listOf(Struct.of("=", declaration.head, filled)) + declaration.body
+            listOf(Struct.of("=", declaration.head, namedGoal)) + declaration.body +
+                Struct.of("=", declaration.head, filled)
         ) as Struct
 
         for (proof in engine.solveTerm(query)) {

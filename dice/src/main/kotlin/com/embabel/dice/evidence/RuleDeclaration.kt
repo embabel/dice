@@ -27,9 +27,9 @@ import java.util.Objects
  * also runs, such as `X \= Y`; it narrows the answers but is never cited as a fact. A rule with several clauses
  * gets one declaration per clause. Each `with` method returns a copy.
  *
- * Inputs and guards run in the order they were added, interleaved, just as the goals in a clause's body do. A guard
- * added before an input runs before it, so a test such as `var(Y)` sees `Y` before the input binds it; a guard added
- * after an input sees what that input bound.
+ * Inputs and guards run in the order they were added, starting with the bindings from the goal as asked.
+ * That's how the engine runs the clause body when it answers the goal. If the caller leaves `Y` unbound, a
+ * guard such as `var(Y)` can test it before an input binds it.
  *
  * The inputs are declared rather than traced from the engine, so the same declaration works whichever engine
  * runs the rule. A rule that calls itself, such as a chain of managers, can't be declared this way.

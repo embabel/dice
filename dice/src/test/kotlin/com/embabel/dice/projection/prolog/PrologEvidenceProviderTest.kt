@@ -23,6 +23,7 @@ import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.temporal.TemporalMetadata
 import org.junit.jupiter.api.Assertions.assertAll
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
@@ -468,6 +469,64 @@ class PrologEvidenceProviderTest {
 
             assertTrue(PrologEngine.fromTheory("").query("(${derived.conclusion}) == op_pair((a :- b) - 1)"))
             assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+    }
+
+    @Nested
+    inner class GuardBindings {
+
+        private val varRule = "r(X, Y) :- var(Y), pair(X, Y)."
+        private val varDeclaration = RuleDeclaration.of("r(X, Y)").withGuard("var(Y)").withInput("pair(X, Y)")
+        private val pairAB = fact("pair", "a", "b", confidence = 0.9, ids = listOf("prop-ab"))
+        private val pairAC = fact("pair", "a", "c", confidence = 0.8, ids = listOf("prop-ac"))
+
+        @Test
+        fun `a guard sees an unbound head variable before the input binds it`() {
+            val derived = only(
+                provider(listOf(pairAB), varRule).withDeclaration(varDeclaration)
+                    .conclusions(RuleGoal.of("r(a, Y)"))
+            )
+
+            assertEquals("r(a, 'b')", derived.conclusion)
+            assertEquals(listOf("prop-ab"), derived.inputIds)
+        }
+
+        @Test
+        fun `a guard after the input filters the answers using the input's binding`() {
+            val rules = "r(X, Y) :- pair(X, Y)."
+            val declaration = RuleDeclaration.of("r(X, Y)").withInput("pair(X, Y)").withGuard("Y \\= c")
+
+            val derived = only(
+                provider(listOf(pairAB, pairAC), rules).withDeclaration(declaration)
+                    .conclusions(RuleGoal.of("r(a, Y)"))
+            )
+
+            assertEquals("r(a, 'b')", derived.conclusion)
+            assertEquals(listOf("prop-ab"), derived.inputIds)
+        }
+
+        @Test
+        fun `a goal that already binds the tested head variable has no conclusion`() {
+            val facts = listOf(pairAB)
+            val goal = RuleGoal.of("r(a, b)")
+            val engine = PrologEngine.fromProjection(projection(facts), PrologSchema.withRules(varRule))
+
+            assertFalse(engine.query(goal.goal))
+            assertTrue(provider(facts, varRule).withDeclaration(varDeclaration).conclusions(goal).isEmpty())
+        }
+
+        @Test
+        fun `each answer cites only the facts from a proof that reaches that answer`() {
+            val rules = "r(X, Y) :- pair(X, Y)."
+            val declaration = RuleDeclaration.of("r(X, Y)").withInput("pair(X, Y)")
+
+            val conclusions = provider(listOf(pairAB, pairAC), rules).withDeclaration(declaration)
+                .conclusions(RuleGoal.of("r(a, Y)"))
+
+            assertEquals(
+                listOf("r(a, 'b')" to listOf("prop-ab"), "r(a, 'c')" to listOf("prop-ac")),
+                conclusions.map { it.conclusion to it.inputIds },
+            )
         }
     }
 
