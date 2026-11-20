@@ -60,7 +60,7 @@ class PrologEngine private constructor(
         ClassicSolverFactory.solverWithDefaultBuiltins(staticKb = parsedTheory.value)
     }
 
-    // Each provider copy gets its own solver state over the same parsed rules.
+    // Each evidence request gets its own solver state over the same parsed rules.
     @JvmSynthetic
     internal fun fresh(): PrologEngine = PrologEngine(parsedTheory)
 

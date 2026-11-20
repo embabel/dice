@@ -1671,8 +1671,9 @@ if (evidence instanceof Evidence.Derived) {
 Recorded and derived claims stay apart: a conclusion is worked out when you ask for it, and nothing is stored back in the repository.
 Inputs are declared rather than traced, one `RuleDeclaration` per rule clause, so a rule with three clauses needs three declarations.
 If a clause or its declaration uses a cut (`!`) as a goal, `withDeclaration` throws `IllegalArgumentException` naming the predicate and arity. This also applies when you declare a different clause of that predicate. You can still query it through `PrologEngine`.
+Setup logs a warning and skips a declaration that Prolog cannot parse.
 Recursive rules such as `reports_to_chain` can't be declared this way yet.
-A conclusion's confidence is the weakest of its inputs, using each source proposition's decayed confidence when a repository is given.
+Each matched fact record takes the highest decayed confidence among its stored source propositions, or its own confidence if none is found. The conclusion takes the lowest score across all matched records, including records whose arguments normalise to the same atom.
 When a goal can't be proved you get `Evidence.Missing`, and not provable doesn't mean false, since the facts may just not be there yet.
 This is experimental, and the engine behind it may change.
 

@@ -100,9 +100,11 @@ import java.time.ZoneOffset
  * them, so `value('\x61\b')` is the atom `ab` and cites the projected `value(ab)`, while `value('a\nb')` holds a line
  * break and doesn't cite `value(anb)`.
  *
- * **Confidence** is the weakest input: each matched fact counts at the highest decayed confidence among its source
- * propositions found in the repository (an invalidated one counts at 0.0), or its own confidence when none is found
- * or no repository is set. With a repository the found propositions are also attached as the conclusion's inputs.
+ * **Confidence.** Each matched fact record takes the highest decayed confidence among its stored source
+ * propositions, or its own confidence if none is found. An invalidated source counts at 0.0. The conclusion
+ * takes the lowest of those scores.
+ * Separate records count individually even when their arguments normalise to the same atom. With a repository
+ * the found propositions are also attached as the conclusion's inputs.
  *
  * Two answers whose filled-in goals are the same term give one conclusion, citing the first proof found: declarations
  * in the order added, answers in Prolog's order. The goal's context is only used to name the search in a
@@ -141,8 +143,6 @@ class PrologEvidenceProvider private constructor(
         repository: PropositionStore?,
     ) : this(EvidenceSource(projection, schema), declarations, repository)
 
-    private val engine = source.engine.fresh()
-
     private class EvidenceSource(projection: PrologProjectionResult, schema: PrologSchema) {
         // Setup checks, queries and the rule hash all use this snapshot of the projection.
         private val theory = projection.toTheory(schema)
@@ -159,15 +159,23 @@ class PrologEvidenceProvider private constructor(
 
     /**
      * Returns a copy that also traces answers through [declaration], tried after the declarations already there.
+     * If Prolog cannot parse the declaration, setup logs a warning and leaves it out.
      *
      * @param declaration one clause of a rule and the facts it reads
      * @return the updated provider
      * @throws IllegalArgumentException if the declaration or any clause of the predicate uses a cut as a goal
      */
     fun withDeclaration(declaration: RuleDeclaration): PrologEvidenceProvider {
-        val parsed = parseDeclaration(declaration, engine)
-        val declarations = if (parsed == null) parsedDeclarations else parsedDeclarations + parsed
-        return PrologEvidenceProvider(source, declarations, repository)
+        val parsed = parseDeclaration(declaration, source.engine)
+        if (parsed == null) {
+            logger.warn(
+                "Skipping evidence declaration for {}/{} because it could not be parsed",
+                declaration.predicate,
+                declaration.arity,
+            )
+            return PrologEvidenceProvider(source, parsedDeclarations, repository)
+        }
+        return PrologEvidenceProvider(source, parsedDeclarations + parsed, repository)
     }
 
     /**
@@ -193,6 +201,7 @@ class PrologEvidenceProvider private constructor(
     /**
      * Returns every conclusion for [goal], at most [RuleGoal.limit] of them, in the order Prolog finds the answers.
      * Empty when the goal has no declaration or nothing declared can be proved and traced.
+     * Concurrent calls share the parsed theory. Each call solves the goal and replays its proofs with its own solver.
      *
      * @param goal the goal to ask
      * @return the conclusions, one per distinct filled-in goal
@@ -211,11 +220,12 @@ class PrologEvidenceProvider private constructor(
 
         val seen = HashSet<String>()
         val conclusions = ArrayList<Evidence.Derived>()
+        val engine = source.engine.fresh()
         for (answer in engine.solveTerm(namedGoal)) {
             if (conclusions.size >= goal.limit) break
             val filled = namedGoal.apply(answer) as Struct
             if (!seen.add(termKey(filled))) continue
-            val facts = declared.firstNotNullOfOrNull { trace(it, namedGoal, filled) } ?: continue
+            val facts = declared.firstNotNullOfOrNull { trace(engine, it, namedGoal, filled) } ?: continue
             val values = goalVariables.associate { it.name to it.apply(answer) }
             // The text shown for an answer that can't be written so it reads back would name another term.
             val text = conclusionText(goal.goal, values, named.map { it.apply(answer) }, filled)
@@ -234,12 +244,18 @@ class PrologEvidenceProvider private constructor(
     /**
      * Finds the recorded facts behind the first citable proof of one answer.
      *
+     * @param engine the solver for this request
      * @param declaration the clause to replay
      * @param namedGoal the goal as asked, with each anonymous variable given a name
      * @param filled the answer the replay must reach
      * @return the cited facts, or null when no matching proof has a recorded fact for every input
      */
-    private fun trace(declaration: ParsedDeclaration, namedGoal: Struct, filled: Struct): List<CitableFact>? {
+    private fun trace(
+        engine: PrologEngine,
+        declaration: ParsedDeclaration,
+        namedGoal: Struct,
+        filled: Struct,
+    ): List<CitableFact>? {
         if (declaration.inputs.isEmpty()) return null
         // Match the goal first so guards see the caller's bindings. Check the answer after the body runs.
         val query = Tuple.wrapIfNeeded(

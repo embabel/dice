@@ -36,6 +36,10 @@ import org.junit.jupiter.api.function.ThrowingSupplier
 import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.Callable
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class PrologEvidenceProviderTest {
 
@@ -470,6 +474,36 @@ class PrologEvidenceProviderTest {
 
             assertTrue(PrologEngine.fromTheory("").query("(${derived.conclusion}) == op_pair((a :- b) - 1)"))
             assertEquals(listOf("prop-1"), derived.inputIds)
+        }
+    }
+
+    @Test
+    fun `concurrent calls to one provider cite only the requesting goal's facts`() {
+        val callers = (1..6).map { "caller$it" }
+        val values = (1..5).map { "value$it" }
+        val facts = callers.flatMap { caller ->
+            values.map { value -> fact("pair", caller, value, confidence = 0.9, ids = listOf("$caller-$value")) }
+        }
+        // Keep the requests inside the solver together even when a query would otherwise finish in a single time slice.
+        val provider = provider(facts, "r(X, Y) :- sleep(2), pair(X, Y).")
+            .withDeclaration(RuleDeclaration.of("r(X, Y)").withGuard("sleep(2)").withInput("pair(X, Y)"))
+        val pool = Executors.newFixedThreadPool(callers.size)
+        val start = CyclicBarrier(callers.size)
+        try {
+            val requests = callers.associateWith { caller ->
+                pool.submit(Callable {
+                    List(4) {
+                        start.await(10, TimeUnit.SECONDS)
+                        provider.conclusions(RuleGoal.of("r($caller, Y)")).map { it.conclusion to it.inputIds }
+                    }
+                })
+            }
+            for ((caller, request) in requests) {
+                val expected = values.map { value -> "r($caller, '$value')" to listOf("$caller-$value") }
+                for (answers in request.get(30, TimeUnit.SECONDS)) assertEquals(expected, answers)
+            }
+        } finally {
+            pool.shutdownNow()
         }
     }
 
