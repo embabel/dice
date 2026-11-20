@@ -240,8 +240,8 @@ class JavaReachabilityListingTest {
             }
         }
         listings.sort(null);
-        for (String expected : List.of("dice/api/dice.api", "dice/api/dice.experimental.api",
-                "dice-storage/api/dice-storage.api", "dice-metamodel/api/dice-metamodel.api")) {
+        for (String expected : List.of("dice/api/dice.api", "dice-storage/api/dice-storage.api",
+                "dice-metamodel/api/dice-metamodel.api")) {
             assertTrue(listings.contains(root.resolve(expected)), "Missing API listing " + root.resolve(expected));
         }
         return listings;

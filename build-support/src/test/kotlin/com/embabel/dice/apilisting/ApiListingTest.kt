@@ -50,17 +50,59 @@ class ApiListingTest {
     }
 
     @Test
-    fun `a facade whose functions are all experimental goes to the experimental listing`() {
+    fun `a facade whose functions are all experimental is left out`() {
         listing("update")
-        assertTrue(api.resolve("m.experimental.api").readText().contains("/ExperimentalFunctionsKt {"))
         assertFalse(api.resolve("m.api").readText().contains("/ExperimentalFunctionsKt {"))
     }
 
     @Test
-    fun `a facade with one plain function stays in the stable listing`() {
+    fun `a facade with one plain function stays in the listing`() {
         listing("update")
         assertTrue(api.resolve("m.api").readText().contains("/MixedFunctionsKt {"))
-        assertFalse(api.resolve("m.experimental.api").readText().contains("/MixedFunctionsKt {"))
+    }
+
+    @Test
+    fun `an experimental class is left out with its nested class and companion`() {
+        listing("update")
+        val listed = api.resolve("m.api").readText()
+        listOf("/Trial {", "/Trial\$Step {", "/Trial\$Companion {").forEach { assertFalse(listed.contains(it), it) }
+    }
+
+    @Test
+    fun `an experimental member keeps its class and itself in the listing`() {
+        listing("update")
+        val listed = api.resolve("m.api").readText()
+        assertTrue(listed.contains("/Settled {"), listed)
+        assertTrue(listed.contains("tryOut"), listed)
+    }
+
+    @Test
+    fun `update writes no experimental listing`() {
+        assertEquals(0, listing("update"))
+        Files.list(api).use { files -> assertEquals(listOf("m.api"), files.map { it.fileName.toString() }.toList()) }
+    }
+
+    @Test
+    fun `check fails on a leftover experimental listing and says to delete it`() {
+        listing("update")
+        val leftover = api.resolve("m.experimental.api")
+        leftover.writeText("public final class a/B {\n}\n")
+
+        assertEquals(1, listing("check"))
+        assertTrue(err.toString().contains("$leftover is no longer used"), err.toString())
+        assertTrue(err.toString().contains("Delete it"), err.toString())
+        assertTrue(Files.exists(leftover))
+    }
+
+    @Test
+    fun `update deletes a leftover experimental listing`() {
+        val leftover = api.createDirectories().resolve("m.experimental.api")
+        leftover.writeText("public final class a/B {\n}\n")
+
+        assertEquals(0, listing("update"), err.toString())
+        assertFalse(Files.exists(leftover))
+        assertTrue(out.toString().contains("Deleted $leftover"), out.toString())
+        assertEquals(0, listing("check"), err.toString())
     }
 
     @Test

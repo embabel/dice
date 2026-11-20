@@ -55,9 +55,10 @@ The Build workflow builds them right after the library, on every pull request an
 
 ## Public API listings
 
-Each published module keeps its public API as committed text under `api/`: `api/<module>.api` for the
-stable types, and `api/<module>.experimental.api` for types marked `@ApiStatus.Experimental` (only when there
-are any). A nested type is listed under its owner.
+Each published module keeps its public API as committed text in `api/<module>.api`. A nested type is listed
+under its owner. Types marked `@ApiStatus.Experimental` are left out: the annotation already says they carry no
+compatibility promise, so the listing doesn't track them. Their nested types and companions are left out with
+them.
 
 Right after compile (`process-classes`), the build compares the compiled classes with those files and fails
 on any difference, before any test runs. When it fails on a listing, the public API changed and the listing
@@ -84,14 +85,15 @@ major and minor version is ahead of it, so raise it when the Kotlin version move
 Generated code is left out. A module names its generated source root in `api.listing.generated.sources`, as
 `dice-storage` does for Drivine's query DSL, whose output `./mvnw clean` also deletes. The check stops when a
 generated file has the same name and package as a hand-written one, because it cannot tell their classes apart.
-A file facade (`FooKt`) whose top-level functions are all experimental goes to the experimental listing.
+A file facade (`FooKt`) whose top-level functions are all experimental is left out like an experimental type.
 
-A marker on an enum entry, or on a member of a stable type, moves nothing and does not show in the count.
-Count the types (stable, then experimental):
+A marker on an enum entry, or on a member of a stable type, leaves that member in the listing with its owner.
+The annotation is the record of what is experimental, so search for it to find those types. Count the listed
+types from the listings:
 
 ```
-cat $(ls */api/*.api | grep -v experimental) | grep -c '^public '     # stable
-cat */api/*.experimental.api | grep -c '^public '                     # experimental
+git grep -l '@ApiStatus.Experimental' -- '*/src/main/*' | wc -l   # source files with experimental declarations
+cat */api/*.api | grep -c '^public '                              # listed types
 ```
 
 ## How the code is organized

@@ -22,3 +22,21 @@ fun firstTrial(): Int = 1
 
 @ApiStatus.Experimental
 fun secondTrial(): Int = 2
+
+@ApiStatus.Experimental
+class Trial {
+
+    class Step
+
+    companion object {
+        fun start(): Trial = Trial()
+    }
+}
+
+class Settled {
+
+    fun keep(): Int = 1
+
+    @ApiStatus.Experimental
+    fun tryOut(): Int = 2
+}

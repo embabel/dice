@@ -43,12 +43,17 @@ import org.objectweb.asm.Opcodes;
 /**
  * Keeps a module's public API listing in step with its compiled classes.
  *
- * <p>Each module has two listings under its {@code api} directory. {@code <module>.api} holds the
- * types that carry a compatibility promise. {@code <module>.experimental.api} holds the types
- * marked {@code @ApiStatus.Experimental}, and is absent when a module has none.
+ * <p>Each module has one listing, {@code api/<module>.api}, which holds the types that carry a
+ * compatibility promise. A type marked {@code @ApiStatus.Experimental} makes no such promise, and the
+ * annotation already says so, so the listing leaves it out along with its nested types and companion.
+ * A file facade whose top-level functions are all experimental is left out too. A marker on a single
+ * member or enum entry doesn't count: that member stays in the listing with its owner.
  *
- * <p>The build runs this in {@code check} mode right after compile, and it fails when a listing
- * differs from the compiled classes. {@code update} mode rewrites the listings.
+ * <p>The build runs this in {@code check} mode right after compile, and it fails when the listing
+ * differs from the compiled classes. {@code update} mode rewrites the listing.
+ *
+ * <p>Modules used to keep a second {@code <module>.experimental.api} listing. Check mode fails while
+ * one is still around, so an old branch can't quietly keep it, and update mode deletes it.
  *
  * <p>A class compiled from a file under the {@code --generated} source root is left out, because
  * generated code carries no compatibility promise. The program stops when a hand-written
@@ -162,7 +167,6 @@ public final class ApiListing {
         List<String> withoutExperimental = blocks(
                 dumper.apply(classFiles, new AbiFilters(Set.of(), Set.of(), Set.of(), Set.of(EXPERIMENTAL))));
         List<String> stableBlocks = new ArrayList<>();
-        List<String> experimentalBlocks = new ArrayList<>();
         try {
             // A type is experimental when the marker sits on the type itself: leaving marked declarations
             // out drops the whole type. A marker on an enum entry or a member only drops that member, so
@@ -178,17 +182,19 @@ public final class ApiListing {
                 String name = typeName(block);
                 boolean isExperimental = experimentalTypes.contains(name)
                         || experimentalTypes.stream().anyMatch(owner -> name.startsWith(owner + "$"));
-                (isExperimental ? experimentalBlocks : stableBlocks).add(block);
+                if (!isExperimental) {
+                    stableBlocks.add(block);
+                }
             }
         } catch (IllegalStateException e) {
             err.println(e.getMessage());
             return 2;
         }
         String stable = listing(stableBlocks);
-        String experimental = listing(experimentalBlocks);
 
         boolean matches = sync(apiDir.resolve(module + ".api"), stable, update, out, err);
-        matches &= sync(apiDir.resolve(module + ".experimental.api"), experimental, update, out, err);
+        boolean leftoverGone =
+                removeOldExperimentalListing(apiDir.resolve(module + ".experimental.api"), update, out, err);
         if (!matches) {
             err.println("The public API changed. Review the difference above, then regenerate the"
                     + " listings with: ./mvnw -B -Dapi.listing.mode=update process-classes");
@@ -201,7 +207,32 @@ public final class ApiListing {
             }
             return 1;
         }
-        return 0;
+        return leftoverGone ? 0 : 1;
+    }
+
+    /**
+     * Deals with an experimental listing left from before experimental types were dropped from the
+     * listing. Update mode deletes it. Check mode fails and says to delete it.
+     *
+     * @param file where the old experimental listing would be
+     * @param update whether to delete the file rather than report it
+     * @param out where update mode reports the deletion
+     * @param err where check mode reports the file
+     * @return true when no such file is left
+     */
+    private static boolean removeOldExperimentalListing(Path file, boolean update, PrintStream out, PrintStream err)
+            throws IOException {
+        if (!Files.exists(file)) {
+            return true;
+        }
+        if (update) {
+            Files.delete(file);
+            out.println("Deleted " + file);
+            return true;
+        }
+        err.println(file + " is no longer used, because experimental types are left out of the API listing."
+                + " Delete it.");
+        return false;
     }
 
     private static List<File> classFiles(Path classesDir) throws IOException {
