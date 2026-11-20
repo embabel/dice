@@ -19,12 +19,17 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.proposition.store.JsonFilePropositionRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.io.TempDir
 import org.mockito.Mockito
+import java.nio.file.Path
 
 /**
  * Tests for scoped reads from Kotlin, the way the user guide shows them.
@@ -78,5 +83,41 @@ class ScopedReadsKotlinTest {
         val store = Mockito.mock(PropositionStore::class.java)
         assertNull(StoreCapabilities.find<ScopedReads>(store))
         assertNull(StoreCapabilities.find<ScopedVectorSearch>(store))
+    }
+
+    @Test
+    fun `in memory reads only the authorized contexts`() {
+        val store = InMemoryPropositionRepository()
+        verifyScopedReads(store, store.scopedReads)
+    }
+
+    @Test
+    fun `JSON file reads only the authorized contexts`(@TempDir directory: Path) {
+        val store = JsonFilePropositionRepository(directory.resolve("claims.json"))
+        verifyScopedReads(store, store.scopedReads)
+    }
+
+    private fun verifyScopedReads(store: PropositionStore, reads: ScopedReads) {
+        store.save(Proposition.draft("alice-session", "allergy in the customer session", 0.8).withId("session").toProposition())
+        store.save(Proposition.draft("team-handbook", "peanut allergy is in the handbook", 0.9).withId("handbook").toProposition())
+        store.save(Proposition.draft("other-account", "peanut allergy in another account", 1.0).withId("other").toProposition())
+        store.save(
+            Proposition.draft("alice-session", "peanut allergy superseded entry", 1.0)
+                .withId("superseded")
+                .withStatus(PropositionStatus.SUPERSEDED)
+                .toProposition(),
+        )
+        val budget = ReadBudget.ofRows(2)
+        val query = ReadQuery.of(ReadCriteria.empty()).orderedByEffectiveConfidence()
+
+        assertEquals(listOf("handbook", "session"), reads.query(active, query, budget).map { it.id })
+        assertEquals(listOf("handbook"), reads.query(active, query.withLimit(1), budget).map { it.id })
+        assertEquals(2, reads.count(active, ReadCriteria.empty(), budget))
+        assertEquals(
+            listOf("handbook", "session"),
+            reads.matchKeywords(active, ReadKeywordQuery.forTokens("peanut", "allergy"), budget).map { it.id },
+        )
+        assertThrows<ReadBudgetExceededException> { reads.query(active, query, ReadBudget.ofRows(1)) }
+        assertThrows<ReadBudgetExceededException> { reads.count(active, ReadCriteria.empty(), ReadBudget.ofRows(1)) }
     }
 }

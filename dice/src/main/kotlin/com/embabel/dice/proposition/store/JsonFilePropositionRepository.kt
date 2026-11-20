@@ -61,6 +61,7 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
 
     private val propositions = ConcurrentHashMap<String, Proposition>()
     private val embeddings = ConcurrentHashMap<String, FloatArray>()
+    internal val scopedReads = LocalScopedReads { propositions.values }
 
     // Serializes the mutate+flush critical section so concurrent writers cannot persist a
     // torn/stale snapshot and so in-memory state can be rolled back if the disk flush fails.

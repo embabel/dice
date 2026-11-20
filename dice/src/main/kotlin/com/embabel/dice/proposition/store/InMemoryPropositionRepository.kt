@@ -54,6 +54,7 @@ class InMemoryPropositionRepository(
 
     private val propositions = ConcurrentHashMap<String, Proposition>()
     private val embeddings = ConcurrentHashMap<String, FloatArray>()
+    internal val scopedReads = LocalScopedReads { propositions.values }
 
     override val luceneSyntaxNotes: String
         get() = "no lucene support"
