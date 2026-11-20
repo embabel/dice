@@ -93,6 +93,8 @@
         <module>dice-metamodel</module>
         <module>dice-store-conformance</module>
         <module>dice-mcp-autoconfigure</module>
+        <module>dice-dependencies</module>
+        <module>dice-starters</module>
     </modules>
 
     <properties>
@@ -185,6 +187,21 @@
             <dependency>
                 <groupId>com.embabel.dice</groupId>
                 <artifactId>dice-store-conformance</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-starter-neo4j</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.embabel.dice</groupId>
+                <artifactId>dice-starter-mcp</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

@@ -36,6 +36,7 @@ import com.embabel.dice.storage.CollectorTraceSchema
 import com.embabel.dice.storage.DiceStorageSchema
 import com.embabel.dice.storage.DrivineCollectorTraceStore
 import com.embabel.dice.storage.diceStorageCatalog
+import org.drivine.autoconfigure.DrivineAutoConfiguration
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.SchemaCatalog
 import org.slf4j.LoggerFactory
@@ -57,10 +58,11 @@ import org.springframework.core.annotation.Order
  * so ops can drop a signal without touching code. `@Order` on the scorer beans fixes the injected
  * `List<CollectorSignalScorer>` order, which is also the order signals appear in the trace.
  *
- * The graph trace store bean is declared before the in-memory one so the fallback resolves by
- * registration order, matching [DiceStorageAutoConfiguration]'s pattern for the proposition store.
+ * The graph trace store is used when Drivine is configured, by the same rule as
+ * [DiceStorageAutoConfiguration]'s proposition store. It is declared before the in-memory one so the
+ * fallback resolves by registration order.
  */
-@AutoConfiguration(after = [DiceStorageAutoConfiguration::class])
+@AutoConfiguration(after = [DrivineAutoConfiguration::class, DiceStorageAutoConfiguration::class])
 @EnableConfigurationProperties(CollectorProperties::class)
 @ConditionalOnProperty(prefix = "embabel.dice.collector", name = ["enabled"], havingValue = "true", matchIfMissing = true)
 class CollectorAutoConfiguration(
@@ -79,7 +81,7 @@ class CollectorAutoConfiguration(
     @ConditionalOnMissingBean(CollectorSurvivorPolicy::class)
     fun collectorSurvivorPolicy(): CollectorSurvivorPolicy = defaultCollectorSurvivorPolicy
 
-    // ---- Trace store: graph backend (embabel.dice.store.type=graph) before in-memory default ----
+    // ---- Trace store: graph backend (when Drivine is configured) before in-memory default ----
 
     // These beans return their concrete store type, not the CollectorTraceStore interface, on purpose:
     // both stores also implement CollectorTraceQuery (the read side), and Spring predicts a bean's type
@@ -88,7 +90,7 @@ class CollectorAutoConfiguration(
     // point wouldn't resolve. The concrete return type lets the one store bean satisfy both interfaces —
     // no separate query bean, no ambiguity.
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnProperty(prefix = "embabel.dice.collector.trace", name = ["enabled"], matchIfMissing = true)
     @ConditionalOnMissingBean(CollectorTraceStore::class)
     fun drivineCollectorTraceStore(persistenceManager: PersistenceManager): DrivineCollectorTraceStore {
@@ -109,11 +111,11 @@ class CollectorAutoConfiguration(
      * reads the same object to recognise the trace store's nodes and edges as its own.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     fun collectorTraceStorageSchema(): DiceStorageSchema = CollectorTraceSchema
 
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     fun collectorTraceSchema(): SchemaCatalog = diceStorageCatalog(listOf(CollectorTraceSchema))
 
     // ---- Built-in pair source ----

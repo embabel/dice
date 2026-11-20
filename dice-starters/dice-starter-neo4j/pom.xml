@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.embabel.dice</groupId>
+        <artifactId>dice-starters</artifactId>
+        <version>0.5.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>dice-starter-neo4j</artifactId>
+    <packaging>jar</packaging>
+    <name>Dice Neo4j Starter</name>
+    <description>Starter for DICE stores on Neo4j through Drivine</description>
+    <url>https://github.com/embabel/dice</url>
+
+    <scm>
+        <url>https://github.com/embabel/dice</url>
+        <connection>scm:git:https://github.com/embabel/dice.git</connection>
+        <developerConnection>scm:git:https://github.com/embabel/dice.git</developerConnection>
+        <tag>HEAD</tag>
+    </scm>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-starter</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.embabel.dice</groupId>
+            <artifactId>dice-storage</artifactId>
+        </dependency>
+
+        <!-- Drivine brings the Neo4j driver with it -->
+        <dependency>
+            <groupId>org.drivine</groupId>
+            <artifactId>drivine4j-spring-boot-starter</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>

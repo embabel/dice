@@ -40,6 +40,7 @@ import com.embabel.dice.storage.DiceOwnedSchema
 import com.embabel.dice.storage.DiceStorageSchema
 import com.embabel.dice.storage.DrivineObservedSchemaSource
 import com.embabel.dice.storage.MetamodelSchema
+import org.drivine.autoconfigure.DrivineAutoConfiguration
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.SchemaCatalog
 import org.jetbrains.annotations.ApiStatus
@@ -97,11 +98,11 @@ import org.springframework.context.annotation.Bean
  *
  * ## Backend selection follows the store
  *
- * The Drivine/Neo4j governance beans register under `embabel.dice.store.type=graph`, the same switch
+ * The Drivine/Neo4j governance beans register when Drivine is configured, the same rule
  * [DiceStorageAutoConfiguration] uses for the proposition store, and they are declared before their
  * in-memory counterparts so the fallback resolves by registration order.
  *
- * Under the default in-memory backend a host that declares a schema still starts. It gets the
+ * Under the in-memory backend a host that declares a schema still starts. It gets the
  * in-memory version store, the differ and the quarantine policy, and it gets the sweep when a
  * `PropositionStore` is on the context. It gets no drift log and no observed-schema source, because
  * both of those read a graph and there is no graph here, and therefore no drift-check runner: with
@@ -121,7 +122,7 @@ import org.springframework.context.annotation.Bean
  * stores' MERGEs are only race-free under them, so they are required wherever the graph stores are.
  */
 @ApiStatus.Experimental
-@AutoConfiguration(after = [DiceStorageAutoConfiguration::class])
+@AutoConfiguration(after = [DrivineAutoConfiguration::class, DiceStorageAutoConfiguration::class])
 @ConditionalOnBean(DeclaredSchemaSource::class)
 @ConditionalOnProperty(
     prefix = DicePropertyPrefixes.METAMODEL,
@@ -134,7 +135,7 @@ class MetamodelAutoConfiguration {
 
     private val logger = LoggerFactory.getLogger(MetamodelAutoConfiguration::class.java)
 
-    // ---- Graph backend (embabel.dice.store.type=graph) ----
+    // ---- Graph backend (when Drivine is configured) ----
 
     /**
      * The uniqueness constraints the governance stores need. Declared as data in `dice-storage` so
@@ -146,7 +147,7 @@ class MetamodelAutoConfiguration {
      * their own gets both, and these are still required.
      */
     @Bean
-    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     fun metamodelSchema(): SchemaCatalog = SchemaCatalog.of(MetamodelSchema.specs())
 
     /**
@@ -155,7 +156,7 @@ class MetamodelAutoConfiguration {
      * this bean governance would observe its own report bookkeeping as drift.
      */
     @Bean
-    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     fun metamodelStorageSchema(): DiceStorageSchema = MetamodelSchema
 
     /**
@@ -168,7 +169,7 @@ class MetamodelAutoConfiguration {
      * capability at injection time and leave a `SweptBaselineStore` injection point unresolvable.
      */
     @Bean
-    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnMissingBean(MetamodelVersionStore::class)
     fun drivineMetamodelVersionStore(persistenceManager: PersistenceManager): SweptBaselineStore {
         logger.debug("Wiring graph MetamodelVersionStore: DrivineMetamodelVersionStore")
@@ -176,7 +177,7 @@ class MetamodelAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnMissingBean(DriftReportStore::class)
     fun drivineDriftReportStore(persistenceManager: PersistenceManager): DriftReportStore {
         logger.debug("Wiring graph DriftReportStore: DrivineDriftReportStore")
@@ -185,13 +186,13 @@ class MetamodelAutoConfiguration {
 
     /** What dice owns in this application, derived from the registered storage schemas. */
     @Bean
-    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnMissingBean(DiceOwnedSchema::class)
     fun diceOwnedSchema(schemas: List<DiceStorageSchema>): DiceOwnedSchema =
         DiceOwnedSchema.of(schemas)
 
     @Bean
-    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
+    @ConditionalOnDrivineStores
     @ConditionalOnMissingBean(ObservedSchemaSource::class)
     fun drivineObservedSchemaSource(
         persistenceManager: PersistenceManager,
