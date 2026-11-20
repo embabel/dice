@@ -113,13 +113,26 @@ class ExtractionRunStoreAutoConfigurationTest {
 
     @Test
     fun `without the graph backend neither store is registered`() {
-        // Both conditions are required, so the flag alone buys a non-graph host nothing. This
-        // context has no Drivine stubs at all, because a PersistenceManager on its own now selects
-        // the graph backend.
+        // Both conditions are required, so the flag alone buys a non-graph host nothing.
+        runner
+            .withPropertyValues("embabel.dice.extraction.runs.enabled=true")
+            .run { ctx ->
+                assertThat(ctx).doesNotHaveBean(ExtractionRunStore::class.java)
+                assertThat(ctx).doesNotHaveBean(PropositionRunLinkStore::class.java)
+                assertThat(ctx).doesNotHaveBean("extractionRunSchema")
+            }
+    }
+
+    @Test
+    fun `with dice-starter-neo4j but no Drivine neither store is registered`() {
+        // With the starter on the classpath a PersistenceManager would select the graph backend, so
+        // this context has no Drivine stubs: with none configured the flag still buys nothing.
         ApplicationContextRunner()
+            .withClassLoader(StarterOnClasspath())
             .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
             .withPropertyValues("embabel.dice.extraction.runs.enabled=true")
             .run { ctx ->
+                assertThat(ctx).hasNotFailed()
                 assertThat(ctx).doesNotHaveBean(ExtractionRunStore::class.java)
                 assertThat(ctx).doesNotHaveBean(PropositionRunLinkStore::class.java)
                 assertThat(ctx).doesNotHaveBean("extractionRunSchema")

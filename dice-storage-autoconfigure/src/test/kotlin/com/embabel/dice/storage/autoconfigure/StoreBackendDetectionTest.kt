@@ -57,6 +57,7 @@ import org.springframework.beans.factory.getBean
 import org.springframework.boot.LazyInitializationBeanFactoryPostProcessor
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigurations
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.context.annotation.Configurations
 import org.springframework.boot.test.context.assertj.AssertableApplicationContext
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
@@ -64,6 +65,7 @@ import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.core.env.MapPropertySource
 import org.springframework.transaction.PlatformTransactionManager
 import java.net.URL
 import java.nio.file.Files
@@ -173,7 +175,7 @@ class StoreBackendDetectionTest {
                 assertInMemoryStores(ctx)
                 assertThat(ctx.getBeanProvider(SchemaCatalog::class.java).orderedStream().toList()).isEmpty()
                 assertThat(storeWarnings(output)).singleElement().asString()
-                    .contains("embabel.dice.store.type=neo4j")
+                    .contains("embabel.dice.store.type='neo4j'")
                     .contains("'graph'")
                     .contains("'in-memory'")
             }
@@ -589,9 +591,64 @@ class StoreBackendDetectionTest {
                     assertThat(ctx.getBean<PropositionRepository>()).isInstanceOf(InMemoryPropositionRepository::class.java)
                     assertInMemoryStores(ctx)
                     assertThat(storeWarnings(output)).singleElement().asString()
-                        .contains("embabel.dice.store.type=memory")
+                        .contains("embabel.dice.store.type='memory'")
                         .contains("'graph'")
                         .contains("'in-memory'")
+                }
+        }
+
+        /**
+         * A .properties file keeps trailing blanks, and before detection `graph ` didn't match
+         * `@ConditionalOnProperty(havingValue = "graph")`, so such an app ran on the in-memory stores.
+         * The value is put straight into the environment because `withPropertyValues` trims it.
+         */
+        @Test
+        fun `type=graph with a trailing blank gives the in-memory stores and warns once`(output: CapturedOutput) {
+            plain
+                .withUserConfiguration(StubDrivine::class.java)
+                .withInitializer { it.environment.propertySources.addFirst(rawType("graph ")) }
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertThat(ctx.getBean<PropositionRepository>()).isInstanceOf(InMemoryPropositionRepository::class.java)
+                    assertInMemoryStores(ctx)
+                    assertThat(ctx.getBean<CollectorTraceStore>()).isInstanceOf(InMemoryCollectorTraceStore::class.java)
+                    assertThat(ctx.getBeanProvider(SchemaCatalog::class.java).orderedStream().toList()).isEmpty()
+                    assertThat(storeWarnings(output)).singleElement().asString()
+                        .contains("embabel.dice.store.type='graph '")
+                        .contains("'in-memory'")
+                }
+        }
+
+        /** Boot compares `havingValue` ignoring case, so `GRAPH` picked the Drivine stores before detection. */
+        @Test
+        fun `type=GRAPH wires the Drivine stores, as it always has`() {
+            plain
+                .withUserConfiguration(StubDrivine::class.java)
+                .withPropertyValues("embabel.dice.store.type=GRAPH")
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertDrivineStores(ctx)
+                    assertThat(ctx.getBean<CollectorTraceStore>()).isInstanceOf(DrivineCollectorTraceStore::class.java)
+                }
+        }
+
+        /**
+         * Asks Boot's own `@ConditionalOnProperty(havingValue = "graph")`, which is what chose the stores
+         * before detection, and checks DICE agrees for every value that isn't blank.
+         */
+        @Test
+        fun `an explicit type picks graph exactly when Boot's havingValue match would`() {
+            listOf("graph", "GRAPH", "Graph", "graph ", " graph", "\tgraph", "in-memory", "IN-MEMORY", "neo4j", "graphs")
+                .forEach { value ->
+                    ApplicationContextRunner()
+                        .withUserConfiguration(BootsGraphCondition::class.java)
+                        .withInitializer { it.environment.propertySources.addFirst(rawType(value)) }
+                        .run { ctx ->
+                            val bootSaysGraph = ctx.containsBean(BootsGraphCondition.MARKER_BEAN)
+                            assertThat(StoreBackend.requested(ctx.environment))
+                                .describedAs("embabel.dice.store.type='%s'", value)
+                                .isEqualTo(if (bootSaysGraph) StoreBackend.GRAPH else StoreBackend.IN_MEMORY)
+                        }
                 }
         }
 
@@ -622,6 +679,9 @@ class StoreBackendDetectionTest {
                 }
         }
     }
+
+    /** `embabel.dice.store.type` set to [value] exactly as written, blanks and all. */
+    private fun rawType(value: String) = MapPropertySource("raw-store-type", mapOf("embabel.dice.store.type" to value))
 
     /** The WARN lines DICE's startup check logged. */
     private fun storeWarnings(output: CapturedOutput): List<String> =
@@ -655,6 +715,19 @@ class StoreBackendDetectionTest {
 
         @Bean
         open fun transactionManager(): PlatformTransactionManager = mock()
+    }
+
+    /** Registers one bean when Boot's own property condition says the type is `graph`, as main's stores did. */
+    @Configuration(proxyBeanMethods = false)
+    open class BootsGraphCondition {
+
+        @Bean(MARKER_BEAN)
+        @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+        open fun bootSaysGraph(): String = "graph"
+
+        companion object {
+            const val MARKER_BEAN = "bootSaysGraph"
+        }
     }
 
     /** Drivine's graph object manager on its own, with no `PersistenceManager` beside it. */

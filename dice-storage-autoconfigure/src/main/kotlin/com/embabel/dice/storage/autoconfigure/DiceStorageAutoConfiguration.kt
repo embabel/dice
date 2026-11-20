@@ -491,27 +491,31 @@ internal object StoreBackend {
     fun optedIn(classLoader: ClassLoader?): Boolean = ClassPathResource(STARTER_MARKER, classLoader).exists()
 
     /**
-     * The property's value as the application set it, trimmed, or null when it isn't set or is blank.
-     * This reads the environment rather than [DiceStoreProperties.type], whose default would make
-     * every app look as if it had asked for `in-memory`.
+     * The property's value exactly as the application set it, blanks included, or null when it isn't
+     * set or is blank. It isn't trimmed because `@ConditionalOnProperty(havingValue = "graph")` chose
+     * the stores before detection and it doesn't trim either: `graph ` from a .properties file meant
+     * the in-memory stores, and still does. This reads the environment rather than
+     * [DiceStoreProperties.type], whose default would make every app look as if it had asked for
+     * `in-memory`.
      */
     fun setValue(environment: Environment): String? =
         if (environment.containsProperty(TYPE_PROPERTY)) {
-            environment.getProperty(TYPE_PROPERTY)?.trim()?.takeIf { it.isNotEmpty() }
+            environment.getProperty(TYPE_PROPERTY)?.takeIf { it.isNotBlank() }
         } else {
             null
         }
 
     /**
      * The backend the property asks for: [GRAPH], [IN_MEMORY], or null when it isn't set and DICE
-     * may detect. A value DICE doesn't know counts as [IN_MEMORY], because that is what it got
-     * before detection existed.
+     * may detect. Only `graph`, in any case and with nothing around it, counts as [GRAPH], which is
+     * the match Boot's `havingValue` makes. Anything else counts as [IN_MEMORY], because that is
+     * what it got before detection existed.
      */
     fun requested(environment: Environment): String? =
-        setValue(environment)?.let { if (it.equals(GRAPH, ignoreCase = true)) GRAPH else IN_MEMORY }
+        setValue(environment)?.let { if (GRAPH.equals(it, ignoreCase = true)) GRAPH else IN_MEMORY }
 
-    /** Whether [value] is one of the two values the property accepts. */
-    fun known(value: String): Boolean = value.equals(GRAPH, ignoreCase = true) || value.equals(IN_MEMORY, ignoreCase = true)
+    /** Whether [value] is one of the two values the property accepts, compared the way [requested] does. */
+    fun known(value: String): Boolean = GRAPH.equals(value, ignoreCase = true) || IN_MEMORY.equals(value, ignoreCase = true)
 
     fun drivineConfigured(beanFactory: ListableBeanFactory): Boolean =
         BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
@@ -558,7 +562,7 @@ internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
         when (StoreBackend.requested(context.environment)) {
             StoreBackend.IN_MEMORY -> return ConditionOutcome.noMatch(
                 message.because(
-                    "${StoreBackend.TYPE_PROPERTY}=${StoreBackend.setValue(context.environment)} gives the in-memory stores",
+                    "${StoreBackend.TYPE_PROPERTY}='${StoreBackend.setValue(context.environment)}' gives the in-memory stores",
                 ),
             )
             StoreBackend.GRAPH -> return ConditionOutcome.match(
@@ -605,7 +609,8 @@ internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
  *
  * With the property set, it never stops startup, so an app that started before detection still does.
  * `graph` and `in-memory` get one deprecation warning. Any other value gets one warning naming it and
- * the two accepted values, and the in-memory stores, as it always did. `graph` without Drivine is left
+ * the two accepted values, and the in-memory stores, as it always did; that includes `graph` with blanks
+ * around it, which Boot's `havingValue` never matched. `graph` without Drivine is left
  * to bean injection, which fails as it used to unless the host supplied every store that needs Drivine.
  */
 @Lazy(false)
@@ -639,7 +644,8 @@ internal class StoreBackendCheck(environment: Environment, beanFactory: Configur
             )
         } else {
             logger.warn(
-                "{}={} isn't a value DICE knows, so DICE is using its in-memory stores. The accepted values " +
+                // Quoted, so a stray blank around 'graph' shows up as the reason.
+                "{}='{}' isn't a value DICE knows, so DICE is using its in-memory stores. The accepted values " +
                     "are '{}' and '{}'. The property is deprecated and will be removed: with dice-starter-neo4j " +
                     "on the classpath and the property unset, DICE picks its stores from whether Drivine is configured.",
                 StoreBackend.TYPE_PROPERTY,
