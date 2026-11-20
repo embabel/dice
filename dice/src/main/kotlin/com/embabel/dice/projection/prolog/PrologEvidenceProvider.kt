@@ -64,6 +64,11 @@ import java.time.ZoneOffset
  * proof must preserve those variables and which arguments share them. Each answer runs its own replay, so a goal
  * with unbound variables can visit the same inputs many times.
  *
+ * A cut (`!`) can make Prolog skip other clauses of the same predicate. Replaying those clauses separately
+ * could cite a fact that Prolog skipped. [withDeclaration] rejects the whole predicate if a clause or the
+ * declaration contains a cut as a goal, including inside a built-in such as `call(!)`. A separate helper
+ * predicate keeps its own cut scope and can still be called.
+ *
  * **Recursive rules are not supported.** A rule that calls itself, such as a chain of managers, can't be
  * declared this way; a proof-tree engine can supply those later. A goal with no declaration for its predicate
  * and arity returns nothing without running a query, but a declared rule that loops would loop here too, because
@@ -124,41 +129,46 @@ import java.time.ZoneOffset
  */
 @ApiStatus.Experimental
 class PrologEvidenceProvider private constructor(
-    private val projection: PrologProjectionResult,
-    private val schema: PrologSchema,
-    declarations: List<RuleDeclaration>,
+    private val source: EvidenceSource,
+    private val parsedDeclarations: List<ParsedDeclaration>,
     private val repository: PropositionStore?,
 ) : EvidenceProvider<RuleGoal> {
 
-    private val declarations: List<RuleDeclaration> = declarations.toList()
+    private constructor(
+        projection: PrologProjectionResult,
+        schema: PrologSchema,
+        declarations: List<ParsedDeclaration>,
+        repository: PropositionStore?,
+    ) : this(EvidenceSource(projection, schema), declarations, repository)
 
-    // The engine and the hash are built from one string, so the hash always names what the engine loaded.
-    private val theory: String = projection.toTheory(schema)
-    private val theoryHash: String = sha256Hex(theory).take(16)
-    private val engine: PrologEngine = PrologEngine.fromTheory(theory)
+    private val engine = source.engine.fresh()
 
-    // Each declaration parsed once, in the order added. One that Prolog can't parse can never trace anything.
-    private val parsedDeclarations: List<ParsedDeclaration> = this.declarations.mapNotNull(::parseDeclaration)
+    private class EvidenceSource(projection: PrologProjectionResult, schema: PrologSchema) {
+        // Setup checks, queries and the rule hash all use this snapshot of the projection.
+        private val theory = projection.toTheory(schema)
+        val theoryHash = sha256Hex(theory).take(16)
+        val engine = PrologEngine.fromTheory(theory)
 
-    // Facts that can be cited, keyed by predicate and each argument's atom as the projection wrote it to Prolog.
-    // Facts with no usable ids are left out.
-    private val citableFacts: Map<FactKey, List<CitableFact>> = projection.facts
-        .mapNotNull { fact ->
+        val citableFacts = projection.facts.mapNotNull { fact ->
             val ids = fact.sourcePropositionIds.filter { it.isNotBlank() }
             if (ids.isEmpty()) null else CitableFact(fact, ids)
-        }
-        .groupBy { citable ->
+        }.groupBy { citable ->
             FactKey(citable.fact.predicate, citable.fact.args.map { PrologFact.quoteAtom(it).removeSurrounding("'") })
         }
+    }
 
     /**
      * Returns a copy that also traces answers through [declaration], tried after the declarations already there.
      *
      * @param declaration one clause of a rule and the facts it reads
      * @return the updated provider
+     * @throws IllegalArgumentException if the declaration or any clause of the predicate uses a cut as a goal
      */
-    fun withDeclaration(declaration: RuleDeclaration): PrologEvidenceProvider =
-        PrologEvidenceProvider(projection, schema, declarations + declaration, repository)
+    fun withDeclaration(declaration: RuleDeclaration): PrologEvidenceProvider {
+        val parsed = parseDeclaration(declaration, engine)
+        val declarations = if (parsed == null) parsedDeclarations else parsedDeclarations + parsed
+        return PrologEvidenceProvider(source, declarations, repository)
+    }
 
     /**
      * Returns a copy that looks up each cited fact's source propositions in [repository], for their decayed
@@ -168,7 +178,7 @@ class PrologEvidenceProvider private constructor(
      * @return the updated provider
      */
     fun withRepository(repository: PropositionStore): PrologEvidenceProvider =
-        PrologEvidenceProvider(projection, schema, declarations, repository)
+        PrologEvidenceProvider(source, parsedDeclarations, repository)
 
     /**
      * Returns the first conclusion for [query], or a [Evidence.Missing] naming the goal, and its context when set,
@@ -253,7 +263,7 @@ class PrologEvidenceProvider private constructor(
     private fun citableFactsFor(input: Term): List<CitableFact> {
         val struct = input as? Struct ?: return emptyList()
         val atoms = struct.args.map { (it as? Atom)?.value ?: return emptyList() }
-        return citableFacts[FactKey(struct.functor, atoms)].orEmpty()
+        return source.citableFacts[FactKey(struct.functor, atoms)].orEmpty()
     }
 
     private fun derive(
@@ -280,7 +290,7 @@ class PrologEvidenceProvider private constructor(
         values.forEach { (name, value) ->
             if (value !is Var) rule = rule.withParameter("binding.$name", bindingText(value))
         }
-        rule = rule.withParameter("theory", theoryHash)
+        rule = rule.withParameter("theory", source.theoryHash)
 
         // Items worked out at the same instant as the confidence above, so the two agree.
         val converter = EvidenceConverter.create().withClock(Clock.fixed(now, ZoneOffset.UTC))
@@ -324,9 +334,26 @@ class PrologEvidenceProvider private constructor(
                 null
             }
 
+        // Follow goal arguments of the built-ins, so an atom in data such as X = '!' stays ordinary data.
+        private fun containsCut(goal: Term): Boolean {
+            if (goal !is Struct) return false
+            return when (goal.functor) {
+                "!" -> goal.arity == 0
+                ",", ";", "->" -> goal.arity == 2 && goal.args.any(::containsCut)
+                "call", "once", "not", "\\+" -> goal.arity == 1 && containsCut(goal.args[0])
+                "catch" -> goal.arity == 3 && (containsCut(goal.args[0]) || containsCut(goal.args[2]))
+                "findall" -> goal.arity == 3 && containsCut(goal.args[1])
+                "bagof", "setof" -> goal.arity == 3 && containsCut(quantifiedGoal(goal.args[1]))
+                else -> false
+            }
+        }
+
+        private tailrec fun quantifiedGoal(goal: Term): Term =
+            if (goal is Struct && goal.functor == "^" && goal.arity == 2) quantifiedGoal(goal.args[1]) else goal
+
         // Parses each part of a declaration on its own, then joins them up so one name is one variable across the
         // head, inputs and guards. Each lone _ becomes a named variable of its own, so its value comes back.
-        private fun parseDeclaration(declaration: RuleDeclaration): ParsedDeclaration? {
+        private fun parseDeclaration(declaration: RuleDeclaration, engine: PrologEngine): ParsedDeclaration? {
             val shared = HashMap<String, Var>()
             fun join(text: String): Term? {
                 val term = parseTerm(text) ?: return null
@@ -337,7 +364,13 @@ class PrologEvidenceProvider private constructor(
                 return term.apply(Substitution.of(renaming))
             }
             val head = join(declaration.head) as? Struct ?: return null
-            val parts = declaration.body.map { (join(it.text) ?: return null) to it.isInput }
+            val parts = declaration.body.mapNotNull { part -> join(part.text)?.let { it to part.isInput } }
+            val usesCut = parts.any { containsCut(it.first) } || engine.rulesFor(head.indicator).any { containsCut(it.body) }
+            require(!usesCut) {
+                "Cannot cite ${head.functor}/${head.arity}: the predicate or its declaration uses a Prolog cut (!). " +
+                    "Use PrologEngine to query this predicate directly."
+            }
+            if (parts.size != declaration.body.size) return null
             return ParsedDeclaration(head, parts.map { it.first }, parts.filter { it.second }.map { it.first })
         }
 

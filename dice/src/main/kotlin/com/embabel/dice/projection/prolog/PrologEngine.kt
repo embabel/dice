@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.projection.prolog
 
+import it.unibo.tuprolog.core.Indicator
+import it.unibo.tuprolog.core.Rule
 import it.unibo.tuprolog.core.Struct
 import it.unibo.tuprolog.core.Substitution
 import it.unibo.tuprolog.core.Term
@@ -50,23 +52,20 @@ data class QueryResult(
  * This class is immutable - asserting facts returns a new instance.
  */
 class PrologEngine private constructor(
-    private val theoryString: String,
+    private val parsedTheory: Lazy<Theory>,
 ) {
-    private val logger = LoggerFactory.getLogger(PrologEngine::class.java)
+    private constructor(theoryString: String) : this(lazy { loadTheory(theoryString) })
 
     private val solver: Solver by lazy {
-        val theory = if (theoryString.isNotBlank()) {
-            try {
-                Theory.parse(theoryString)
-            } catch (e: ParseException) {
-                logger.error("Failed to parse Prolog theory: {}", e.message)
-                Theory.empty()
-            }
-        } else {
-            Theory.empty()
-        }
-        ClassicSolverFactory.solverWithDefaultBuiltins(staticKb = theory)
+        ClassicSolverFactory.solverWithDefaultBuiltins(staticKb = parsedTheory.value)
     }
+
+    // Each provider copy gets its own solver state over the same parsed rules.
+    @JvmSynthetic
+    internal fun fresh(): PrologEngine = PrologEngine(parsedTheory)
+
+    @JvmSynthetic
+    internal fun rulesFor(indicator: Indicator): Sequence<Rule> = parsedTheory.value[indicator]
 
     /**
      * Execute a query and return whether it succeeds.
@@ -197,6 +196,16 @@ class PrologEngine private constructor(
     }
 
     companion object {
+        private val logger = LoggerFactory.getLogger(PrologEngine::class.java)
+
+        private fun loadTheory(source: String): Theory =
+            if (source.isBlank()) Theory.empty() else try {
+                Theory.parse(source)
+            } catch (e: ParseException) {
+                logger.error("Failed to parse Prolog theory: {}", e.message)
+                Theory.empty()
+            }
+
         /**
          * Create an engine from a PrologProjectionResult.
          * Loads the complete theory including facts, confidence, and grounding.

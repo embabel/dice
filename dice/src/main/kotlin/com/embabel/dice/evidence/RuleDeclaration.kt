@@ -33,6 +33,8 @@ import java.util.Objects
  *
  * The inputs are declared rather than traced from the engine, so the same declaration works whichever engine
  * runs the rule. A rule that calls itself, such as a chain of managers, can't be declared this way.
+ * The Prolog evidence provider also rejects a declaration if any clause of that predicate uses a cut (`!`)
+ * as a goal, since replaying a single clause can miss which alternatives Prolog discarded.
  *
  * ```java
  * RuleDeclaration declaration = RuleDeclaration.of("coworker(X, Y)")

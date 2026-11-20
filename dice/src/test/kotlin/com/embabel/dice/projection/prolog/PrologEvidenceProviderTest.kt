@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
@@ -527,6 +528,82 @@ class PrologEvidenceProviderTest {
                 listOf("r(a, 'b')" to listOf("prop-ab"), "r(a, 'c')" to listOf("prop-ac")),
                 conclusions.map { it.conclusion to it.inputIds },
             )
+        }
+    }
+
+    @Nested
+    inner class Cuts {
+
+        @Test
+        fun `registering the pruned alternative fails before it can cite a pair fact`() {
+            val facts = listOf(
+                fact("admin", "a", confidence = 0.9, ids = listOf("admin-a")),
+                fact("pair", "a", "b", confidence = 0.8, ids = listOf("pair-ab")),
+                fact("pair", "a", "c", confidence = 0.8, ids = listOf("pair-ac")),
+            )
+            val rules = """
+                r(X, b) :- admin(X), !.
+                r(X, Y) :- pair(X, Y).
+            """.trimIndent()
+            val engine = PrologEngine.fromProjection(projection(facts), PrologSchema.withRules(rules))
+            assertEquals(listOf("b"), engine.findAll("r(a, Y)", "Y"))
+
+            val error = assertThrows(IllegalArgumentException::class.java) {
+                provider(facts, rules).withDeclaration(RuleDeclaration.of("r(X, Y)").withInput("pair(X, Y)"))
+            }
+            assertTrue(error.message.orEmpty().contains("r/2"))
+            assertTrue(error.message.orEmpty().contains("cut", ignoreCase = true))
+        }
+
+        @Test
+        fun `a cut inside a branch of a later clause also prevents registration`() {
+            val rules = """
+                r(X) :- expert_in(X, _).
+                r(X) :- (works_at(X, _) -> true ; (true, !)).
+            """.trimIndent()
+            assertThrows(IllegalArgumentException::class.java) {
+                provider(rules = rules).withDeclaration(RuleDeclaration.of("r(alice)").withInput("expert_in(alice, T)"))
+            }
+        }
+
+        @Test
+        fun `a cut introduced by the declaration fails at setup`() {
+            val error = assertThrows(IllegalArgumentException::class.java) {
+                provider().withDeclaration(canHelp.withGuard("(true, !)"))
+            }
+            assertTrue(error.message.orEmpty().contains("can_help/2"))
+        }
+
+        @Test
+        fun `an unreadable guard cannot hide that a predicate uses cut`() {
+            val rules = "r(X) :- expert_in(X, _), !."
+            val declaration = RuleDeclaration.of("r(X)").withInput("expert_in(X, T)").withGuard("X =")
+            assertThrows(IllegalArgumentException::class.java) { provider(rules = rules).withDeclaration(declaration) }
+        }
+
+        @Test
+        fun `a cut used as a goal inside a built-in prevents registration`() {
+            val goals = listOf("call(!)", "(! -> true ; fail)", "once(!)", "catch(true, _, !)", "findall(X, !, _)")
+            for (goal in goals) {
+                val rules = "r(X) :- expert_in(X, _), $goal."
+                val declaration = RuleDeclaration.of("r(X)").withInput("expert_in(X, T)")
+                assertThrows(IllegalArgumentException::class.java, {
+                    provider(rules = rules).withDeclaration(declaration)
+                }, goal)
+            }
+        }
+
+        @Test
+        fun `a different arity or a cut atom used as data leaves the rule citable`() {
+            val rules = """
+                r(X) :- expert_in(X, _), !.
+                helper :- !.
+                r(X, T) :- expert_in(X, T), helper, '!' = '!'. % ! is data here
+            """.trimIndent()
+            val declaration = RuleDeclaration.of("r(X, T)").withInput("expert_in(X, T)")
+                .withGuard("helper").withGuard("'!' = '!'")
+            val answer = only(provider(rules = rules).withDeclaration(declaration).conclusions(RuleGoal.of("r(alice, T)")))
+            assertEquals(listOf("prop-1"), answer.inputIds)
         }
     }
 
