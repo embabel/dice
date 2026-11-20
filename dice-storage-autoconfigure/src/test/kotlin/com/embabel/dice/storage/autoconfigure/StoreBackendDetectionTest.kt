@@ -52,6 +52,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+import org.springframework.beans.factory.NoSuchBeanDefinitionException
 import org.springframework.beans.factory.getBean
 import org.springframework.boot.LazyInitializationBeanFactoryPostProcessor
 import org.springframework.boot.autoconfigure.AutoConfiguration
@@ -74,8 +75,8 @@ import java.util.Enumeration
  *
  * If Drivine is set up (its `PersistenceManager` bean exists), the Drivine stores are wired.
  * If it isn't, the in-memory stores are. `embabel.dice.store.type` is deprecated but still
- * respected for now: `in-memory` forces the in-memory stores, `graph` behaves like detection
- * except that it refuses to start without Drivine, and anything else refuses to start.
+ * respected for now: `in-memory` forces the in-memory stores, `graph` forces the Drivine ones, and
+ * anything else gets the in-memory stores and a warning, which is what it always got.
  */
 @ExtendWith(OutputCaptureExtension::class)
 class StoreBackendDetectionTest {
@@ -149,31 +150,42 @@ class StoreBackendDetectionTest {
             }
     }
 
+    /** DICE adds no check of its own here: the Drivine stores just can't be built, as before detection. */
     @Test
-    fun `type=graph without Drivine refuses to start and says Drivine is missing`() {
+    fun `type=graph without Drivine fails only because the Drivine stores can't be injected`() {
         storage
             .withPropertyValues("embabel.dice.store.type=graph")
             .run { ctx ->
                 assertThat(ctx).hasFailed()
                 assertThat(ctx).getFailure().rootCause()
-                    .hasMessageContaining("embabel.dice.store.type=graph")
-                    .hasMessageContaining("Drivine")
-                    .hasMessageContaining("PersistenceManager")
+                    .isInstanceOf(NoSuchBeanDefinitionException::class.java)
+                    .message().doesNotContain("embabel.dice.store.type")
             }
     }
 
     @Test
-    fun `an unknown type refuses to start and names the allowed values`() {
+    fun `an unknown type with the starter gets the in-memory stores and one warning`(output: CapturedOutput) {
         storage
             .withUserConfiguration(StubDrivine::class.java)
-            .withPropertyValues("embabel.dice.store.type=grpah")
+            .withPropertyValues("embabel.dice.store.type=neo4j")
             .run { ctx ->
-                assertThat(ctx).hasFailed()
-                assertThat(ctx).getFailure().rootCause()
-                    .hasMessageContaining("grpah")
-                    .hasMessageContaining("graph")
-                    .hasMessageContaining("in-memory")
-                    .hasMessageContaining("deprecated")
+                assertThat(ctx).hasNotFailed()
+                assertInMemoryStores(ctx)
+                assertThat(ctx.getBeanProvider(SchemaCatalog::class.java).orderedStream().toList()).isEmpty()
+                assertThat(storeWarnings(output)).singleElement().asString()
+                    .contains("embabel.dice.store.type=neo4j")
+                    .contains("'graph'")
+                    .contains("'in-memory'")
+            }
+    }
+
+    @Test
+    fun `left unset, the bound type reads in-memory as it always has`() {
+        ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                assertThat(ctx.getBean<DiceStoreProperties>().type).isEqualTo("in-memory")
             }
     }
 
@@ -568,16 +580,52 @@ class StoreBackendDetectionTest {
         }
 
         @Test
-        fun `an unknown type still refuses to start`() {
+        fun `an unknown type starts on the in-memory stores and warns once`(output: CapturedOutput) {
             plain
                 .withUserConfiguration(StubDrivine::class.java)
-                .withPropertyValues("embabel.dice.store.type=grpah")
+                .withPropertyValues("embabel.dice.store.type=memory")
                 .run { ctx ->
-                    assertThat(ctx).hasFailed()
-                    assertThat(ctx).getFailure().rootCause().hasMessageContaining("grpah")
+                    assertThat(ctx).hasNotFailed()
+                    assertThat(ctx.getBean<PropositionRepository>()).isInstanceOf(InMemoryPropositionRepository::class.java)
+                    assertInMemoryStores(ctx)
+                    assertThat(storeWarnings(output)).singleElement().asString()
+                        .contains("embabel.dice.store.type=memory")
+                        .contains("'graph'")
+                        .contains("'in-memory'")
+                }
+        }
+
+        /**
+         * A host that replaced every store needing a `PersistenceManager` started with `graph` before
+         * detection existed, so it has to start now. The vector index is off because its convergence
+         * bean needs a `PersistenceManager` and can't be replaced, here or before.
+         */
+        @Test
+        fun `type=graph with the host's own stores and no PersistenceManager starts`() {
+            ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(DiceStorageAutoConfiguration::class.java))
+                .withUserConfiguration(
+                    StubAi::class.java,
+                    GraphObjectManagerOnly::class.java,
+                    HostRepository::class.java,
+                    HostDecayManager::class.java,
+                    HostLineageStores::class.java,
+                    HostCollectorRecordStore::class.java,
+                )
+                .withPropertyValues("embabel.dice.store.type=graph", "embabel.dice.store.vector-index.enabled=false")
+                .run { ctx ->
+                    assertThat(ctx).hasNotFailed()
+                    assertThat(ctx).doesNotHaveBean(PersistenceManager::class.java)
+                    assertThat(ctx.getBean<PropositionRepository>()).isSameAs(HostRepository.INSTANCE)
+                    assertThat(ctx.getBean<ChunkHistoryStore>()).isSameAs(HostLineageStores.CHUNKS)
+                    assertThat(ctx).hasBean("lineageRecordSchema")
                 }
         }
     }
+
+    /** The WARN lines DICE's startup check logged. */
+    private fun storeWarnings(output: CapturedOutput): List<String> =
+        output.out.lines().filter { "WARN" in it && "StoreBackendCheck" in it }
 
     private fun assertDrivineStores(ctx: AssertableApplicationContext) {
         assertThat(ctx.getBean<PropositionRepository>()).isInstanceOf(DrivinePropositionRepository::class.java)
@@ -607,6 +655,21 @@ class StoreBackendDetectionTest {
 
         @Bean
         open fun transactionManager(): PlatformTransactionManager = mock()
+    }
+
+    /** Drivine's graph object manager on its own, with no `PersistenceManager` beside it. */
+    @Configuration(proxyBeanMethods = false)
+    open class GraphObjectManagerOnly {
+
+        @Bean
+        open fun graphObjectManager(): StatelessGraphObjectManager = mock()
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    open class HostDecayManager {
+
+        @Bean
+        open fun hostDecayManager(): DecayManager = mock()
     }
 
     /** Drivine supplied by a host auto-configuration that runs after DICE's. */

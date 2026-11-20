@@ -13,14 +13,15 @@ Read by `dice-storage-autoconfigure`.
 
 | `embabel.dice.store.type`
 | `String`
-| unset
-| *Deprecated.* What leaving it unset means depends on the starter. With `dice-starter-neo4j` on the
-  classpath, DICE detects the backend: its Drivine stores when the application has a Drivine
-  `PersistenceManager` bean, its in-memory stores otherwise. Without that starter, the default stays
-  in-memory, as it always was, even if the application uses Drivine for its own data. A set value is
-  still honoured for now, with or without the starter. `in-memory` forces the in-memory stores even
-  when Drivine is configured. `graph` uses the Drivine stores and fails startup if Drivine isn't
-  configured. Any other value fails startup. Setting it at all logs a deprecation warning.
+| `in-memory`
+| *Deprecated.* Without `dice-starter-neo4j`, the default is what you get: the in-memory stores, as it
+  always was, even if the application uses Drivine for its own data. Detection applies only with
+  `dice-starter-neo4j` on the classpath and the property unset (blank counts as unset): DICE then uses
+  its Drivine stores when the application has a Drivine `PersistenceManager` bean, and its in-memory
+  stores otherwise. A set value is still honoured for now, with or without the starter. `in-memory`
+  forces the in-memory stores even when Drivine is configured. `graph` forces the Drivine stores.
+  Any other value gets the in-memory stores and a warning naming the two accepted values. Setting it
+  at all logs a warning.
 
 | `embabel.dice.store.decay.enabled`
 | `boolean`

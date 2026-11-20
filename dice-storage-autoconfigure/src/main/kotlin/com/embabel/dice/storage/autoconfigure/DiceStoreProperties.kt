@@ -23,24 +23,29 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty
 /**
  * Configuration for the Dice proposition store.
  *
- * The backend needs no setting: DICE uses its Drivine/Neo4j stores when Drivine is configured and its
- * in-memory stores otherwise. [type] is the old switch, kept so existing configuration still works.
+ * With `dice-starter-neo4j` on the classpath the backend needs no setting: DICE uses its Drivine/Neo4j
+ * stores when Drivine is configured and its in-memory stores otherwise. [type] is the old switch, kept
+ * so existing configuration still works.
  */
 @ConfigurationProperties(prefix = "embabel.dice.store")
 data class DiceStoreProperties(
     /**
-     * Deprecated: leave it unset and DICE picks the backend from whether Drivine is configured.
+     * Deprecated: the old switch between DICE's in-memory stores and its Drivine ones.
      *
-     * Still respected for now. Empty (the default) means pick automatically. `in-memory` forces the
-     * in-memory stores even when Drivine is configured. `graph` uses the Drivine stores and stops
-     * startup if Drivine isn't configured. Any other value stops startup. Setting it logs a
-     * deprecation warning.
+     * The default reads `in-memory`, and without `dice-starter-neo4j` that is what an app that leaves
+     * it alone gets. With the starter on the classpath and the property unset, DICE picks the backend
+     * from whether Drivine is configured instead. DICE asks the environment whether the property was
+     * set, not this field, so the default here never turns detection off.
+     *
+     * A set value is still respected. `in-memory` forces the in-memory stores even when Drivine is
+     * configured, and `graph` forces the Drivine stores. Any other value gets the in-memory stores and
+     * a warning, as it always did. Setting it logs a deprecation warning.
      */
     @get:DeprecatedConfigurationProperty(
         reason = "DICE picks its stores from whether Drivine is configured",
         since = "0.5.0",
     )
-    var type: String = "",
+    var type: String = "in-memory",
 
     @NestedConfigurationProperty
     var decay: Decay = Decay(),

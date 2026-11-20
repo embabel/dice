@@ -86,8 +86,9 @@ import org.springframework.transaction.PlatformTransactionManager
  * is configured (its `PersistenceManager` bean exists), the Drivine/Neo4j stores are wired; otherwise
  * the in-memory stores are. No property is needed. An app without that starter gets what it always
  * got: the in-memory stores, even if it uses Drivine for something else, unless it sets
- * `embabel.dice.store.type=graph`. That switch is deprecated but still respected everywhere: `in-memory`
- * forces the in-memory stores, and `graph` insists on Drivine (see [StoreBackendCheck]). Every bean is
+ * `embabel.dice.store.type=graph`. That switch is deprecated but still respected everywhere: `graph`
+ * forces the Drivine stores, and `in-memory` or any other value the in-memory ones (see
+ * [StoreBackendCheck]). Every bean is
  * `@ConditionalOnMissingBean`, so an application's own bean always
  * wins. Graph beans are declared before their in-memory counterparts so the fallback resolves by
  * registration order.
@@ -472,7 +473,8 @@ class DiceDecaySchedulingConfiguration(
  * Drivine counts as configured when its `PersistenceManager` bean exists, which is exactly what the
  * Drivine stores need to be built. DICE only goes looking for it in apps that added `dice-starter-neo4j`;
  * the rest keep the in-memory stores unless they ask for `graph`. The deprecated `embabel.dice.store.type`
- * property can still force either; any other value stops startup (see [StoreBackendCheck]).
+ * property can still force either. Any value other than `graph` means the in-memory stores, which is
+ * what it meant before detection existed (see [StoreBackendCheck]).
  */
 internal object StoreBackend {
     const val TYPE_PROPERTY = "${DicePropertyPrefixes.STORE}.type"
@@ -488,9 +490,28 @@ internal object StoreBackend {
      */
     fun optedIn(classLoader: ClassLoader?): Boolean = ClassPathResource(STARTER_MARKER, classLoader).exists()
 
-    /** The property's value, trimmed and lower-cased, or null when it isn't set or is blank. */
+    /**
+     * The property's value as the application set it, trimmed, or null when it isn't set or is blank.
+     * This reads the environment rather than [DiceStoreProperties.type], whose default would make
+     * every app look as if it had asked for `in-memory`.
+     */
+    fun setValue(environment: Environment): String? =
+        if (environment.containsProperty(TYPE_PROPERTY)) {
+            environment.getProperty(TYPE_PROPERTY)?.trim()?.takeIf { it.isNotEmpty() }
+        } else {
+            null
+        }
+
+    /**
+     * The backend the property asks for: [GRAPH], [IN_MEMORY], or null when it isn't set and DICE
+     * may detect. A value DICE doesn't know counts as [IN_MEMORY], because that is what it got
+     * before detection existed.
+     */
     fun requested(environment: Environment): String? =
-        environment.getProperty(TYPE_PROPERTY)?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+        setValue(environment)?.let { if (it.equals(GRAPH, ignoreCase = true)) GRAPH else IN_MEMORY }
+
+    /** Whether [value] is one of the two values the property accepts. */
+    fun known(value: String): Boolean = value.equals(GRAPH, ignoreCase = true) || value.equals(IN_MEMORY, ignoreCase = true)
 
     fun drivineConfigured(beanFactory: ListableBeanFactory): Boolean =
         BeanFactoryUtils.beanNamesForTypeIncludingAncestors(
@@ -512,10 +533,11 @@ internal annotation class ConditionalOnDrivineStores
 /**
  * The check behind [ConditionalOnDrivineStores].
  *
- * `graph` is taken at its word without looking for Drivine. The lookup runs while beans are being
- * registered, so it can't see a `PersistenceManager` that a host's own auto-configuration registers
- * after DICE's; an explicit request must not be lost to that. Whether Drivine really turned up is
- * left to [StoreBackendCheck], which runs once everything is registered.
+ * `graph` is taken at its word without looking for Drivine, as it always was. The lookup runs while
+ * beans are being registered, so it can't see a `PersistenceManager` that a host's own
+ * auto-configuration registers after DICE's; an explicit request must not be lost to that. If Drivine
+ * never turns up, injecting the Drivine stores fails, exactly as before detection. Any other set value
+ * never matches.
  *
  * With the property unset and no `dice-starter-neo4j`, it never matches, which is how DICE behaved before
  * detection: an app using Drivine for its own data keeps DICE's in-memory stores.
@@ -535,7 +557,9 @@ internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
         val message = ConditionMessage.forCondition(ConditionalOnDrivineStores::class.java)
         when (StoreBackend.requested(context.environment)) {
             StoreBackend.IN_MEMORY -> return ConditionOutcome.noMatch(
-                message.because("${StoreBackend.TYPE_PROPERTY}=${StoreBackend.IN_MEMORY} forces the in-memory stores"),
+                message.because(
+                    "${StoreBackend.TYPE_PROPERTY}=${StoreBackend.setValue(context.environment)} gives the in-memory stores",
+                ),
             )
             StoreBackend.GRAPH -> return ConditionOutcome.match(
                 message.because("${StoreBackend.TYPE_PROPERTY}=${StoreBackend.GRAPH} asks for the Drivine stores"),
@@ -578,15 +602,18 @@ internal class OnDrivineStores : SpringBootCondition(), ConfigurationCondition {
  * bean, and that store is left alone while the rest must still follow Drivine. The decay manager DICE
  * builds over a host's own proposition store is left alone too. Without the starter there is nothing to
  * check: the in-memory stores are what such an app is meant to get.
- * With the property set, it logs one deprecation warning, then refuses to start if the value is
- * unknown, or if it is `graph` and Drivine isn't configured. `in-memory` never fails.
+ *
+ * With the property set, it never stops startup, so an app that started before detection still does.
+ * `graph` and `in-memory` get one deprecation warning. Any other value gets one warning naming it and
+ * the two accepted values, and the in-memory stores, as it always did. `graph` without Drivine is left
+ * to bean injection, which fails as it used to unless the host supplied every store that needs Drivine.
  */
 @Lazy(false)
 internal class StoreBackendCheck(environment: Environment, beanFactory: ConfigurableListableBeanFactory) {
 
     init {
-        val requested = StoreBackend.requested(environment)
-        if (requested == null) {
+        val value = StoreBackend.setValue(environment)
+        if (value == null) {
             val lost = if (StoreBackend.optedIn(beanFactory.beanClassLoader)) {
                 inMemoryStoresDespiteDrivine(environment, beanFactory)
             } else {
@@ -602,29 +629,24 @@ internal class StoreBackendCheck(environment: Environment, beanFactory: Configur
                     "set " +
                     "${StoreBackend.TYPE_PROPERTY}=${StoreBackend.GRAPH}, or define the store beans yourself."
             }
-        } else {
-            LoggerFactory.getLogger(StoreBackendCheck::class.java).warn(
+        } else if (StoreBackend.known(value)) {
+            logger.warn(
                 "{} is deprecated and will be removed. With dice-starter-neo4j on the classpath, DICE uses its " +
                     "Drivine stores when Drivine is configured and its in-memory stores otherwise, so the " +
                     "property can go. Keep '{}' only to force the in-memory stores while Drivine is present.",
                 StoreBackend.TYPE_PROPERTY,
                 StoreBackend.IN_MEMORY,
             )
-            when (requested) {
-                StoreBackend.IN_MEMORY -> Unit
-                StoreBackend.GRAPH -> check(StoreBackend.drivineConfigured(beanFactory)) {
-                    "${StoreBackend.TYPE_PROPERTY}=${StoreBackend.GRAPH} asks for DICE's Drivine stores, but " +
-                        "Drivine isn't configured: there is no Drivine PersistenceManager bean. Add Drivine's " +
-                        "Spring Boot starter and its data source settings, or remove the property (it is " +
-                        "deprecated) and DICE will use its in-memory stores."
-                }
-                else -> throw IllegalStateException(
-                    "${StoreBackend.TYPE_PROPERTY}=${environment.getProperty(StoreBackend.TYPE_PROPERTY)} isn't " +
-                        "a value DICE knows. The allowed values are '${StoreBackend.GRAPH}' and " +
-                        "'${StoreBackend.IN_MEMORY}', and the property is deprecated: add dice-starter-neo4j and " +
-                        "remove it, and DICE picks its stores from whether Drivine is configured.",
-                )
-            }
+        } else {
+            logger.warn(
+                "{}={} isn't a value DICE knows, so DICE is using its in-memory stores. The accepted values " +
+                    "are '{}' and '{}'. The property is deprecated and will be removed: with dice-starter-neo4j " +
+                    "on the classpath and the property unset, DICE picks its stores from whether Drivine is configured.",
+                StoreBackend.TYPE_PROPERTY,
+                value,
+                StoreBackend.GRAPH,
+                StoreBackend.IN_MEMORY,
+            )
         }
     }
 
@@ -671,6 +693,8 @@ internal class StoreBackendCheck(environment: Environment, beanFactory: Configur
     )
 
     private companion object {
+        val logger = LoggerFactory.getLogger(StoreBackendCheck::class.java)
+
         const val COLLECTOR_TRACE_ENABLED = "${DicePropertyPrefixes.DICE}.collector.trace.enabled"
 
         /**
