@@ -2436,9 +2436,10 @@ yourself still wins (`@ConditionalOnMissingBean`), so call sites are unchanged.
 If Drivine is configured but some of DICE's stores still ended up in memory (for example because
 your own auto-configuration registered the `PersistenceManager` after DICE's), startup fails and
 names those stores, so data is never quietly kept in memory. With the starter, the deprecated
-`embabel.dice.store.type` property is no longer needed. A SQLite starter will follow in a later release.
+`embabel.dice.store.type` property is no longer needed.
 
-Adding `dice-starter-neo4j` is what turns this detection on. An app that uses Drivine for its own data
+For SQLite, add `dice-starter-sqlite` and configure a `SQLITE` data source with the file path as
+`database-name`. Either Drivine starter turns on backend detection. An app that uses Drivine for its own data
 without the starter keeps DICE's in-memory stores, as before, and DICE builds no Drivine managers
 for it and writes no schema to its database. Such an app can still set `embabel.dice.store.type=graph`
 to get DICE's Drivine stores on its own `PersistenceManager` and `StatelessGraphObjectManager`.
@@ -2695,6 +2696,7 @@ together, then add one starter. You don't need to define any beans.
 |---------|--------------|
 | `dice-starter` | DICE with in-memory stores |
 | `dice-starter-neo4j` | DICE with Drivine stores on Neo4j, once you add one entry under `database.datasources` (see [Graph-Backed Storage](#graph-backed-storage-dice-storage)) |
+| `dice-starter-sqlite` | DICE with Drivine stores in a local SQLite file, configured under `database.datasources` |
 | `dice-starter-mcp` | DICE's tools over MCP (see [MCP Server](#mcp-server)) |
 
 A SQLite starter will follow in a later release. The proposition store needs an `Ai` bean for
