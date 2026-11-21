@@ -181,16 +181,16 @@ if (search != null && budget.isVectorSearchAllowed()) {
 }
 ----
 
-Kotlin finds an interface by type and builds each request in a block.
+Kotlin opens the same view and builds each request in a block.
 
 [source,kotlin]
 ----
 val budget = ReadBudget.ofRows(200).withMaxVectorCandidates(5_000)
-val reads = StoreCapabilities.find<ScopedReads>(store)
-val search = StoreCapabilities.find<ScopedVectorSearch>(store)
+val reads = repository.scopedReads()
+val search = reads as? ScopedVectorSearch
 
-val recent = reads?.query(active, ReadQuery(ReadCriteria { entityId = "alice" }) { limit = 20 }, budget)
-val mentions = reads?.matchKeywords(active, ReadKeywordQuery(listOf("peanut", "allergy")) { limit = 10 }, budget)
+val recent = reads.query(active, ReadQuery(ReadCriteria { entityId = "alice" }) { limit = 20 }, budget)
+val mentions = reads.matchKeywords(active, ReadKeywordQuery(listOf("peanut", "allergy")) { limit = 10 }, budget)
 val nearest = search?.findNearest(active, ReadVectorSearchRequest("What does Alice eat?") { topK = 5 }, budget)
 ----
 
@@ -322,9 +322,11 @@ The full rules are in the KDoc of `ScopedReads` and `ScopedVectorSearch`. The ca
 
 ==== Recall across contexts with ScopedMemory
 
-`ScopedMemory` implements Embabel's `LlmReference` and `Tool`. The host supplies the view,
-scope and budget. The model can submit search text and a result limit. Each fact is labelled with
-its owning context, even when two contexts store the same text.
+`ScopedMemory` implements Embabel's `LlmReference` and `Tool`. Resolve the authenticated
+tenant and principal through the host's authorization policy. Open the repository view in the host
+and build a spec from the granted context IDs. Give Embabel the memory reference. The tool schema
+accepts search text and a result limit. Every returned fact is labelled with its owning context,
+even when two contexts store the same text.
 
 [source,java]
 ----
@@ -335,6 +337,17 @@ ScopedMemory memory = ScopedMemory.forReads(reads, spec, ReadBudget.ofRows(20))
 Memory recalls active propositions with raw confidence of at least 0.5. A row-only budget uses
 keyword search. A budget that permits vector candidates enables hybrid retrieval and requires a
 view with scoped vector support.
+
+[cols="1,2", options="header"]
+|===
+| Refusal | Recovery
+| Result limit above the row cap
+| Retry with a smaller limit. The tool error reports the cap.
+| Vector candidate cap exceeded
+| Narrow the host's filters or use a row-only budget. Raise the cap only within the service's resource limits.
+| Capability, filter or order unsupported
+| Choose a supported operation or open a view from a backend that implements it.
+|===
 
 ==== Entity candidates
 

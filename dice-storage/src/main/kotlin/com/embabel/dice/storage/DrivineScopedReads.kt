@@ -28,6 +28,7 @@ import com.embabel.dice.store.ScopedReadSpec
 import com.embabel.dice.store.ScopedReads
 import com.embabel.dice.store.StoreCapabilities
 import com.embabel.dice.store.StoreCapability
+import org.drivine.connection.DatabaseType
 import org.drivine.manager.PersistenceManager
 import org.drivine.query.GraphViewQueryBuilder
 
@@ -71,11 +72,19 @@ internal class DrivineScopedReads(private val persistence: PersistenceManager) :
     }
 
     private fun rows(filter: Filter, order: ReadOrder, limit: Int?, budget: ReadBudget): List<Proposition> {
+        val orderByInstantText = order == ReadOrder.CREATED_DESC && persistence.type == DatabaseType.SQLITE
+        val orderParameters = if (orderByInstantText) {
+            mapOf(InstantText.PATTERN_PARAMETER to InstantText.PATTERN)
+        } else emptyMap()
         val ranking = listOfNotNull(
             filter.overlap?.let { "$it DESC" },
             when (order) {
                 ReadOrder.NONE -> null
-                ReadOrder.CREATED_DESC -> "$root.created DESC"
+                ReadOrder.CREATED_DESC -> {
+                    val created = "$root.created"
+                    val chronological = if (orderByInstantText) InstantText.sortKey(created) else created
+                    "$chronological DESC"
+                }
                 ReadOrder.REINFORCE_COUNT_DESC -> "coalesce($root.reinforceCount, 0) DESC"
                 ReadOrder.IMPORTANCE_DESC -> "coalesce($root.importance, 0.5) DESC"
                 else -> error("Scoped order validation did not reject $order")
@@ -84,7 +93,7 @@ internal class DrivineScopedReads(private val persistence: PersistenceManager) :
         ).joinToString(", ")
         val statement = view.buildQuery(filter.where, ranking) + "\nLIMIT \$rowLimit"
         val rows = persistence.query(
-            cypherQuery(statement).bind(filter.params + ("rowLimit" to (limit ?: budget.maxRows + 1)))
+            cypherQuery(statement).bind(filter.params + orderParameters + ("rowLimit" to (limit ?: budget.maxRows + 1)))
                 .transform(PropositionView::class.java),
         )
         budget.requireRows(rows.size)

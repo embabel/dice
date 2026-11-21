@@ -78,13 +78,25 @@ class ScopedMemoryJavaInteropTest {
         ScopedMemory memory = ScopedMemory.forReads(store.scopedReads(), ALLOWED, ReadBudget.ofRows(1));
 
         assertTrue(memory.contribution().contains("more than 1"));
-        assertThrows(ReadBudgetExceededException.class, () -> memory.call("""
+        Tool.Result.Error overBudget = assertInstanceOf(Tool.Result.Error.class, memory.call("""
                 {"query":"invoice","limit":2}
                 """));
+        assertTrue(overBudget.getMessage().contains("budget allows 1"));
         UnsupportedCapabilityException failure = assertThrows(UnsupportedCapabilityException.class,
                 () -> ScopedMemory.forReads(store.scopedReads(), ALLOWED,
                         ReadBudget.ofRows(2).withMaxVectorCandidates(5)));
         assertEquals(StoreCapability.SCOPED_VECTOR_SEARCH, failure.getCapability());
+    }
+
+    @Test
+    void invalidModelInputReturnsAToolErrorWithoutListingMemories() {
+        var store = new InMemoryPropositionRepository();
+        write(store, "session", "1", SHARED);
+        var tool = ScopedMemory.forReads(store.scopedReads(), ALLOWED, ReadBudget.ofRows(2)).tools().getFirst();
+
+        for (String input : List.of("{", "[]", "{\"query\":12}", "{\"limit\":0}", "{\"limit\":2} {}")) {
+            assertInstanceOf(Tool.Result.Error.class, tool.call(input), input);
+        }
     }
 
     @Test
@@ -113,6 +125,10 @@ class ScopedMemoryJavaInteropTest {
                     search.findNearest(ALLOWED, request, rows.withMaxVectorCandidates(2));
             assertEquals(List.of("1"), matches.stream().map(match -> match.getProposition().getId()).toList());
             assertEquals(0.0, matches.getFirst().getScore().getCosine());
+            ScopedMemory smaller = ScopedMemory.forReads(reads, ALLOWED, rows.withMaxVectorCandidates(1));
+            Tool.Result.Error refused = assertInstanceOf(Tool.Result.Error.class,
+                    smaller.call("{\"query\":\"query\"}"));
+            assertTrue(refused.getMessage().contains("2 vector candidates"));
             ScopedMemory memory = ScopedMemory.forReads(reads, ALLOWED, rows.withMaxVectorCandidates(2));
             assertTrue(text(memory.call("{\"query\":\"query\"}")).contains("[handbook] allowed"));
         }

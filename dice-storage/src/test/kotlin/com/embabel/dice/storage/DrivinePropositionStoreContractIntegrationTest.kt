@@ -29,6 +29,7 @@ import com.embabel.dice.store.ReadBudget
 import com.embabel.dice.store.ReadBudgetExceededException
 import com.embabel.dice.store.ReadCriteria
 import com.embabel.dice.store.ReadKeywordQuery
+import com.embabel.dice.store.ReadOrder
 import com.embabel.dice.store.ReadQuery
 import com.embabel.dice.store.ScopedReadSpec
 import com.embabel.dice.store.StoreCapability
@@ -47,6 +48,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import java.time.Instant
 
 /**
  * Runs the [AbstractPropositionStoreContractTest] suite against
@@ -112,6 +114,28 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         }
         assertEquals(StoreCapability.SCOPED_READS, denied.capability)
         assertTrue(denied.message!!.contains("MIN_EFFECTIVE_CONFIDENCE"))
+    }
+
+    @Test
+    fun `scoped creation order keeps fractional seconds before applying the limit`() {
+        val stamps = mapOf(
+            "older" to "2026-11-20T12:00:05Z",
+            "middle" to "2026-11-20T12:00:05.500000001Z",
+            "newest" to "2026-11-20T12:00:05.500000002Z",
+        )
+        stamps.forEach { (id, timestamp) ->
+            repository.save(Proposition.draft("team", "alpha $id", 0.9).withId(id)
+                .withCreated(Instant.parse(timestamp)).toProposition())
+        }
+        val scope = ScopedReadSpec.of(ContextReadScope.ofValues("team"))
+        val reads = repository.scopedReads()
+        val budget = ReadBudget.ofRows(3)
+        assertEquals("newest", reads.query(
+            scope, ReadQuery.of(ReadCriteria.empty()).orderedByCreated().withLimit(1), budget,
+        ).single().id)
+        assertEquals(listOf("newest", "middle", "older"), reads.matchKeywords(
+            scope, ReadKeywordQuery.forTokens("alpha").withOrder(ReadOrder.CREATED_DESC), budget,
+        ).map { it.id })
     }
 
     /** The same text in two contexts is not deduplicated, so the two share an embedding and cluster. */

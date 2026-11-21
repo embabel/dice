@@ -31,6 +31,8 @@ import com.embabel.dice.store.ScopedReads
 import com.embabel.dice.store.ScopedVectorSearch
 import com.embabel.dice.store.StoreCapability
 import com.embabel.dice.store.UnsupportedCapabilityException
+import com.fasterxml.jackson.core.JsonProcessingException
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.jetbrains.annotations.ApiStatus
 import java.util.Locale
@@ -93,25 +95,42 @@ class ScopedMemory private constructor(
         description = description,
         inputSchema = Tool.InputSchema.of(
             Tool.Parameter.string("query", "Search text. Omit to list memories.", required = false),
-            Tool.Parameter.integer("limit", "Maximum number of results", required = false),
+            Tool.Parameter.integer("limit", "Maximum number of results, up to ${budget.maxRows}", required = false),
         ),
     )
 
     override fun call(input: String): Tool.Result {
-        val params = if (input.isBlank()) null else objectMapper.readTree(input)
-        val query = params?.get("query")?.takeIf { it.isTextual }?.asText()?.trim()?.takeIf { it.isNotEmpty() }
+        val params = if (input.isBlank()) null else try {
+            inputReader.readTree(input)
+        } catch (_: JsonProcessingException) {
+            return Tool.Result.error("Memory arguments must be a JSON object.")
+        }
+        if (params != null && !params.isObject) {
+            return Tool.Result.error("Memory arguments must be a JSON object.")
+        }
+        val query = params?.get("query")?.let {
+            if (!it.isTextual) return Tool.Result.error("The query must be text.")
+            it.asText().trim().takeIf(String::isNotEmpty)
+        }
         val limit = params?.get("limit")?.let {
-            require(it.isIntegralNumber && it.canConvertToLong()) { "limit must be a positive integer" }
-            val suggested = it.longValue()
-            require(suggested > 0) { "limit must be positive" }
-            budget.requireRows(suggested)
-            suggested.toInt()
-        } ?: minOf(Memory.DEFAULT_LIMIT, budget.maxRows)
+            if (!it.isIntegralNumber || !it.canConvertToLong() || it.longValue() <= 0) {
+                return Tool.Result.error("The result limit must be a positive integer within the host's row budget.")
+            }
+            it.longValue()
+        } ?: minOf(Memory.DEFAULT_LIMIT, budget.maxRows).toLong()
 
-        val propositions = if (query == null) {
-            reads.query(spec, ReadQuery.of(ReadCriteria.empty()).orderedByCreated().withLimit(limit), budget)
-        } else {
-            search(query, limit)
+        val propositions = try {
+            budget.requireRows(limit)
+            val rows = limit.toInt()
+            if (query == null) {
+                reads.query(spec, ReadQuery.of(ReadCriteria.empty()).orderedByCreated().withLimit(rows), budget)
+            } else {
+                search(query, rows)
+            }
+        } catch (failure: ReadBudgetExceededException) {
+            return Tool.Result.error(failure.message ?: "The memory read exceeds its budget.")
+        } catch (failure: UnsupportedCapabilityException) {
+            return Tool.Result.error(failure.message ?: "The memory view cannot apply this request.")
         }
         return Tool.Result.text(
             if (propositions.isEmpty()) "No memories matched."
@@ -138,7 +157,8 @@ class ScopedMemory private constructor(
     }
 
     companion object {
-        private val objectMapper = jacksonObjectMapper()
+        private val inputReader = jacksonObjectMapper().reader()
+            .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
         private val tokenSeparator = Regex("""[^\p{L}\p{N}]+""")
 
         /**
