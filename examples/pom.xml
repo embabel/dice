@@ -39,6 +39,7 @@
         <module>examples-graph-reasoning</module>
         <module>examples-multi-context-memory</module>
         <module>examples-support-domain</module>
+        <module>examples-corrections-history</module>
     </modules>
 
     <properties>

@@ -1,0 +1,5 @@
+{
+  "classifications": [
+    { "propositionId": "0", "relation": "CONTRADICTORY", "similarity": 0.9, "reasoning": "Invoices cannot be paid both annually and monthly" }
+  ]
+}
