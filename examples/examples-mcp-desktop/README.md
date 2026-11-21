@@ -75,14 +75,15 @@ Recall and list return at most the requested limit and leave out facts below an 
 confidence of 0.5 by default. For semantic recall, configure a repository with an embedding
 service. This example runs with its in-memory repository and no embedding service.
 
-## Keep it on this machine
+## Local access
 
-`contextId` is a scope the caller picks, not a credential. It keeps one call inside one context,
-but any caller can name any context. This server checks no identity, so it binds `127.0.0.1` by
-default. Any local process that can reach the port can call the tools. Use the sample data for
-the demo and add host authorization before using real tenant data. Listening wider, for example with
-`--server.address=0.0.0.0`, lets anyone who can reach the port list the memories and, with writes
-on, store new ones. Only do that when the host puts its own authorization in front of it.
+The supplied configuration binds the server to `127.0.0.1`. Callers that can reach the port
+can choose any context. DICE applies that context to the request. The example trusts local
+callers, including browser traffic that reaches the endpoint.
+
+Use the sample data for the demo. A host that serves real tenant data must authorize callers
+and validate browser origins before passing requests to the MCP server. Keep the loopback
+bind unless the host restricts access to the listening port.
 
 ## Behaviour the tests assert
 
