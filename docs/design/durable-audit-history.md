@@ -30,6 +30,9 @@ non-active states. Transaction timestamps place decisions on the audit timeline.
    If the repository emits lifecycle events, use
    `EventEmittingPropositionRepository.wrapping(audited, listener)`.
    Run other synchronous callbacks that write propositions after the audited operation returns.
+   Use the audited repository directly for native graph queries and fenced batches. The event
+   emitter uses portable graph traversal and writes a batch one proposition at a time. Open a
+   host write transaction when a batch through the emitter must commit as one unit.
    Register `AuditEventListener` on the host's gate and extraction event paths for verdicts and run
    outcomes. Continue routing lifecycle writes, including decay, collection, and quarantine,
    through the wrapped repository. Configure the attribution provider with opaque identifiers and
