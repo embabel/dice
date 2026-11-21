@@ -21,8 +21,8 @@ import org.jetbrains.annotations.ApiStatus
  * Similarity search held to a [ScopedReadSpec] and a [ReadBudget].
  *
  * ```java
- * ScopedVectorSearch search = StoreCapabilities.find(store, ScopedVectorSearch.class);
- * if (search != null && budget.isVectorSearchAllowed()) {
+ * ScopedReads reads = inMemoryRepository.scopedReads();
+ * if (reads instanceof ScopedVectorSearch search && budget.isVectorSearchAllowed()) {
  *     List<VectorMatch> nearest = search.findNearest(
  *         spec, ReadVectorSearchRequest.forText("What does Alice eat?").withTopK(5), budget);
  * }
@@ -96,3 +96,7 @@ interface ScopedVectorSearch {
      */
     fun findNearest(spec: ScopedReadSpec, request: ReadVectorSearchRequest, budget: ReadBudget): List<VectorMatch>
 }
+
+/** A scoped store cannot compare a nonzero candidate with a query of a different dimension. */
+internal class ScopedVectorDimensionMismatchException :
+    IllegalArgumentException("Vectors must have the same dimension")

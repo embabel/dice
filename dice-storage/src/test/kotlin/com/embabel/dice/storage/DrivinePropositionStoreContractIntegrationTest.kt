@@ -17,13 +17,26 @@ package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
 import com.embabel.common.ai.model.EmbeddingService
+import com.embabel.dice.agent.ScopedMemory
 import com.embabel.dice.conformance.AbstractPropositionStoreContractTest
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.storage.model.PropositionView
+import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.store.ContextReadScope
+import com.embabel.dice.store.ReadBudget
+import com.embabel.dice.store.ReadBudgetExceededException
+import com.embabel.dice.store.ReadCriteria
+import com.embabel.dice.store.ReadKeywordQuery
+import com.embabel.dice.store.ReadOrder
+import com.embabel.dice.store.ReadQuery
+import com.embabel.dice.store.ScopedReadSpec
+import com.embabel.dice.store.StoreCapability
+import com.embabel.dice.store.UnsupportedCapabilityException
 import org.drivine.StaleObjectException
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
@@ -77,6 +90,166 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
     fun cleanUp() {
         repository.clearAll()
         persistenceManager.execute(cypherQuery("MATCH (s:Source) DETACH DELETE s"))
+    }
+
+    @Test
+    fun `scoped queries rank filter and cap inside the graph database`() {
+        fun save(id: String, context: String, text: String, status: PropositionStatus = PropositionStatus.ACTIVE) {
+            repository.save(Proposition.draft(context, text, 0.9).withId(id).withStatus(status).toProposition())
+        }
+        save("1", "session", "alpha discount")
+        save("2", "team", "alpha % discount")
+        save("3", "outside", "alpha % private discount")
+        save("4", "Session", "alpha % also private")
+        save("5", "team", "alpha % past discount", PropositionStatus.SUPERSEDED)
+        save("6", "team", "alpha % second discount")
+        val reads = repository.scopedReads()
+        val allowed = ScopedReadSpec.of(ContextReadScope.ofValues("session", "team")).narrow(
+            ReadCriteria.empty().withStatus(PropositionStatus.ACTIVE),
+        )
+        val none = ReadCriteria.empty()
+        val two = ReadBudget.ofRows(2)
+        val three = ReadBudget.ofRows(3)
+
+        assertEquals(listOf("1", "2", "6"), reads.query(allowed, ReadQuery.of(none), three).map { it.id })
+        assertEquals(listOf("2", "6"), reads.matchKeywords(
+            allowed, ReadKeywordQuery.forTokens("ALPHA", "%").withLimit(2), two,
+        ).map { it.id })
+        assertEquals(listOf("2", "6"), reads.matchKeywords(
+            allowed, ReadKeywordQuery.forTokens("%"), two,
+        ).map { it.id })
+        assertEquals(3, reads.count(allowed, none.withMinConfidence(0.9), three))
+        assertEquals(0, reads.count(allowed, none.withMinConfidence(0.95), three))
+        assertEquals(3L, assertThrows<ReadBudgetExceededException> {
+            reads.count(allowed, none, two)
+        }.requested)
+        assertThrows<ReadBudgetExceededException> { reads.query(allowed, ReadQuery.of(none), two) }
+        assertThrows<ReadBudgetExceededException> { reads.matchKeywords(allowed, ReadKeywordQuery.forTokens("alpha"), two) }
+        val denied = assertThrows<UnsupportedCapabilityException> {
+            reads.query(allowed, ReadQuery.of(none.withMinEffectiveConfidence(0.5)).withLimit(3), two)
+        }
+        assertEquals(StoreCapability.SCOPED_READS, denied.capability)
+        assertTrue(denied.message!!.contains("MIN_EFFECTIVE_CONFIDENCE"))
+    }
+
+    @Test
+    fun `scoped filters and orders agree with the local view`() {
+        val local = InMemoryPropositionRepository()
+        val source = Proposition.draft("team", "policy observation", 0.9).withId("observed").toProposition()
+        local.save(source)
+        repository.save(source)
+
+        fun save(id: String, level: Int, importance: Double, reinforced: Int, pinned: Boolean = true) {
+            val fact = Proposition.draft("team", "policy $id", 0.9).withId(id)
+                .withLevel(level).withSourceIds(listOf(source.id))
+                .withImportance(importance).withReinforceCount(reinforced)
+                .withPinned(pinned).toProposition()
+            local.save(fact)
+            repository.save(fact)
+        }
+
+        save("reinforced", 2, 0.7, 5)
+        save("important", 3, 0.9, 4)
+        save("low-level", 1, 1.0, 9)
+        save("high-level", 4, 1.0, 9)
+        save("low-importance", 2, 0.6, 9)
+        save("low-reinforcement", 2, 1.0, 3)
+        save("unpinned", 2, 1.0, 9, pinned = false)
+        val scope = ScopedReadSpec.of(ContextReadScope.ofValues("team")).narrow(
+            ReadCriteria.empty().withMinLevel(2).withMaxLevel(3).withPinned(true),
+        )
+        val criteria = ReadCriteria.empty().withMinImportance(0.7).withMinReinforceCount(4)
+        val query = ReadQuery.of(criteria).withLimit(2)
+        val budget = ReadBudget.ofRows(2)
+
+        for (reads in listOf(local.scopedReads(), repository.scopedReads())) {
+            assertEquals(2, reads.count(scope, criteria, budget))
+            assertEquals(listOf("reinforced", "important"),
+                reads.query(scope, query.orderedByReinforceCount(), budget).map { it.id })
+            assertEquals(listOf("important", "reinforced"),
+                reads.query(scope, query.orderedByImportance(), budget).map { it.id })
+        }
+    }
+
+    @Test
+    fun `scoped limits apply to propositions with multiple mentions`() {
+        fun save(id: String, entities: List<String>) {
+            val mentions = entities.map { entity ->
+                EntityMention(span = entity, type = "Person", role = MentionRole.SUBJECT, resolvedId = entity)
+            }
+            repository.save(Proposition.draft("team", "policy $id", 0.9).withId(id).withMentions(mentions).toProposition())
+        }
+
+        save("1", listOf("alice", "beth"))
+        save("2", listOf("charlie"))
+        val reads = repository.scopedReads()
+        val scope = ScopedReadSpec.of(ContextReadScope.ofValues("team"))
+        val two = ReadBudget.ofRows(2)
+
+        val rows = reads.query(scope, ReadQuery.of(ReadCriteria.empty()).withLimit(2), two)
+        assertEquals(listOf("1", "2"), rows.map { it.id })
+        assertEquals(setOf("alice", "beth"), rows.first().mentions.map { it.resolvedId }.toSet())
+        val strongest = reads.matchKeywords(scope, ReadKeywordQuery.forTokens("policy").withLimit(1), two).single()
+        assertEquals("1", strongest.id)
+        assertEquals(2, strongest.mentions.size)
+        assertEquals(2, reads.count(scope, ReadCriteria.empty(), two))
+    }
+
+    @Test
+    fun `unsupported scoped prompt reads report the refusal without dropping the host filter`() {
+        repository.save(Proposition.draft("team", "team policy", 0.9).toProposition())
+        repository.save(Proposition.draft("other", "private policy", 0.9).toProposition())
+        val reads = repository.scopedReads()
+        val scope = ScopedReadSpec.of(ContextReadScope.ofValues("team"))
+        val memory = ScopedMemory.forReads(reads, scope, ReadBudget.ofRows(2))
+        val eagerOrder = ReadQuery.of(ReadCriteria.empty()).orderedByEffectiveConfidence()
+
+        val eagerRefusal = memory.withEagerQuery(eagerOrder).contribution()
+        assertTrue("1 memories available" in eagerRefusal)
+        assertTrue("Key memories unavailable" in eagerRefusal)
+        assertTrue("EFFECTIVE_CONFIDENCE_DESC" in eagerRefusal)
+        assertFalse("team policy" in eagerRefusal)
+        assertFalse("private policy" in eagerRefusal)
+
+        val filterRefusal = memory.narrowedBy { it.withMinEffectiveConfidence(0.8) }
+            .withEagerQuery(ReadQuery.of(ReadCriteria.empty()).withLimit(1)).contribution()
+        assertTrue("Memory count unavailable" in filterRefusal)
+        assertTrue("MIN_EFFECTIVE_CONFIDENCE" in filterRefusal)
+        assertFalse("team policy" in filterRefusal)
+        assertFalse("private policy" in filterRefusal)
+    }
+
+    @Test
+    fun `scoped keyword matching lowercases non ASCII text inside the database`() {
+        repository.save(Proposition.draft("team", "ÉCOLE handbook", 0.9).withId("allowed").toProposition())
+        repository.save(Proposition.draft("other", "ÉCOLE confidential", 0.9).withId("other").toProposition())
+        val reads = repository.scopedReads()
+        val scope = ScopedReadSpec.of(ContextReadScope.ofValues("team"))
+
+        val matches = reads.matchKeywords(scope, ReadKeywordQuery.forTokens("école"), ReadBudget.ofRows(1))
+        assertEquals(listOf("allowed"), matches.map { it.id })
+    }
+
+    @Test
+    fun `scoped creation order keeps fractional seconds before applying the limit`() {
+        val stamps = mapOf(
+            "older" to "2026-11-20T12:00:05Z",
+            "middle" to "2026-11-20T12:00:05.500000001Z",
+            "newest" to "2026-11-20T12:00:05.500000002Z",
+        )
+        stamps.forEach { (id, timestamp) ->
+            repository.save(Proposition.draft("team", "alpha $id", 0.9).withId(id)
+                .withCreated(Instant.parse(timestamp)).toProposition())
+        }
+        val scope = ScopedReadSpec.of(ContextReadScope.ofValues("team"))
+        val reads = repository.scopedReads()
+        val budget = ReadBudget.ofRows(3)
+        assertEquals("newest", reads.query(
+            scope, ReadQuery.of(ReadCriteria.empty()).orderedByCreated().withLimit(1), budget,
+        ).single().id)
+        assertEquals(listOf("newest", "middle", "older"), reads.matchKeywords(
+            scope, ReadKeywordQuery.forTokens("alpha").withOrder(ReadOrder.CREATED_DESC), budget,
+        ).map { it.id })
     }
 
     /** The same text in two contexts is not deduplicated, so the two share an embedding and cluster. */

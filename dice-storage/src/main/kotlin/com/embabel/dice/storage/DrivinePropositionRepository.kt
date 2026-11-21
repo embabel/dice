@@ -56,6 +56,8 @@ import org.drivine.query.CypherStatement
 import org.drivine.query.QueryLoader
 import org.drivine.query.QuerySpecification
 import org.drivine.query.dsl.*
+import com.embabel.dice.store.ScopedReads
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
@@ -171,6 +173,14 @@ class DrivinePropositionRepository(
      * same monitor and the find-then-insert is effectively atomic within this JVM.
      */
     private val dedupLocks: Array<Any> = Array(DEDUP_STRIPES) { Any() }
+
+    /**
+     * Opens a read-only view. Each read runs as one database statement, with scoped selection,
+     * ranking and budget checks. Opening the view requires no transaction of its own.
+     */
+    @ApiStatus.Experimental
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
+    fun scopedReads(): ScopedReads = DrivineScopedReads(persistenceManager)
 
     /**
      * True on SQLite, where a transaction holds the file's write lock from its first statement until
