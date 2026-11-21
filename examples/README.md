@@ -23,6 +23,7 @@ needs no API key and no running service.
 | [`examples-multi-context-memory`](examples-multi-context-memory) | Recall across a support session and handbook under a scope and budget set by the host. |
 | [`examples-support-domain`](examples-support-domain) | A support desk turns chats into propositions and graph relationships that cite their sources. |
 | [`examples-corrections-history`](examples-corrections-history) | How DICE handles repeated claims, corrections, and changes over time. |
+| [`examples-mcp-desktop`](examples-mcp-desktop) | Showcase: DICE memory as MCP tools for a desktop client. |
 
 Each module has its own README. The tests are the examples.
 
