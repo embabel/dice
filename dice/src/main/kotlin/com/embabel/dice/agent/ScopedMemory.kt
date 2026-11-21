@@ -29,6 +29,7 @@ import com.embabel.dice.store.ReadRefusedException
 import com.embabel.dice.store.ReadVectorSearchRequest
 import com.embabel.dice.store.ScopedReadSpec
 import com.embabel.dice.store.ScopedReads
+import com.embabel.dice.store.ScopedVectorDimensionMismatchException
 import com.embabel.dice.store.ScopedVectorSearch
 import com.embabel.dice.store.StoreCapability
 import com.embabel.dice.store.UnsupportedCapabilityException
@@ -145,6 +146,10 @@ class ScopedMemory private constructor(
             return Tool.Result.error(failure.message ?: "The memory read exceeds its budget.")
         } catch (failure: UnsupportedCapabilityException) {
             return Tool.Result.error(failure.message ?: "The memory view cannot apply this request.")
+        } catch (_: ScopedVectorDimensionMismatchException) {
+            return Tool.Result.error(
+                "Stored embeddings use a different dimension. Re-embed the repository with the configured embedding model.",
+            )
         }
         return Tool.Result.text(
             if (propositions.isEmpty()) "No memories matched."

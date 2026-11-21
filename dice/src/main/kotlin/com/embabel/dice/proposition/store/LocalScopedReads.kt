@@ -28,6 +28,7 @@ import com.embabel.dice.store.ReadQuery
 import com.embabel.dice.store.ReadVectorSearchRequest
 import com.embabel.dice.store.ScopedReadSpec
 import com.embabel.dice.store.ScopedReads
+import com.embabel.dice.store.ScopedVectorDimensionMismatchException
 import com.embabel.dice.store.ScopedVectorSearch
 import com.embabel.dice.store.SimilarityScore
 import com.embabel.dice.store.VectorMatch
@@ -138,7 +139,7 @@ internal open class LocalScopedReads(private val propositions: () -> Collection<
 
         private fun cosine(query: FloatArray, vector: FloatArray): SimilarityScore? {
             if (vector.all { it == 0f }) return null
-            require(query.size == vector.size) { "Vectors must have the same dimension" }
+            if (query.size != vector.size) throw ScopedVectorDimensionMismatchException()
             var product = 0.0
             var queryNorm = 0.0
             var vectorNorm = 0.0

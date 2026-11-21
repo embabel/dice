@@ -96,3 +96,7 @@ interface ScopedVectorSearch {
      */
     fun findNearest(spec: ScopedReadSpec, request: ReadVectorSearchRequest, budget: ReadBudget): List<VectorMatch>
 }
+
+/** A scoped store cannot compare a nonzero candidate with a query of a different dimension. */
+internal class ScopedVectorDimensionMismatchException :
+    IllegalArgumentException("Vectors must have the same dimension")

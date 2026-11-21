@@ -345,6 +345,8 @@ view with scoped vector support.
 | Retry with a smaller limit. The tool error reports the cap.
 | Vector candidate cap exceeded
 | Narrow the host's filters or use a row-only budget. Raise the cap only within the service's resource limits.
+| Stored embeddings have a different dimension
+| Set the embedding model and call the repository's `reembedAll()` before retrying.
 | Capability, filter or order unsupported
 | Choose a supported operation or open a view from a backend that implements it.
 | Eager prompt read refused

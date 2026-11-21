@@ -117,6 +117,33 @@ class ScopedMemoryJavaInteropTest {
     }
 
     @Test
+    void vectorDimensionMismatchGivesTheToolSafeReembeddingGuidance() {
+        EmbeddingService embedder = mock(EmbeddingService.class);
+        when(embedder.embed(SHARED)).thenReturn(new float[]{1, 0});
+        when(embedder.embed("invoice")).thenReturn(new float[]{1, 0, 0});
+        var providerFailure = new IllegalArgumentException("Vectors must have the same dimension");
+        when(embedder.embed("unavailable")).thenThrow(providerFailure);
+        var store = new InMemoryPropositionRepository(embedder);
+        write(store, "session", "1", SHARED);
+        var budget = ReadBudget.ofRows(1).withMaxVectorCandidates(1);
+        var reads = store.scopedReads();
+        var search = assertInstanceOf(ScopedVectorSearch.class, reads);
+        var request = ReadVectorSearchRequest.forText("invoice").withTopK(1);
+
+        assertThrows(IllegalArgumentException.class, () -> search.findNearest(ALLOWED, request, budget));
+        var tool = ScopedMemory.forReads(reads, ALLOWED, budget).tools().getFirst();
+        var refusal = assertInstanceOf(Tool.Result.Error.class, tool.call("{\"query\":\"invoice\"}"));
+        assertEquals("Stored embeddings use a different dimension. Re-embed the repository with the configured embedding model.",
+                refusal.getMessage());
+        assertNull(refusal.getCause());
+        assertSame(providerFailure, assertThrows(IllegalArgumentException.class,
+                () -> tool.call("{\"query\":\"unavailable\"}")));
+        when(embedder.embed(SHARED)).thenReturn(new float[]{1, 0, 0});
+        store.reembedAll();
+        assertTrue(text(tool.call("{\"query\":\"invoice\"}")).contains(SHARED));
+    }
+
+    @Test
     void localViewsRankOnlyScopedVectorsAndEnforceCandidateBudget(@TempDir Path directory) {
         EmbeddingService embedder = mock(EmbeddingService.class);
         when(embedder.embed("query")).thenReturn(new float[]{1, 0});
