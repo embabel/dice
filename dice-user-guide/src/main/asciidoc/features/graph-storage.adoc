@@ -1,40 +1,35 @@
 [[features-graph-storage]]
 === Graph-backed storage
 
-*Activation*: `dice-starter-neo4j` is on the classpath and Drivine is configured, meaning the
-application has a Drivine `PersistenceManager` bean. With the starter and one data source, DICE builds
-that bean for you. No DICE property is needed. Without the starter, DICE keeps its in-memory stores
-unless the deprecated `embabel.dice.store.type=graph` is set.
+*Activation*: `dice-starter-neo4j` or `dice-starter-sqlite` is on the classpath and Drivine is
+configured. Give the starter one data source and DICE builds the `PersistenceManager` bean.
+With neither starter, DICE uses its in-memory stores by default. The deprecated
+`embabel.dice.store.type=graph` still enables explicitly configured Drivine stores.
 
-*Availability*: `dice-starter-neo4j`, which brings in `dice-storage`, `dice-storage-autoconfigure` and
-Drivine, from DICE {dice-version}. Costs a Neo4j instance.
+*Availability*: Both starters bring in `dice-storage`, `dice-storage-autoconfigure` and Drivine
+from DICE {dice-version}. Use a Neo4j instance or a local SQLite file.
 
 ==== When to use it
 
-Use it in production, and whenever you need any of: durability across restarts, more than one
-process writing, native graph traversal, or decay applied in the database rather than in your heap.
-
-Leave it off for development, tests and single-process applications. The in-memory backend is the
-default precisely because most of what you do while building DICE into an application does not need
-Neo4j.
+Use Neo4j when you need a shared database or a native vector index.
+SQLite provides durable local storage and serializes writes. Use the default in-memory backend
+when you can discard the state on restart, such as in many development and test setups.
 
 ==== Impact
 
-* *Infrastructure*: a Neo4j instance, reached through Drivine (`drivine4j-spring-boot-starter`, which
-  `dice-starter-neo4j` brings in).
-* *Latency*: network round trips replace map lookups. Traversals get much faster; single-id lookups
-  get slower.
+* *Infrastructure*: Drivine connects to a Neo4j instance or opens a local SQLite file through JDBC.
+* *Latency*: database queries replace in-memory lookups. Neo4j queries make network round trips.
 * *Memory*: propositions no longer live in your heap.
 * *LLM calls*: unchanged.
-* *Startup*: schema catalogues create constraints and, when an embedding model is available, the
-  vector index. See <<features-vector-index>> for models added after startup.
+* *Startup*: schema catalogues create constraints. On Neo4j they also create the vector index when
+  an embedding model is available. See <<features-vector-index>> for models added after startup.
 
 ==== How to enable
 
-Add `dice-starter-neo4j`, importing the `dice-dependencies` BOM for the versions, and give Drivine
-one data source under `database.datasources` (its `type` and connection settings choose the
-database). You define no beans. Drivine builds its factories from the data source, and DICE builds
-the `PersistenceManager` and `StatelessGraphObjectManager` from those factories, after Drivine's
+Add the starter for your backend and import the `dice-dependencies` BOM for the versions. Configure
+one data source under `database.datasources`. The `type` and connection settings choose the database.
+Drivine builds its factories from the data source. DICE builds the `PersistenceManager` and
+`StatelessGraphObjectManager` from those factories, after Drivine's
 auto-configuration and before its own storage auto-configuration, so the storage auto-configuration
 sees them when it decides. <<how-to-choose-a-backend>> walks through it.
 
@@ -58,8 +53,8 @@ Without a `PersistenceManager` bean, DICE uses its in-memory stores. The depreca
 `embabel.dice.store.type` property can still force `in-memory` while Drivine is present; see
 <<reference-configuration-properties>>.
 
-All of this happens only because `dice-starter-neo4j` is on the classpath. An application that uses
-Drivine for its own data and never added the starter keeps DICE's in-memory stores, as before: DICE
+Automatic detection requires one of the two Drivine starters. An application that uses
+Drivine for its own data and has neither starter keeps DICE's in-memory stores, as before. DICE
 builds no Drivine managers for it, doesn't check its store choice against Drivine, and writes no
 schema to its database. Such an application can still set `embabel.dice.store.type=graph`, and DICE
 then uses its Drivine stores on the `PersistenceManager` and `StatelessGraphObjectManager` the
@@ -89,7 +84,7 @@ When DICE uses its Drivine stores, `DiceStorageAutoConfiguration` provides:
 | `DrivineCollectorRecordStore` — reclamation audit trail
 
 | `SchemaCatalog` beans
-| Proposition constraints, lineage-record schema, and the vector index spec
+| Proposition constraints, lineage-record schema, and the Neo4j vector index spec
 |===
 
 Every one is `@ConditionalOnMissingBean`, so your own bean always wins.
