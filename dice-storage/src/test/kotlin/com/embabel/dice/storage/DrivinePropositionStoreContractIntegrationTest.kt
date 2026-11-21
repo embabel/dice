@@ -23,6 +23,7 @@ import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.storage.model.PropositionView
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.store.ContextReadScope
@@ -115,6 +116,45 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         }
         assertEquals(StoreCapability.SCOPED_READS, denied.capability)
         assertTrue(denied.message!!.contains("MIN_EFFECTIVE_CONFIDENCE"))
+    }
+
+    @Test
+    fun `scoped filters and orders agree with the local view`() {
+        val local = InMemoryPropositionRepository()
+        val source = Proposition.draft("team", "policy observation", 0.9).withId("observed").toProposition()
+        local.save(source)
+        repository.save(source)
+
+        fun save(id: String, level: Int, importance: Double, reinforced: Int, pinned: Boolean = true) {
+            val fact = Proposition.draft("team", "policy $id", 0.9).withId(id)
+                .withLevel(level).withSourceIds(listOf(source.id))
+                .withImportance(importance).withReinforceCount(reinforced)
+                .withPinned(pinned).toProposition()
+            local.save(fact)
+            repository.save(fact)
+        }
+
+        save("reinforced", 2, 0.7, 5)
+        save("important", 3, 0.9, 4)
+        save("low-level", 1, 1.0, 9)
+        save("high-level", 4, 1.0, 9)
+        save("low-importance", 2, 0.6, 9)
+        save("low-reinforcement", 2, 1.0, 3)
+        save("unpinned", 2, 1.0, 9, pinned = false)
+        val scope = ScopedReadSpec.of(ContextReadScope.ofValues("team")).narrow(
+            ReadCriteria.empty().withMinLevel(2).withMaxLevel(3).withPinned(true),
+        )
+        val criteria = ReadCriteria.empty().withMinImportance(0.7).withMinReinforceCount(4)
+        val query = ReadQuery.of(criteria).withLimit(2)
+        val budget = ReadBudget.ofRows(2)
+
+        for (reads in listOf(local.scopedReads(), repository.scopedReads())) {
+            assertEquals(2, reads.count(scope, criteria, budget))
+            assertEquals(listOf("reinforced", "important"),
+                reads.query(scope, query.orderedByReinforceCount(), budget).map { it.id })
+            assertEquals(listOf("important", "reinforced"),
+                reads.query(scope, query.orderedByImportance(), budget).map { it.id })
+        }
     }
 
     @Test

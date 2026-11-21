@@ -125,7 +125,17 @@ class ScopedMemory private constructor(
         }
         val query = params?.get("query")?.let {
             if (!it.isTextual) return Tool.Result.error("The query must be text.")
-            it.asText().trim().takeIf(String::isNotEmpty)
+            val text = it.textValue()
+            if (text.length > MAX_QUERY_LENGTH) {
+                return Tool.Result.error("Search text can contain at most $MAX_QUERY_LENGTH UTF-16 code units.")
+            }
+            text.trim().takeIf(String::isNotEmpty)
+        }
+        val tokens = query?.let {
+            it.lowercase(Locale.ROOT).split(tokenSeparator).filter(String::isNotEmpty).distinct()
+        }.orEmpty()
+        if (tokens.size > MAX_KEYWORDS) {
+            return Tool.Result.error("Search text can contain at most $MAX_KEYWORDS distinct keywords.")
         }
         val limit = params?.get("limit")?.let {
             if (!it.isIntegralNumber || !it.canConvertToLong() || it.longValue() <= 0) {
@@ -140,7 +150,7 @@ class ScopedMemory private constructor(
             if (query == null) {
                 reads.query(spec, ReadQuery.of(ReadCriteria.empty()).orderedByCreated().withLimit(rows), budget)
             } else {
-                search(query, rows)
+                search(query, tokens, rows)
             }
         } catch (failure: ReadBudgetExceededException) {
             return Tool.Result.error(failure.message ?: "The memory read exceeds its budget.")
@@ -164,11 +174,10 @@ class ScopedMemory private constructor(
             .replace("\u2028", "\\u2028")
             .replace("\u2029", "\\u2029")
 
-    private fun search(query: String, limit: Int): List<Proposition> {
+    private fun search(query: String, tokens: List<String>, limit: Int): List<Proposition> {
         val vectors = vectorSearch?.findNearest(
             spec, ReadVectorSearchRequest.forText(query).withTopK(limit), budget,
         ).orEmpty().map { it.proposition }
-        val tokens = query.lowercase(Locale.ROOT).split(tokenSeparator).filter { it.isNotEmpty() }
         val keywords = if (tokens.isEmpty()) emptyList() else reads.matchKeywords(
             spec, ReadKeywordQuery.forTokens(tokens).withOrder(ReadOrder.CREATED_DESC).withLimit(limit), budget,
         )
@@ -183,6 +192,9 @@ class ScopedMemory private constructor(
     }
 
     companion object {
+        private const val MAX_QUERY_LENGTH = 2048
+        private const val MAX_KEYWORDS = 32
+
         private val json = jacksonObjectMapper()
         private val inputReader = json.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
         private val factWriter = json.writer()

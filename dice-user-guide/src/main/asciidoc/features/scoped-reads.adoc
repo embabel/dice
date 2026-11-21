@@ -327,6 +327,7 @@ tenant and principal through the host's authorization policy. Open the repositor
 and build a spec from the granted context IDs. Give Embabel the memory reference. The tool schema
 accepts search text and a result limit. Each fact is a JSON line with `contextId` and `text`.
 Line breaks inside a value are escaped. Two contexts can return the same text with their own IDs.
+The tool allows up to 2048 UTF-16 code units and 32 distinct keywords per query.
 
 [source,java]
 ----

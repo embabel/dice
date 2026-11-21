@@ -26,6 +26,7 @@ import com.embabel.dice.store.ContextReadScope;
 import com.embabel.dice.store.ReadBudget;
 import com.embabel.dice.store.ReadBudgetExceededException;
 import com.embabel.dice.store.ReadCriteria;
+import com.embabel.dice.store.ReadKeywordQuery;
 import com.embabel.dice.store.ReadQuery;
 import com.embabel.dice.store.ReadVectorSearchRequest;
 import com.embabel.dice.store.ScopedReadSpec;
@@ -42,6 +43,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -142,6 +144,28 @@ class ScopedMemoryJavaInteropTest {
         for (String input : List.of("{", "[]", "{\"query\":12}", "{\"limit\":0}", "{\"limit\":2} {}")) {
             assertInstanceOf(Tool.Result.Error.class, tool.call(input), input);
         }
+    }
+
+    @Test
+    void oversizedToolQueriesReturnErrorsBeforeAnyScopedRead() {
+        var reads = mock(ScopedReads.class, withSettings().extraInterfaces(ScopedVectorSearch.class));
+        var budget = ReadBudget.ofRows(1).withMaxVectorCandidates(1);
+        var tool = ScopedMemory.forReads(reads, ALLOWED, budget).tools().getFirst();
+        var words = IntStream.range(0, 33).mapToObj(index -> "word" + index).toList();
+
+        var longQuery = assertInstanceOf(Tool.Result.Error.class,
+                tool.call("{\"query\":\"" + "x".repeat(2049) + "\"}"));
+        assertTrue(longQuery.getMessage().contains("2048"));
+        var manyKeywords = assertInstanceOf(Tool.Result.Error.class,
+                tool.call("{\"query\":\"" + String.join(" ", words) + "\"}"));
+        assertTrue(manyKeywords.getMessage().contains("32 distinct keywords"));
+        verifyNoInteractions(reads);
+
+        assertInstanceOf(Tool.Result.Text.class, tool.call("{\"query\":\"" + "x".repeat(2048) + "\"}"));
+        assertInstanceOf(Tool.Result.Text.class,
+                tool.call("{\"query\":\"" + String.join(" ", words.subList(0, 32)) + "\"}"));
+        assertInstanceOf(Tool.Result.Text.class, tool.call("{\"query\":\"" + "INVOICE invoice ".repeat(40) + "\"}"));
+        assertEquals(33, ReadKeywordQuery.forTokens(words).getTokens().size());
     }
 
     @Test
