@@ -59,6 +59,7 @@ import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.interceptor.TransactionAspectSupport
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
@@ -169,6 +170,25 @@ class DrivinePropositionRepository(
      */
     private val dedupLocks: Array<Any> = Array(DEDUP_STRIPES) { Any() }
 
+    /**
+     * True on SQLite, where a transaction holds the file's write lock from its first statement until
+     * it ends, and no other transaction can write meanwhile. So inside a caller's transaction:
+     * - A save takes no stripe. It already runs alone, and taking the stripe as well could deadlock:
+     *   the caller's transaction would hold the write lock and wait for the stripe, while a
+     *   standalone save held the stripe and waited for the write lock.
+     * - [touchAccessed] joins the caller's transaction. One of its own could not commit before the
+     *   caller's ends, and the caller is waiting for it.
+     */
+    private val callerTransactionHoldsWriteLock: Boolean by lazy { persistenceManager.type == DatabaseType.SQLITE }
+
+    /**
+     * Whether this thread is in a transaction of the graph's own, and so on SQLite holds the file's
+     * write lock. A transaction of another manager holds nothing of the graph's.
+     */
+    private fun inGraphWriteTransaction(): Boolean =
+        callerTransactionHoldsWriteLock &&
+            (persistenceManager as? DelegatingPersistenceManager)?.contextHolder?.currentTransaction != null
+
     override val storeType: PropositionStoreType get() = PropositionStoreType.STORED
 
     override val luceneSyntaxNotes: String get() = "no lucene support"
@@ -179,6 +199,8 @@ class DrivinePropositionRepository(
      * duplicate rows. The stripe lock is held across the transaction COMMIT — the find-then-insert
      * runs inside [txTemplate], which commits before the lock is released — so a concurrent sibling
      * on the same stripe cannot read pre-commit and slip a duplicate past the existence check.
+     * On SQLite a save inside a caller's Drivine transaction takes no stripe: that transaction
+     * already holds the file's write lock, which does the same job.
      *
      * Propositions with blank text have nothing to dedup on and are persisted directly.
      *
@@ -199,19 +221,24 @@ class DrivinePropositionRepository(
      *   one and can commit.
      */
     @Transactional(propagation = Propagation.SUPPORTS)
-    override fun save(proposition: Proposition): Proposition =
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            saveInCallerTransaction(proposition)
+    override fun save(proposition: Proposition): Proposition {
+        val graphWrite = inGraphWriteTransaction()
+        return if (graphWrite || TransactionSynchronizationManager.isActualTransactionActive()) {
+            saveInCallerTransaction(proposition, graphWrite)
         } else {
             saveInOwnedTransaction(proposition)
         }
+    }
 
-    private fun saveInCallerTransaction(proposition: Proposition): Proposition {
+    private fun saveInCallerTransaction(proposition: Proposition, graphWrite: Boolean): Proposition {
         val text = proposition.text
         if (text.isBlank()) {
             return doPersist(proposition)
         }
         val contextId = proposition.contextId.value
+        if (graphWrite) {
+            return findOrPersist(proposition, contextId, text)
+        }
         return synchronized(lockFor(contextId, text)) {
             // A uniqueness race has already aborted the caller's transaction by the time we could
             // react, so recovery cannot commit here. Preserve atomicity and let it propagate.
@@ -1236,18 +1263,54 @@ class DrivinePropositionRepository(
     override fun count(): Int = graphObjectManager.count<PropositionView>().toInt()
 
     /**
-     * Batch `SET` in one round trip instead of the SPI default's per-id find-then-save. Runs in its
-     * own [Propagation.REQUIRES_NEW] transaction: callers commonly invoke this from inside a
-     * `readOnly = true` query transaction (e.g. Memory's eager load), which cannot itself take a write.
-     * Empty [ids] is a no-op — no need to open a transaction for nothing.
+     * Batch `SET` in one round trip instead of the SPI default's per-id find-then-save. Runs in a
+     * transaction of its own: callers commonly invoke this from inside a `readOnly = true` query
+     * transaction (e.g. Memory's eager load), which cannot itself take a write. On SQLite it joins a
+     * caller's transaction instead: that transaction holds the file's write lock, so one of the
+     * touch's own could not commit until the caller's ended. SQLite's read-only transactions still
+     * take writes. Empty [ids] is a no-op — no need to open a transaction for nothing.
      */
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    // SUPPORTS lets SQLite join the caller. Only the separate transaction can be rolled back
+    // on the other backends.
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true, noRollbackFor = [Throwable::class])
     override fun touchAccessed(ids: Collection<String>) {
         if (ids.isEmpty()) return
-        persistenceManager.execute(
-            cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now, ${Stamps.setClause("p")}")
-                .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
-        )
+        val touch = {
+            persistenceManager.execute(
+                cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now, ${Stamps.setClause("p")}")
+                    .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
+            )
+        }
+        if (inGraphWriteTransaction()) {
+            touch()
+            return
+        }
+
+        AccessUpdateAdvice.runTouch(this, touch)
+    }
+
+    private object AccessUpdateAdvice : TransactionAspectSupport() {
+
+        /**
+         * A direct call uses the caller's transaction, if any. An advised call uses the same manager
+         * Spring selected for the method, so it can still write from a read-only caller on Neo4j.
+         *
+         * @param target the repository receiving the call
+         * @param touch updates the access stamps
+         */
+        fun runTouch(target: DrivinePropositionRepository, touch: () -> Unit) {
+            val name = "${target.javaClass.name}.touchAccessed"
+            val info = currentTransactionInfo()?.takeIf { it.joinpointIdentification == name }
+            val manager = info?.transactionManager
+            if (manager == null) {
+                touch()
+                return
+            }
+            TransactionTemplate(manager).apply {
+                propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
+                setName(name)
+            }.executeWithoutResult { touch() }
+        }
     }
 
     /**

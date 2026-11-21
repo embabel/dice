@@ -16,6 +16,7 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.dice.conformance.AbstractPropositionStoreContractTest
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
@@ -33,10 +34,18 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.springframework.aop.framework.ProxyFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.TransactionStatus
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource
+import org.springframework.transaction.interceptor.TransactionInterceptor
+import org.springframework.transaction.support.TransactionTemplate
+import java.time.Instant
 
 /**
  * Runs the [AbstractPropositionStoreContractTest] suite against
@@ -55,6 +64,12 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
 
     @Autowired
     private lateinit var graphObjectManager: StatelessGraphObjectManager
+
+    @Autowired
+    private lateinit var embeddingService: EmbeddingService
+
+    @Autowired
+    private lateinit var transactionManager: PlatformTransactionManager
 
     override fun store(): PropositionStore = repository
 
@@ -81,6 +96,54 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
 
         assertEquals(1, clusters.size)
         assertEquals(setOf(first.id, second.id), setOf(clusters.single().anchor.id) + clusters.single().similar.map { it.match.id })
+    }
+
+    /** Spring keeps candidate selection and similarity in the same read transaction. */
+    @Test
+    fun `findClusters opens one read-only transaction`() {
+        fun ghost(text: String, context: String) = Proposition(
+            contextId = ContextId(context),
+            text = text,
+            mentions = listOf(EntityMention(span = "the ghost", type = "Ghost", role = MentionRole.SUBJECT)),
+            confidence = 0.9,
+        )
+        repository.save(ghost("The ghost hums in the cellar", "opened-a"))
+        repository.save(ghost("The ghost hums in the cellar", "opened-b"))
+        val recording = OpenedTransactionRecorder(transactionManager)
+        val clustering = ProxyFactory(
+            DrivinePropositionRepository(graphObjectManager, persistenceManager, embeddingService, recording),
+        ).apply {
+            isProxyTargetClass = true
+            addAdvice(TransactionInterceptor(recording, AnnotationTransactionAttributeSource()))
+        }.proxy as DrivinePropositionRepository
+
+        val clusters = clustering.findClusters(similarityThreshold = 0.95, topK = 10, query = PropositionQuery())
+
+        assertEquals(1, clusters.size)
+        assertEquals(listOf(true), recording.opened)
+    }
+
+    @Test
+    fun `a directly constructed repository keeps an access update in the caller's transaction`() {
+        val saved = repository.save(
+            Proposition(
+                contextId = ContextId("direct-touch"),
+                text = "The ghost haunts the stairs",
+                mentions = emptyList(),
+                confidence = 0.9,
+                lastAccessed = Instant.EPOCH,
+            ),
+        )
+        val recording = OpenedTransactionRecorder(transactionManager)
+        val direct = DrivinePropositionRepository(graphObjectManager, persistenceManager, embeddingService, recording)
+
+        TransactionTemplate(transactionManager).executeWithoutResult { status ->
+            direct.touchAccessed(listOf(saved.id))
+            status.setRollbackOnly()
+        }
+
+        assertEquals(emptyList<Boolean>(), recording.opened)
+        assertEquals(Instant.EPOCH, repository.findById(saved.id)!!.lastAccessed)
     }
 
     @Test
@@ -144,4 +207,16 @@ class DrivinePropositionStoreContractIntegrationTest : DrivinePropositionStoreCo
         @DynamicPropertySource
         fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
     }
+}
+
+/** Passes every call on, and records whether each transaction that actually began was read-only. */
+private class OpenedTransactionRecorder(private val delegate: PlatformTransactionManager) : PlatformTransactionManager {
+    val opened = mutableListOf<Boolean>()
+
+    override fun getTransaction(definition: TransactionDefinition?): TransactionStatus =
+        delegate.getTransaction(definition).also { if (it.isNewTransaction) opened += definition?.isReadOnly == true }
+
+    override fun commit(status: TransactionStatus) = delegate.commit(status)
+
+    override fun rollback(status: TransactionStatus) = delegate.rollback(status)
 }
