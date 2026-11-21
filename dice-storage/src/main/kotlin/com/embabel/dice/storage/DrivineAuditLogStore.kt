@@ -32,6 +32,9 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import org.drivine.manager.PersistenceManager
 import org.jetbrains.annotations.ApiStatus
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.Instant
@@ -56,12 +59,17 @@ class DrivineAuditLogStore @JvmOverloads constructor(
 
     override val transactionParticipation = AuditTransactionParticipation.JOINS_HOST_TRANSACTION
     private val transactions = TransactionTemplate(transactionManager)
+    private val committedEvents = TransactionTemplate(transactionManager).apply {
+        propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
+    }
 
     override fun initializeBaseline(contextId: String, cutover: Instant, completeSnapshot: Collection<Proposition>) {
         val claims = baselineOf(contextId, completeSnapshot)
         require(cutover <= clock.instant()) { "Audit cutover cannot be in the future" }
         locked(contextId) { state ->
-            check(state.cutover == null) { "Audit baseline is already initialized" }
+            check(state.cutover == null || (state.invalid && cutover > state.cutover)) {
+                "A valid audit baseline cannot be replaced"
+            }
             check(state.lastRecordedAt == null || cutover >= state.lastRecordedAt) {
                 "Audit cutover cannot precede existing records"
             }
@@ -85,6 +93,9 @@ class DrivineAuditLogStore @JvmOverloads constructor(
         requireAppend(contextId, entry)
         return locked(contextId) { state -> appendLocked(contextId, state, entry) }
     }
+
+    override fun appendAfterCommit(contextId: String, entry: AuditEntry): AuditRecord =
+        transaction(committedEvents) { append(contextId, entry) }
 
     override fun eraseContext(contextId: String, actor: AuditActorRef?): AuditRecord = locked(contextId) { state ->
         if (state.cutover == null && state.sequence > 0 && state.lastErasure == state.sequence) {
@@ -114,15 +125,6 @@ class DrivineAuditLogStore @JvmOverloads constructor(
 
     override fun <T> duringWrite(contextId: String, action: Supplier<T>): T =
         locked(contextId) { action.get() }
-
-    override fun priorCanonicalId(contextId: String, exactText: String): String? {
-        requireContext(contextId)
-        return persistenceManager.maybeGetOne(
-            cypherQuery("MATCH (p:Proposition {contextId: ${'$'}contextId, text: ${'$'}text}) RETURN p.id AS id LIMIT 1")
-                .bind(bindings(contextId) + ("text" to exactText))
-                .transform(String::class.java),
-        )
-    }
 
     override fun invalidateCoverage(contextId: String) {
         locked(contextId) {
@@ -242,8 +244,29 @@ class DrivineAuditLogStore @JvmOverloads constructor(
         }
     }
 
-    private fun <T> transaction(action: () -> T): T =
-        checkNotNull(transactions.execute { TransactionResult(action()) }).value
+    private fun <T> transaction(template: TransactionTemplate = transactions, action: () -> T): T =
+        checkNotNull(template.execute { status ->
+            val joined = !status.isNewTransaction
+            check(!joined || TransactionSynchronizationManager.isSynchronizationActive()) {
+                "Joining an audit write requires an active Spring transaction synchronization"
+            }
+            try {
+                TransactionResult(action())
+            } catch (failure: Throwable) {
+                if (joined) rejectCommit()
+                throw failure
+            }
+        }).value
+
+    private fun rejectCommit() {
+        // Drivine 0.6 does not consult Spring's global rollback-only flag. Throw from Spring's
+        // before-commit phase so it rolls back even when the host catches the original exception.
+        TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+            override fun beforeCommit(readOnly: Boolean) {
+                throw IllegalStateException("A joined DICE audit operation failed")
+            }
+        })
+    }
 
     private fun update(query: String, params: Map<String, Any?>) =
         persistenceManager.execute(cypherQuery(query).bind(params))
@@ -271,10 +294,10 @@ class DrivineAuditLogStore @JvmOverloads constructor(
     )
 
     private companion object {
-        const val CONTEXT = AuditLogSchema.CONTEXT
-        const val RECORD = AuditLogSchema.RECORD
+        private const val CONTEXT = AuditLogSchema.CONTEXT
+        private const val RECORD = AuditLogSchema.RECORD
 
-        const val RECORD_PROJECTION =
+        private const val RECORD_PROJECTION =
             "RETURN {contextId: n.contextId, sequence: n.sequence, recordedAt: n.recordedAt, " +
                 "propositionId: n.propositionId, payload: n.payload}"
 

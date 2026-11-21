@@ -42,7 +42,7 @@ class AuditEventListener @JvmOverloads constructor(
             is ExtractionRunTransitioned -> {
                 val run = event.run
                 val contextId = run.contextId.value
-                append(contextId) {
+                append(contextId, afterCommit = true) {
                     val host = contextProvider.resolveAttribution(contextId)
                     AuditEntry(AuditKind.EXTRACTION_RUN_ENDED, attribution = AuditAttribution(
                         host.actor ?: run.subjectRefs.actor?.let { AuditActorRef(it.token) },
@@ -61,6 +61,9 @@ class AuditEventListener @JvmOverloads constructor(
         }
     }
 
-    private fun append(contextId: String, entry: () -> AuditEntry) =
-        writeAudit(sink, failurePolicy, contextId, affectsBeliefSet = false) { sink.append(contextId, entry()) }
+    private fun append(contextId: String, afterCommit: Boolean = false, entry: () -> AuditEntry) =
+        writeAudit(sink, failurePolicy, contextId, affectsBeliefSet = false) {
+            val payload = entry()
+            if (afterCommit) sink.appendAfterCommit(contextId, payload) else sink.append(contextId, payload)
+        }
 }

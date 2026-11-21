@@ -62,7 +62,7 @@ data class AuditActorRef(val token: String) {
 }
 
 @ApiStatus.Experimental
-enum class AuditRunKind { EXTRACTION, COLLECTOR, DECAY, DRIFT }
+enum class AuditRunKind { EXTRACTION, COLLECTOR, COLLECTOR_UNDO, DECAY, DRIFT }
 
 @ApiStatus.Experimental
 data class AuditRunRef(val kind: AuditRunKind, val id: String) {

@@ -98,6 +98,14 @@ class PropositionStoreDriftSweep @JvmOverloads constructor(
         super.sweep(diff, policy, contextId, batchSize)
     }
 
+    @JvmOverloads
+    fun sweepValue(
+        diff: MetamodelDiff,
+        policy: DriftQuarantinePolicy,
+        contextIdValue: String,
+        batchSize: Int = DriftSweepCapable.DEFAULT_BATCH_SIZE,
+    ): QuarantineResult = sweep(diff, policy, ContextId(contextIdValue), batchSize)
+
     override fun applyQuarantine(decision: QuarantineDecision.Quarantined): Proposition {
         val saved = propositions.save(decision.proposition)
         logger.debug("Quarantined proposition (id={}): {}", saved.id, decision.reason)

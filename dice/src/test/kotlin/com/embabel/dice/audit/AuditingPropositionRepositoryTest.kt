@@ -19,16 +19,73 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.PropositionRejected
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.proposition.PropositionRepository
+import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
+import java.io.IOException
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class AuditingPropositionRepositoryTest {
+
+    @Test
+    fun `a checked attribution failure invalidates a best-effort baseline`() {
+        val now = Instant.parse("2026-01-02T00:00:00Z")
+        val log = InMemoryAuditLog(Clock.fixed(now, ZoneOffset.UTC))
+        val repo = AuditingPropositionRepository.wrapping(InMemoryPropositionRepository(), log,
+            AuditContextProvider { throw IOException("attribution unavailable") })
+        val claim = Proposition(id = "first", contextId = ContextId("scope"), text = "First", mentions = emptyList(), confidence = 0.8)
+        log.initializeBaseline("scope", now, emptyList())
+
+        assertThrows(IOException::class.java) { repo.save(claim) }
+        assertEquals(claim.id, repo.findById(claim.id)?.id)
+        assertThrows(AuditCoverageException::class.java) { log.asOf("scope", claim.id, now) }
+    }
+
+    @Test
+    fun `an evidence rewrite cannot restore a claim after concurrent context erasure`() {
+        val log = InMemoryAuditLog()
+        val underlying = InMemoryPropositionRepository()
+        val loaded = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val erased = CountDownLatch(1)
+        val delegate = object : PropositionRepository by underlying {
+            override fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? {
+                val current = underlying.findById(propositionId) ?: return null
+                loaded.countDown()
+                check(release.await(10, TimeUnit.SECONDS))
+                return underlying.save(current.withProvenance(entries))
+            }
+
+            override fun clearByContext(contextId: String): Int =
+                underlying.clearByContext(contextId).also { erased.countDown() }
+        }
+        val repo = AuditingPropositionRepository.wrapping(delegate, log)
+        val claim = Proposition(id = "first", contextId = ContextId("scope"), text = "First", mentions = emptyList(), confidence = 0.8)
+        repo.save(claim)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val evidence = pool.submit { repo.setProvenance(claim.id, emptyList()) }
+            check(loaded.await(10, TimeUnit.SECONDS))
+            val erasure = pool.submit { repo.clearByContext("scope") }
+            erased.await(300, TimeUnit.MILLISECONDS)
+            release.countDown()
+            evidence.get(10, TimeUnit.SECONDS)
+            erasure.get(10, TimeUnit.SECONDS)
+            assertNull(repo.findById(claim.id))
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+        }
+    }
 
     @Test
     fun `a run is scoped to its context and restored after failure`() {

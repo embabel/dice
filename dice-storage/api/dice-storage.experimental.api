@@ -24,20 +24,17 @@ public abstract interface class com/embabel/dice/storage/DiceStorageSchema {
 }
 
 public final class com/embabel/dice/storage/DrivineAuditLogStore : com/embabel/dice/audit/AbstractAuditLog {
-	public static final field CONTEXT Ljava/lang/String;
-	public static final field RECORD Ljava/lang/String;
-	public static final field RECORD_PROJECTION Ljava/lang/String;
 	public fun <init> (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;)V
 	public fun <init> (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;Ljava/time/Clock;)V
 	public synthetic fun <init> (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;Ljava/time/Clock;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun append (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
+	public fun appendAfterCommit (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
 	public fun duringWrite (Ljava/lang/String;Ljava/util/function/Supplier;)Ljava/lang/Object;
 	public fun eraseContext (Ljava/lang/String;Lcom/embabel/dice/audit/AuditActorRef;)Lcom/embabel/dice/audit/AuditRecord;
 	public fun getTransactionParticipation ()Lcom/embabel/dice/audit/AuditTransactionParticipation;
 	public fun history (Ljava/lang/String;Ljava/lang/String;)Ljava/util/List;
 	public fun initializeBaseline (Ljava/lang/String;Ljava/time/Instant;Ljava/util/Collection;)V
 	public fun invalidateCoverage (Ljava/lang/String;)V
-	public fun priorCanonicalId (Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
 	public fun query (Ljava/lang/String;JI)Ljava/util/List;
 }
 

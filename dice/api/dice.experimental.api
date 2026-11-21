@@ -111,6 +111,10 @@ public final class com/embabel/dice/audit/AuditAttribution {
 	public fun toString ()Ljava/lang/String;
 }
 
+public abstract interface class com/embabel/dice/audit/AuditCanonicalLookup {
+	public abstract fun findAuditCanonicalId (Lcom/embabel/dice/proposition/Proposition;)Ljava/lang/String;
+}
+
 public abstract interface class com/embabel/dice/audit/AuditContextProvider {
 	public static final field Companion Lcom/embabel/dice/audit/AuditContextProvider$Companion;
 	public static final field NONE Lcom/embabel/dice/audit/AuditContextProvider;
@@ -256,6 +260,7 @@ public final class com/embabel/dice/audit/AuditRunContext {
 
 public final class com/embabel/dice/audit/AuditRunKind : java/lang/Enum {
 	public static final field COLLECTOR Lcom/embabel/dice/audit/AuditRunKind;
+	public static final field COLLECTOR_UNDO Lcom/embabel/dice/audit/AuditRunKind;
 	public static final field DECAY Lcom/embabel/dice/audit/AuditRunKind;
 	public static final field DRIFT Lcom/embabel/dice/audit/AuditRunKind;
 	public static final field EXTRACTION Lcom/embabel/dice/audit/AuditRunKind;
@@ -279,12 +284,12 @@ public final class com/embabel/dice/audit/AuditRunRef {
 
 public abstract interface class com/embabel/dice/audit/AuditSink {
 	public abstract fun append (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
+	public fun appendAfterCommit (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
 	public abstract fun duringWrite (Ljava/lang/String;Ljava/util/function/Supplier;)Ljava/lang/Object;
 	public abstract fun eraseContext (Ljava/lang/String;Lcom/embabel/dice/audit/AuditActorRef;)Lcom/embabel/dice/audit/AuditRecord;
 	public abstract fun getTransactionParticipation ()Lcom/embabel/dice/audit/AuditTransactionParticipation;
 	public abstract fun initializeBaseline (Ljava/lang/String;Ljava/time/Instant;Ljava/util/Collection;)V
 	public abstract fun invalidateCoverage (Ljava/lang/String;)V
-	public fun priorCanonicalId (Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
 }
 
 public final class com/embabel/dice/audit/AuditTransactionParticipation : java/lang/Enum {
@@ -328,7 +333,7 @@ public final class com/embabel/dice/audit/AuditedProposition$Companion {
 
 public class com/embabel/dice/audit/AuditingPropositionRepository : com/embabel/dice/proposition/PropositionRepository {
 	public static final field Companion Lcom/embabel/dice/audit/AuditingPropositionRepository$Companion;
-	public synthetic fun <init> (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;Lcom/embabel/dice/audit/AuditCanonicalLookup;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun addProvenance (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/proposition/Proposition;
 	public fun clearAll ()I
 	public fun clearByContext (Ljava/lang/String;)I
@@ -354,6 +359,7 @@ public class com/embabel/dice/audit/AuditingPropositionRepository : com/embabel/
 	public fun findByStatus (Lcom/embabel/dice/proposition/PropositionStatus;)Ljava/util/List;
 	public fun findClusters (DILcom/embabel/dice/proposition/PropositionQuery;)Ljava/util/List;
 	public fun findPinned-GRzcY08 (Ljava/lang/String;)Ljava/util/List;
+	public final fun findPinnedValue (Ljava/lang/String;)Ljava/util/List;
 	public fun findSimilar (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;)Ljava/util/List;
 	public fun findSimilarWithScores (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;)Ljava/util/List;
 	public fun findSimilarWithScores (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;Lcom/embabel/dice/proposition/PropositionQuery;)Ljava/util/List;
@@ -381,13 +387,15 @@ public class com/embabel/dice/audit/AuditingPropositionRepository : com/embabel/
 	public static final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
 	public static final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
 	public static final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
+	public static final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;Lcom/embabel/dice/audit/AuditCanonicalLookup;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
 }
 
 public final class com/embabel/dice/audit/AuditingPropositionRepository$Companion {
 	public final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
 	public final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
 	public final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
-	public static synthetic fun wrapping$default (Lcom/embabel/dice/audit/AuditingPropositionRepository$Companion;Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;ILjava/lang/Object;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
+	public final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;Lcom/embabel/dice/audit/AuditCanonicalLookup;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
+	public static synthetic fun wrapping$default (Lcom/embabel/dice/audit/AuditingPropositionRepository$Companion;Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;Lcom/embabel/dice/audit/AuditCanonicalLookup;ILjava/lang/Object;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
 }
 
 public final class com/embabel/dice/audit/InMemoryAuditLog : com/embabel/dice/audit/AbstractAuditLog {
@@ -2140,6 +2148,9 @@ public final class com/embabel/dice/spi/PropositionStoreDriftSweep : com/embabel
 	public fun quarantineCandidates-g40hbQQ (Ljava/lang/String;Ljava/util/Set;ILjava/lang/String;)Ljava/util/List;
 	public fun releaseFromQuarantine (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
 	public fun sweep-T8IscxI (Lcom/embabel/dice/metamodel/MetamodelDiff;Lcom/embabel/dice/spi/DriftQuarantinePolicy;Ljava/lang/String;I)Lcom/embabel/dice/spi/QuarantineResult;
+	public final fun sweepValue (Lcom/embabel/dice/metamodel/MetamodelDiff;Lcom/embabel/dice/spi/DriftQuarantinePolicy;Ljava/lang/String;)Lcom/embabel/dice/spi/QuarantineResult;
+	public final fun sweepValue (Lcom/embabel/dice/metamodel/MetamodelDiff;Lcom/embabel/dice/spi/DriftQuarantinePolicy;Ljava/lang/String;I)Lcom/embabel/dice/spi/QuarantineResult;
+	public static synthetic fun sweepValue$default (Lcom/embabel/dice/spi/PropositionStoreDriftSweep;Lcom/embabel/dice/metamodel/MetamodelDiff;Lcom/embabel/dice/spi/DriftQuarantinePolicy;Ljava/lang/String;IILjava/lang/Object;)Lcom/embabel/dice/spi/QuarantineResult;
 }
 
 public abstract interface class com/embabel/dice/store/CapabilityReporting {

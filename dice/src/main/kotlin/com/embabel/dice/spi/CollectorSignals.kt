@@ -30,6 +30,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonProperty
 import org.slf4j.LoggerFactory
 import java.time.Instant
+import java.util.UUID
 
 /** Why an undo declined to act — the decision is silent otherwise, since it returns null. */
 private val undoLogger = LoggerFactory.getLogger("com.embabel.dice.spi.CollapseUndo")
@@ -511,7 +512,7 @@ fun undoSingleCollapse(
     val authorization = records.authorize(decision.runId, survivorId, retiredId, retiredProposition)
     if (authorization is UndoAuthorization.Refuse) return null
     fun restore(): Proposition = AuditRunContext.withRun(
-        command.contextIdValue, AuditRunRef(AuditRunKind.COLLECTOR, decision.runId),
+        command.contextIdValue, AuditRunRef(AuditRunKind.COLLECTOR_UNDO, UUID.randomUUID().toString()),
     ) {
         propositions.save(retiredProposition.withStatus(retirement.priorStatus))
     }

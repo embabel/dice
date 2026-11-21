@@ -147,7 +147,7 @@ public class com/embabel/dice/storage/DrivineProjectionRecordStore : com/embabel
 	public fun record (Lcom/embabel/dice/projection/lineage/ProjectionRecord;)V
 }
 
-public class com/embabel/dice/storage/DrivinePropositionRepository : com/embabel/dice/proposition/GraphQueryCapable, com/embabel/dice/proposition/PropositionRepository, com/embabel/dice/proposition/ProvenanceSubtractionCapable, com/embabel/dice/proposition/SourceRevisionQueryCapable {
+public class com/embabel/dice/storage/DrivinePropositionRepository : com/embabel/dice/audit/AuditCanonicalLookup, com/embabel/dice/proposition/GraphQueryCapable, com/embabel/dice/proposition/PropositionRepository, com/embabel/dice/proposition/ProvenanceSubtractionCapable, com/embabel/dice/proposition/SourceRevisionQueryCapable {
 	public static final field Companion Lcom/embabel/dice/storage/DrivinePropositionRepository$Companion;
 	public static final field VECTOR_INDEX Ljava/lang/String;
 	public static final field VECTOR_INDEX_LABEL Ljava/lang/String;
@@ -163,6 +163,7 @@ public class com/embabel/dice/storage/DrivinePropositionRepository : com/embabel
 	public fun findAbstractionsOf (Ljava/lang/String;)Ljava/util/List;
 	public fun findAll ()Ljava/util/List;
 	public fun findAll (Z)Ljava/util/List;
+	public fun findAuditCanonicalId (Lcom/embabel/dice/proposition/Proposition;)Ljava/lang/String;
 	public fun findByContextId-GRzcY08 (Ljava/lang/String;)Ljava/util/List;
 	public fun findByEntity (Lcom/embabel/agent/rag/service/RetrievableIdentifier;)Ljava/util/List;
 	public fun findByGrounding (Ljava/lang/String;)Ljava/util/List;

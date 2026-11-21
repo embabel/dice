@@ -15,7 +15,10 @@
  */
 package com.embabel.dice.audit
 
+import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.GraphQueryCapable
+import com.embabel.dice.proposition.PropositionReembedReport
+import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionPersistenceResult
 import com.embabel.dice.proposition.PropositionRepository
@@ -34,6 +37,7 @@ open class AuditingPropositionRepository private constructor(
     private val sink: AuditSink,
     private val contextProvider: AuditContextProvider,
     private val failurePolicy: AuditFailurePolicy,
+    private val canonicalLookup: AuditCanonicalLookup?,
 ) : PropositionRepository by delegate {
 
     override fun save(proposition: Proposition): Proposition {
@@ -45,8 +49,8 @@ open class AuditingPropositionRepository private constructor(
             }
             // A backend may deduplicate a new input to an existing canonical proposition. Its
             // prior image, rather than the new input or a copy read after save, belongs in history.
-            val canonical = if (current == null && proposition.text.isNotBlank()) {
-                sink.priorCanonicalId(contextId, proposition.text)?.let { currentInContext(it, contextId) }
+            val canonical = if (current == null) {
+                canonicalLookup?.findAuditCanonicalId(proposition)?.let { currentInContext(it, contextId) }
             } else null
             val saved = mutate(contextId) { delegate.save(proposition) }
             trackedWrite(contextId) {
@@ -77,7 +81,31 @@ open class AuditingPropositionRepository private constructor(
     override fun pin(id: String): Proposition? = changeExisting(id, delegate::pin)
     override fun unpin(id: String): Proposition? = changeExisting(id, delegate::unpin)
 
-    private fun changeExisting(id: String, update: (String) -> Proposition?): Proposition? {
+    override fun addProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? =
+        changeExisting(propositionId) { delegate.addProvenance(it, entries) }
+
+    override fun setProvenance(propositionId: String, entries: List<ProvenanceEntry>): Proposition? =
+        changeExisting(propositionId) { delegate.setProvenance(it, entries) }
+
+    override fun clearProvenance(propositionId: String): Proposition? =
+        changeExisting(propositionId, delegate::clearProvenance)
+
+    override fun touchAccessed(ids: Collection<String>) {
+        val byContext = ids.distinct().mapNotNull(delegate::findById).groupBy { it.contextId.value }
+        for ((contextId, propositions) in byContext) {
+            sink.duringWrite(contextId) {
+                val liveIds = propositions.mapNotNull { currentInContext(it.id, contextId)?.id }
+                if (liveIds.isNotEmpty()) mutate(contextId) { delegate.touchAccessed(liveIds) }
+            }
+        }
+    }
+
+    fun findPinnedValue(contextIdValue: String): List<Proposition> = findPinned(ContextId(contextIdValue))
+
+    override fun reembedAll(): PropositionReembedReport =
+        throw UnsupportedOperationException("Run whole-store re-embedding while audited writers are quiescent")
+
+    internal fun changeExisting(id: String, update: (String) -> Proposition?): Proposition? {
         val contextId = delegate.findById(id)?.contextId?.value ?: return null
         return sink.duringWrite(contextId) {
             val current = currentInContext(id, contextId) ?: return@duringWrite null
@@ -120,7 +148,7 @@ open class AuditingPropositionRepository private constructor(
     private fun <T> mutate(contextId: String, action: () -> T): T =
         try {
             action()
-        } catch (failure: RuntimeException) {
+        } catch (failure: Exception) {
             // A best-effort repository might have written before reporting failure.
             writeAudit(sink, AuditFailurePolicy.FAIL_WRITE, contextId, affectsBeliefSet = true) { throw failure }
             throw failure
@@ -145,6 +173,31 @@ open class AuditingPropositionRepository private constructor(
         ))
     }
 
+    private open class Subtracting(
+        delegate: PropositionRepository,
+        sink: AuditSink,
+        contextProvider: AuditContextProvider,
+        failurePolicy: AuditFailurePolicy,
+        canonicalLookup: AuditCanonicalLookup?,
+        private val subtraction: ProvenanceSubtractionCapable,
+    ) : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy, canonicalLookup),
+        ProvenanceSubtractionCapable {
+
+        override val supportsProvenanceSubtraction: Boolean get() = subtraction.supportsProvenanceSubtraction
+
+        override fun subtractProvenance(propositionId: String, provenanceRefs: List<String>): Proposition? =
+            changeExisting(propositionId) { subtraction.subtractProvenance(it, provenanceRefs) }
+
+        override fun subtractFoldedEvidence(
+            propositionId: String,
+            provenanceRefs: List<String>,
+            grounding: Collection<String>,
+            sourceIds: Collection<String>,
+        ): Proposition? = changeExisting(propositionId) {
+            subtraction.subtractFoldedEvidence(it, provenanceRefs, grounding, sourceIds)
+        }
+    }
+
     companion object {
         /** Preserve exactly the optional repository interfaces implemented by the delegate. */
         @JvmStatic
@@ -154,33 +207,34 @@ open class AuditingPropositionRepository private constructor(
             sink: AuditSink,
             contextProvider: AuditContextProvider = AuditContextProvider.NONE,
             failurePolicy: AuditFailurePolicy = AuditFailurePolicy.FAIL_WRITE,
+            canonicalLookup: AuditCanonicalLookup? = delegate as? AuditCanonicalLookup,
         ): AuditingPropositionRepository = when {
             delegate is GraphQueryCapable && delegate is SourceRevisionQueryCapable && delegate is ProvenanceSubtractionCapable ->
-                object : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy),
-                    GraphQueryCapable by delegate, SourceRevisionQueryCapable by delegate, ProvenanceSubtractionCapable by delegate {}
+                object : Subtracting(delegate, sink, contextProvider, failurePolicy, canonicalLookup, delegate),
+                    GraphQueryCapable by delegate, SourceRevisionQueryCapable by delegate {}
 
             delegate is GraphQueryCapable && delegate is SourceRevisionQueryCapable ->
-                object : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy),
+                object : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy, canonicalLookup),
                     GraphQueryCapable by delegate, SourceRevisionQueryCapable by delegate {}
 
             delegate is GraphQueryCapable && delegate is ProvenanceSubtractionCapable ->
-                object : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy),
-                    GraphQueryCapable by delegate, ProvenanceSubtractionCapable by delegate {}
+                object : Subtracting(delegate, sink, contextProvider, failurePolicy, canonicalLookup, delegate),
+                    GraphQueryCapable by delegate {}
 
             delegate is SourceRevisionQueryCapable && delegate is ProvenanceSubtractionCapable ->
-                object : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy),
-                    SourceRevisionQueryCapable by delegate, ProvenanceSubtractionCapable by delegate {}
+                object : Subtracting(delegate, sink, contextProvider, failurePolicy, canonicalLookup, delegate),
+                    SourceRevisionQueryCapable by delegate {}
 
             delegate is GraphQueryCapable ->
-                object : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy), GraphQueryCapable by delegate {}
+                object : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy, canonicalLookup), GraphQueryCapable by delegate {}
 
             delegate is SourceRevisionQueryCapable ->
-                object : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy), SourceRevisionQueryCapable by delegate {}
+                object : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy, canonicalLookup), SourceRevisionQueryCapable by delegate {}
 
             delegate is ProvenanceSubtractionCapable ->
-                object : AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy), ProvenanceSubtractionCapable by delegate {}
+                Subtracting(delegate, sink, contextProvider, failurePolicy, canonicalLookup, delegate)
 
-            else -> AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy)
+            else -> AuditingPropositionRepository(delegate, sink, contextProvider, failurePolicy, canonicalLookup)
         }
     }
 }

@@ -31,6 +31,8 @@ non-active states. Transaction timestamps place decisions on the audit timeline.
    outcomes. Continue routing lifecycle writes, including decay, collection, and quarantine,
    through the wrapped repository. Configure the attribution provider with opaque identifiers and
    reason codes safe to retain. Custom maintenance can bind its run using `AuditRunContext.withRun`.
+   Drivine supplies its canonical lookup. Supply an `AuditCanonicalLookup` when using a custom
+   deduplicating repository or a decorator that hides the repository's lookup.
 3. Fence all context writers, take a complete snapshot, and initialize the baseline in that
    interval. Pause workers or have all writers share the same sink's write fence. A host certifies
    snapshot completeness, including any data a customized reader might otherwise filter.
@@ -57,7 +59,7 @@ var beliefSet = audit.beliefSetAsOf(contextId, requestedTime);
 | Result | Meaning | Operator action |
 |---|---|---|
 | `AuditCoverageException` before cutover or beyond the observed horizon | The requested time is outside verified coverage. | Use a time inside coverage or report that history is unavailable. |
-| `AuditCoverageException` after a missing record, inconsistent prior value, or missed write | The sink cannot certify a complete belief set. | Stop using historical results for that context. Investigate the write path and reconcile the audit data before resuming. |
+| `AuditCoverageException` after a missing record, inconsistent prior value, or missed write | The sink cannot certify a complete belief set. | Stop using historical results for that context. Investigate the write path. If coverage was invalidated, fence writers and install a complete snapshot at a later cutover. The existing record stream remains available. |
 | `asOf` returns null | The claim was absent in the covered context at that time. | Report the claim as absent. |
 
 Use `query(contextId, afterSequence, limit)` to page the recorded operations during an investigation.
@@ -74,7 +76,10 @@ and construct `DrivineAuditLogStore` with the proposition repository's persisten
 transaction manager. SQLite uses the same IMMEDIATE transaction mode as the DICE SQLite starter.
 The audit store declares `JOINS_HOST_TRANSACTION`. If a host transaction is already open, the
 live change and record join it and become visible on commit. Otherwise the audited boundary opens
-one for that context write. A failed tracked append rolls back a joining write. The shared transaction manager and datasource are required for this guarantee.
+one for that context write. Use the same transaction manager and datasource for the repository
+and audit sink. A failed joined audit operation refuses the outer commit, including when the host
+catches the original error. A joined write requires Spring transaction synchronization. Terminal
+extraction events are recorded in their own transaction after the run commits.
 
 The sink samples `recordedAt` when assigning the audit position inside the write transaction.
 It preserves nondecreasing timestamps within a context when the clock moves backward.
@@ -92,5 +97,9 @@ actor, and counts of erased audit records and baseline propositions. Repeating a
 new audit data returns the same tombstone. Deleting an individual proposition retains its scoped
 history. For broad erasure, the host applies the operation to each authorized context and handles
 its other data stores and backups separately.
+
+One-context batches share the audit fence. Mixed-context batches write one proposition at a
+time unless the host opens an outer transaction. For whole-store re-embedding, pause audited
+writers and run the repository's maintenance operation while the store is quiescent.
 
 Applications that leave audit unwired keep their existing repositories, schema and event paths.

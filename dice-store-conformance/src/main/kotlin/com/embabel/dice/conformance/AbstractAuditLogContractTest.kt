@@ -129,6 +129,23 @@ abstract class AbstractAuditLogContractTest {
     }
 
     @Test
+    fun `a fenced new cutover recovers invalidated coverage and preserves recorded history`() {
+        val store = log()
+        val live = claim(scope, "Original")
+        store.initializeBaseline(scope, cutover, emptyList())
+        val prior = store.append(scope, created(live))
+        store.invalidateCoverage(scope)
+        assertThrows(AuditCoverageException::class.java) { store.beliefSetAsOf(scope, recordedAt) }
+
+        val repaired = live.copy(text = "Reconciled")
+        store.initializeBaseline(scope, recordedAt, listOf(repaired))
+
+        assertEquals(listOf(prior), store.history(scope, live.id))
+        assertEquals(AuditedProposition.from(repaired), store.asOf(scope, live.id, recordedAt))
+        assertThrows(AuditCoverageException::class.java) { store.asOf(scope, live.id, cutover) }
+    }
+
+    @Test
     fun `known gaps and inconsistent before images fail closed`() {
         val store = log()
         val live = claim(scope, "Known state")

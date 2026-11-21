@@ -22,6 +22,7 @@ import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.audit.AuditCanonicalLookup
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.proposition.ConsecutiveFailureBreaker
 import com.embabel.dice.proposition.PropositionReembedIncompleteException
@@ -138,7 +139,7 @@ class DrivinePropositionRepository(
      * [findClusters] Cypher. Defaults to the canonical [VECTOR_INDEX]; overridable only for tests.
      */
     private val vectorIndexName: String = VECTOR_INDEX,
-) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable {
+) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable, AuditCanonicalLookup {
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
@@ -791,6 +792,10 @@ class DrivinePropositionRepository(
         "contentHash" to edge.contentHash,
     )
 
+    @Transactional(readOnly = true)
+    override fun findAuditCanonicalId(input: Proposition): String? =
+        if (input.text.isBlank()) null else findDuplicateId(input.contextId.value, input.text, input.id)
+
     /**
      * Id of an existing proposition with the same `contextId` and exact `text` (excluding the
      * candidate's own id), or null if there is no duplicate. Matches on text alone — an identical
@@ -801,7 +806,7 @@ class DrivinePropositionRepository(
             cypherQuery(
                     "MATCH (p:Proposition {contextId: \$contextId}) " +
                         "WHERE p.text = \$text AND p.id <> \$excludeId " +
-                        "RETURN p.id AS id LIMIT 1"
+                        "RETURN p.id AS id ORDER BY p.id LIMIT 1"
                 )
                 .bind(mapOf("contextId" to contextId, "text" to text, "excludeId" to excludeId))
                 .transform(String::class.java)

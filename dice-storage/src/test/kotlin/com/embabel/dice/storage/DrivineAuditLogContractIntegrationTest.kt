@@ -16,13 +16,23 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.ExtractionRunTransitioned
 import com.embabel.dice.audit.AuditCoverageException
+import com.embabel.dice.audit.AuditContextProvider
+import com.embabel.dice.audit.InMemoryAuditLog
 import com.embabel.dice.audit.AuditEntry
+import com.embabel.dice.audit.AuditEventListener
+import com.embabel.dice.audit.AuditRunKind
+import com.embabel.dice.audit.AuditRunRef
 import com.embabel.dice.audit.AuditKind
 import com.embabel.dice.audit.AuditedProposition
 import com.embabel.dice.audit.AuditingPropositionRepository
 import com.embabel.dice.conformance.AbstractAuditLogContractTest
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.extraction.ExtractionRun
+import com.embabel.dice.proposition.extraction.ExtractionRunLineage
+import com.embabel.dice.proposition.extraction.ExtractionRunRef
+import com.embabel.dice.proposition.extraction.ExtractionRunStatus
 import com.embabel.dice.storage.sqlite.SqliteTestStore
 import org.drivine.manager.PersistenceManager
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -36,6 +46,9 @@ import org.springframework.context.annotation.Bean
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -62,6 +75,65 @@ abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
     private val auditClock = Clock.fixed(recordedAt, ZoneOffset.UTC)
 
     override fun log() = DrivineAuditLogStore(persistenceManager, transactionManager, auditClock)
+
+    @Test
+    fun `a terminal event emitted after host commit is recorded in its own transaction`() {
+        val store = log()
+        val contextId = UUID.randomUUID().toString()
+        val key = ExtractionRunRef("run-terminal-audit")
+        val run = ExtractionRun(
+            ContextId(contextId), ExtractionRunLineage.root(key), ExtractionRunStatus.COMPLETED,
+            recordedAt.minusSeconds(1), finishedAt = recordedAt,
+        )
+        val listener = AuditEventListener(store)
+        TransactionTemplate(transactionManager).executeWithoutResult {
+            store.initializeBaseline(contextId, recordedAt, emptyList())
+            TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                override fun afterCommit() {
+                    listener.onEvent(ExtractionRunTransitioned(run))
+                }
+            })
+            assertEquals(emptyList<Any>(), store.query(contextId, 0, 10))
+        }
+        val event = store.query(contextId, 0, 10).single()
+        assertEquals(AuditKind.EXTRACTION_RUN_ENDED, event.kind)
+        assertEquals(AuditRunRef(AuditRunKind.EXTRACTION, key.runId), event.attribution.run)
+    }
+
+    @Test
+    fun `an outer transaction cannot commit an unaudited change after catching a strict audit failure`() {
+        val store = log()
+        val contextId = UUID.randomUUID().toString()
+        val live = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
+            text = "Audit failure", mentions = emptyList(), confidence = 0.8)
+        val repo = AuditingPropositionRepository.wrapping(propositions, store,
+            AuditContextProvider { error("attribution unavailable") })
+        store.initializeBaseline(contextId, recordedAt, emptyList())
+
+        assertThrows(IllegalStateException::class.java) {
+            TransactionTemplate(transactionManager).executeWithoutResult {
+                assertThrows(IllegalStateException::class.java) { repo.save(live) }
+            }
+        }
+        assertNull(repo.findById(live.id))
+        assertEquals(emptyList<Any>(), store.query(contextId, 0, 10))
+        assertNull(store.asOf(contextId, live.id, recordedAt))
+    }
+
+    @Test
+    fun `an in-memory sink captures durable canonical deduplication without a context scan`() {
+        val store = InMemoryAuditLog(auditClock)
+        val contextId = UUID.randomUUID().toString()
+        val live = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
+            text = "Durable duplicate", mentions = emptyList(), confidence = 0.8)
+        val repo = AuditingPropositionRepository.wrapping(propositions, store)
+        store.initializeBaseline(contextId, recordedAt, emptyList())
+        repo.save(live)
+
+        assertEquals(live.id, repo.save(live.copy(id = UUID.randomUUID().toString())).id)
+        assertEquals(listOf(AuditKind.CREATED), store.history(contextId, live.id).map { it.kind })
+        assertEquals(live.id, store.asOf(contextId, live.id, recordedAt)?.id)
+    }
 
     @Test
     fun `a missing committed create cannot produce a partial belief set`() {

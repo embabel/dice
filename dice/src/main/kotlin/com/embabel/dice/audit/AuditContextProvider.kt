@@ -48,11 +48,11 @@ internal fun writeAudit(
 ) {
     try {
         action()
-    } catch (failure: RuntimeException) {
+    } catch (failure: Exception) {
         if (affectsBeliefSet && sink.transactionParticipation == AuditTransactionParticipation.BEST_EFFORT) {
             try {
                 sink.invalidateCoverage(contextId)
-            } catch (invalidating: RuntimeException) {
+            } catch (invalidating: Exception) {
                 if (invalidating !== failure) failure.addSuppressed(invalidating)
                 throw failure
             }

@@ -32,7 +32,10 @@ class InMemoryAuditLog @JvmOverloads constructor(private val clock: Clock = Cloc
         val baseline = baselineOf(contextId, completeSnapshot)
         require(cutover <= clock.instant()) { "Audit cutover cannot be in the future" }
         val context = contexts.getOrPut(contextId, ::Context)
-        check(context.cutover == null) { "Audit baseline is already initialized" }
+        val previousCutover = context.cutover
+        check(previousCutover == null || (context.invalidFrom != null && cutover > previousCutover)) {
+            "A valid audit baseline cannot be replaced"
+        }
         check(context.lastRecordedAt == null || cutover >= context.lastRecordedAt) {
             "Audit cutover cannot precede existing records"
         }

@@ -34,7 +34,8 @@ interface AuditSink {
     /**
      * The host fences all writers while capturing the full context and calling this method.
      * An empty snapshot asserts the context is empty at [cutover]. The baseline is installed
-     * atomically. To preserve history, an existing baseline cannot be silently replaced.
+     * atomically. A valid baseline cannot be replaced. An invalidated baseline can be replaced
+     * by a complete snapshot at a later cutover while preserving the recorded operations.
      */
     fun initializeBaseline(contextId: String, cutover: Instant, completeSnapshot: Collection<Proposition>)
 
@@ -54,11 +55,18 @@ interface AuditSink {
      */
     fun <T> duringWrite(contextId: String, action: Supplier<T>): T
 
-    /** Exact-text deduplication preimage lookup for a new proposition, under the write fence. */
-    fun priorCanonicalId(contextId: String, exactText: String): String? = null
+    /** Records a terminal event published after its original operation committed. */
+    fun appendAfterCommit(contextId: String, entry: AuditEntry): AuditRecord = append(contextId, entry)
 
     /** Fail historical reconstruction when a repository write may have escaped recording. */
     fun invalidateCoverage(contextId: String)
+}
+
+/** A deduplicating repository can find the saved id before a new input is written. */
+@ApiStatus.Experimental
+fun interface AuditCanonicalLookup {
+    /** Returns the existing canonical id for [input], if its save will reuse one. */
+    fun findAuditCanonicalId(input: Proposition): String?
 }
 
 /** Scope is mandatory even when proposition IDs happen to be globally unique. */
@@ -96,10 +104,10 @@ abstract class AbstractAuditLog : AuditSink, AuditLogQuery {
             throw AuditCoverageException()
         }
         val claims = timeline.baseline.associateByTo(linkedMapOf()) {
-            check(it.contextId == contextId) { "Audit baseline scope mismatch" }
+            if (it.contextId != contextId) throw AuditCoverageException()
             it.id
         }
-        check(claims.size == timeline.baseline.size) { "Duplicate audit baseline identifiers" }
+        if (claims.size != timeline.baseline.size) throw AuditCoverageException()
         var lastSequence = timeline.baselineSequence
         var lastRecordedAt = timeline.cutover
         for (record in timeline.records) {
@@ -113,7 +121,7 @@ abstract class AbstractAuditLog : AuditSink, AuditLogQuery {
             if (claims[id] != record.before) throw AuditCoverageException()
             val next = record.after
             if (next == null) claims.remove(id) else {
-                check(next.contextId == contextId) { "Audit record scope mismatch" }
+                if (next.contextId != contextId) throw AuditCoverageException()
                 claims[id] = next
             }
         }
