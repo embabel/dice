@@ -31,8 +31,9 @@ fun interface AuditContextProvider {
 
 /**
  * Strict mode propagates audit failures. Best-effort mode can continue a write only after
- * invalidating historical coverage. A joining sink may still roll back a transaction that the
- * database marks failed. Failure messages or payloads are never copied into a log message.
+ * invalidating historical coverage. A joining sink treats writes and in-transaction verdicts
+ * strictly. A terminal event is delivered after commit and can report failure without taking
+ * back the completed run. Log messages omit exception details and payloads.
  */
 @ApiStatus.Experimental
 enum class AuditFailurePolicy {

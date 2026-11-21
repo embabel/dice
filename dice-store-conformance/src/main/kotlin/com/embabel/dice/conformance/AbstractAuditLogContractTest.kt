@@ -28,6 +28,7 @@ import org.jetbrains.annotations.ApiStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import java.time.Instant
 import java.util.UUID
@@ -59,7 +60,8 @@ abstract class AbstractAuditLogContractTest {
         AuditEntry(AuditKind.CREATED, claim.id, after = AuditedProposition.from(claim))
 
     @Test
-    fun `complete baselines reject foreign and duplicate rows without leaving partial coverage`() {
+    @DisplayName("complete baselines reject foreign and duplicate rows without leaving partial coverage")
+    open fun completeBaselinesRejectForeignAndDuplicateRows() {
         val store = log()
         val live = claim(scope, "Previously known")
         val foreign = claim(other, "Foreign")
@@ -81,7 +83,8 @@ abstract class AbstractAuditLogContractTest {
     }
 
     @Test
-    fun `updates and deletions replay while erasure removes content and keeps a single scoped tombstone`() {
+    @DisplayName("updates and deletions replay while erasure removes content and keeps a single scoped tombstone")
+    open fun updatesAndDeletionsReplayAndErasureLeavesOneScopedTombstone() {
         val store = log()
         val live = claim(scope, "Previously known")
         val updated = live.copy(text = "Updated")
@@ -113,7 +116,8 @@ abstract class AbstractAuditLogContractTest {
     }
 
     @Test
-    fun `concurrent appends allocate one position per record even at the same instant`() {
+    @DisplayName("concurrent appends allocate one position per record even at the same instant")
+    open fun concurrentAppendsAllocateOnePositionPerRecord() {
         val store = log()
         val pool = Executors.newFixedThreadPool(4)
         try {
@@ -129,7 +133,8 @@ abstract class AbstractAuditLogContractTest {
     }
 
     @Test
-    fun `a fenced new cutover recovers invalidated coverage and preserves recorded history`() {
+    @DisplayName("a fenced new cutover recovers invalidated coverage and preserves recorded history")
+    open fun aFencedNewCutoverRecoversInvalidatedCoverage() {
         val store = log()
         val live = claim(scope, "Original")
         store.initializeBaseline(scope, cutover, emptyList())
@@ -146,7 +151,8 @@ abstract class AbstractAuditLogContractTest {
     }
 
     @Test
-    fun `known gaps and inconsistent before images fail closed`() {
+    @DisplayName("known gaps and inconsistent before images fail closed")
+    open fun knownGapsAndInconsistentBeforeImagesFailClosed() {
         val store = log()
         val live = claim(scope, "Known state")
         val wrong = live.copy(text = "Missing write")

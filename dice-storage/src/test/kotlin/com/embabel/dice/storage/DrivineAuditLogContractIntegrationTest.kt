@@ -35,6 +35,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunLineage
 import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.proposition.extraction.ExtractionRunStatus
 import com.embabel.dice.storage.sqlite.SqliteTestStore
+import com.embabel.dice.temporal.TemporalMetadata
 import org.drivine.manager.PersistenceManager
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -135,6 +136,56 @@ abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
 
         assertEquals(live.id, repo.save(live.copy(id = UUID.randomUUID().toString())).id)
         assertEquals(listOf(AuditKind.CREATED), store.history(contextId, live.id).map { it.kind })
+        assertEquals(live.id, store.asOf(contextId, live.id, recordedAt)?.id)
+    }
+
+    @Test
+    fun `audit tracks authoritative temporal postimages when Drivine normalizes a save`() {
+        val store = log()
+        val contextId = UUID.randomUUID().toString()
+        val emptyTemporal = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
+            text = "Empty temporal metadata", mentions = emptyList(), confidence = 0.8, temporal = TemporalMetadata())
+        val dated = emptyTemporal.copy(id = UUID.randomUUID().toString(), text = "Observed fact",
+            temporal = TemporalMetadata(observedAt = recordedAt))
+        val repo = AuditingPropositionRepository.wrapping(
+            propositions, store, AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE, propositions.auditCanonicalLookup(),
+        )
+        store.initializeBaseline(contextId, recordedAt, emptyList())
+        repo.saveAll(listOf(emptyTemporal, dated))
+        assertNull(repo.findById(emptyTemporal.id)?.temporal)
+        assertNull(store.asOf(contextId, emptyTemporal.id, recordedAt)?.temporal)
+        assertEquals(dated.temporal, store.asOf(contextId, dated.id, recordedAt)?.temporal)
+
+        repo.saveAll(listOf(emptyTemporal, dated))
+        repo.pin(emptyTemporal.id)
+        assertEquals(true, store.asOf(contextId, emptyTemporal.id, recordedAt)?.pinned)
+        assertEquals(listOf(AuditKind.CREATED, AuditKind.PINNED), store.history(contextId, emptyTemporal.id).map { it.kind })
+        assertEquals(listOf(AuditKind.CREATED), store.history(contextId, dated.id).map { it.kind })
+    }
+
+    @Test
+    fun `rolling back a context erase restores its live rows and audit content`() {
+        val store = log()
+        val contextId = UUID.randomUUID().toString()
+        val live = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
+            text = "Erasure rollback", mentions = emptyList(), confidence = 0.8)
+        val repo = AuditingPropositionRepository.wrapping(
+            propositions, store, AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE, propositions.auditCanonicalLookup(),
+        )
+        store.initializeBaseline(contextId, recordedAt, emptyList())
+        repo.save(live)
+        val original = store.history(contextId, live.id)
+
+        assertThrows(IllegalStateException::class.java) {
+            TransactionTemplate(transactionManager).executeWithoutResult {
+                assertEquals(1, repo.clearByContext(contextId))
+                assertEquals(AuditKind.ERASURE, store.query(contextId, 0, 10).single().kind)
+                throw IllegalStateException("rollback erasure")
+            }
+        }
+
+        assertEquals(live.id, repo.findById(live.id)?.id)
+        assertEquals(original, store.query(contextId, 0, 10))
         assertEquals(live.id, store.asOf(contextId, live.id, recordedAt)?.id)
     }
 

@@ -1,11 +1,11 @@
 public abstract class com/embabel/dice/conformance/AbstractAuditLogContractTest {
 	public fun <init> ()V
-	public final fun a fenced new cutover recovers invalidated coverage and preserves recorded history ()V
-	public final fun complete baselines reject foreign and duplicate rows without leaving partial coverage ()V
-	public final fun concurrent appends allocate one position per record even at the same instant ()V
-	public final fun known gaps and inconsistent before images fail closed ()V
+	public fun aFencedNewCutoverRecoversInvalidatedCoverage ()V
+	public fun completeBaselinesRejectForeignAndDuplicateRows ()V
+	public fun concurrentAppendsAllocateOnePositionPerRecord ()V
+	public fun knownGapsAndInconsistentBeforeImagesFailClosed ()V
 	protected abstract fun log ()Lcom/embabel/dice/audit/AbstractAuditLog;
-	public final fun updates and deletions replay while erasure removes content and keeps a single scoped tombstone ()V
+	public fun updatesAndDeletionsReplayAndErasureLeavesOneScopedTombstone ()V
 }
 
 public abstract class com/embabel/dice/conformance/AbstractChunkHistoryStoreContractTest {

@@ -55,11 +55,10 @@ open class AuditingPropositionRepository private constructor(
             val saved = mutate(contextId) { delegate.save(proposition) }
             trackedWrite(contextId) {
                 check(saved.contextId.value == contextId) { "Audited save returned a different context" }
-                check(current == null || current.id == saved.id) { "Audited update changed identity" }
-                if (saved.id != proposition.id) {
+                if (current == null && saved.id != proposition.id) {
                     check(canonical?.id == saved.id) { "Audited save did not capture the canonical preimage" }
                 }
-                record(contextId, current ?: canonical?.takeIf { it.id == saved.id }, saved)
+                recordStored(contextId, current ?: canonical?.takeIf { it.id == saved.id }, saved)
             }
             saved
         }
@@ -110,7 +109,7 @@ open class AuditingPropositionRepository private constructor(
         return sink.duringWrite(contextId) {
             val current = currentInContext(id, contextId) ?: return@duringWrite null
             val saved = mutate(contextId) { update(id) } ?: return@duringWrite null
-            trackedWrite(contextId) { record(contextId, current, saved) }
+            trackedWrite(contextId) { recordStored(contextId, current, saved) }
             saved
         }
     }
@@ -156,6 +155,14 @@ open class AuditingPropositionRepository private constructor(
 
     private fun trackedWrite(contextId: String, action: () -> Unit) =
         writeAudit(sink, failurePolicy, contextId, affectsBeliefSet = true, action)
+
+    private fun recordStored(contextId: String, current: Proposition?, saved: Proposition) {
+        check(saved.contextId.value == contextId) { "Audited save returned a different context" }
+        check(current == null || current.id == saved.id) { "Audited update changed identity" }
+        // A backend may normalize tracked fields when it persists them and return the input.
+        val stored = checkNotNull(currentInContext(saved.id, contextId)) { "Audited save did not persist a proposition" }
+        record(contextId, current, stored)
+    }
 
     private fun record(contextId: String, current: Proposition?, saved: Proposition?) {
         val before = current?.let(AuditedProposition::from)

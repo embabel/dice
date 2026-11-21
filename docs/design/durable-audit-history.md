@@ -30,7 +30,8 @@ non-active states. Transaction timestamps place decisions on the audit timeline.
    Register `AuditEventListener` on the host's gate and extraction event paths for verdicts and run
    outcomes. Continue routing lifecycle writes, including decay, collection, and quarantine,
    through the wrapped repository. Configure the attribution provider with opaque identifiers and
-   reason codes safe to retain. Custom maintenance can bind its run using `AuditRunContext.withRun`.
+   reason codes safe to retain. Use reason codes free of personal data in gate verdicts as well.
+   Custom maintenance can bind its run using `AuditRunContext.withRun`.
    A deduplicating repository supplies its `AuditCanonicalLookup` explicitly. Use
    `repository.auditCanonicalLookup()` for Drivine, including when audit is outside another
    repository decorator.
@@ -88,7 +89,9 @@ live change and record join it and become visible on commit. Otherwise the audit
 one for that context write. Use the same transaction manager and datasource for the repository
 and audit sink. A failed joined audit operation refuses the outer commit, including when the host
 catches the original error. A joined write requires Spring transaction synchronization. Terminal
-extraction events are recorded in their own transaction after the run commits.
+extraction events are recorded in their own transaction after the run commits. Joined verdict
+writes use strict failure handling. `LOG_AND_CONTINUE` applies to best-effort sinks and
+post-commit events.
 
 The sink samples `recordedAt` when assigning the audit position inside the write transaction.
 It preserves nondecreasing timestamps within a context when the clock moves backward.
@@ -104,8 +107,8 @@ baseline and historical content. The durable sink performs these operations in t
 transaction. The surviving record includes the context, sequence, timestamp, optional opaque
 actor, and counts of erased audit records and baseline propositions. Repeating an erasure without
 new audit data returns the same tombstone. Deleting an individual proposition retains its scoped
-history. For broad erasure, the host applies the operation to each authorized context and handles
-its other data stores and backups separately.
+history. The wrapper requires exact contexts for erasure. For broad erasure, call
+`clearByContext` for each authorized context and handle other data stores and backups separately.
 
 One-context batches share the audit fence. Mixed-context batches write one proposition at a
 time unless the host opens an outer transaction. For whole-store re-embedding, pause audited
