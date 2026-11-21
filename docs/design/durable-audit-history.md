@@ -32,9 +32,10 @@ non-active states. Transaction timestamps place decisions on the audit timeline.
    through the wrapped repository. Configure the attribution provider with opaque identifiers and
    reason codes safe to retain. Use reason codes free of personal data in gate verdicts as well.
    Custom maintenance can bind its run using `AuditRunContext.withRun`.
-   A deduplicating repository supplies its `AuditCanonicalLookup` explicitly. Use
-   `repository.auditCanonicalLookup()` for Drivine, including when audit is outside another
-   repository decorator.
+   Use `repository.auditCanonicalLookup()` for Drivine, including when audit wraps another
+   repository decorator. It supplies both canonical lookup and access refresh in the
+   audit write transaction. Custom deduplicating repositories supply their own
+   `AuditCanonicalLookup`.
 3. Fence all context writers, take a complete snapshot, and initialize the baseline in that
    interval. Pause workers or have all writers share the same sink's write fence. A host certifies
    snapshot completeness, including any data a customized reader might otherwise filter.

@@ -101,11 +101,17 @@ open class AuditingPropositionRepository private constructor(
         changeExisting(propositionId, delegate::clearProvenance)
 
     override fun touchAccessed(ids: Collection<String>) {
+        val joinedTouch = if (sink.transactionParticipation == AuditTransactionParticipation.JOINS_HOST_TRANSACTION) {
+            canonicalLookup as? AuditAccessTouch
+        } else null
         val byContext = ids.distinct().mapNotNull(delegate::findById).groupBy { it.contextId.value }
         for ((contextId, propositions) in byContext) {
             sink.duringWrite(contextId) {
                 val liveIds = propositions.mapNotNull { currentInContext(it.id, contextId)?.id }
-                if (liveIds.isNotEmpty()) mutate(contextId) { delegate.touchAccessed(liveIds) }
+                if (liveIds.isNotEmpty()) mutate(contextId) {
+                    if (joinedTouch != null) joinedTouch.touchAccessedInWrite(contextId, liveIds)
+                    else delegate.touchAccessed(liveIds)
+                }
             }
         }
     }

@@ -76,6 +76,16 @@ fun interface AuditCanonicalLookup {
     fun findAuditCanonicalId(input: Proposition): String?
 }
 
+/**
+ * Native access refresh for a repository whose ordinary touch opens an independent transaction.
+ * Expose this on the same adapter supplied as [AuditCanonicalLookup] to the audit wrapper.
+ */
+@ApiStatus.Experimental
+fun interface AuditAccessTouch {
+    /** Refresh access for existing IDs in this context without leaving the active write transaction. */
+    fun touchAccessedInWrite(contextId: String, propositionIds: Collection<String>)
+}
+
 /** Scope is mandatory even when proposition IDs happen to be globally unique. */
 @ApiStatus.Experimental
 interface AuditLogQuery {

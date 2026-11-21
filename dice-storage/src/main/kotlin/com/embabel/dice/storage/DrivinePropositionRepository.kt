@@ -22,6 +22,7 @@ import com.embabel.common.ai.model.EmbeddingService
 import com.embabel.common.core.types.SimilarityResult
 import com.embabel.common.core.types.TextSimilaritySearchRequest
 import com.embabel.common.core.types.ZeroToOne
+import com.embabel.dice.audit.AuditAccessTouch
 import com.embabel.dice.audit.AuditCanonicalLookup
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.proposition.ConsecutiveFailureBreaker
@@ -792,10 +793,14 @@ class DrivinePropositionRepository(
         "contentHash" to edge.contentHash,
     )
 
-    /** Supplies the same preimage lookup the save path uses, for an opted-in audit wrapper. */
+    /** Supplies canonical lookup and joined access refresh to the opted-in audit wrapper. */
     @org.jetbrains.annotations.ApiStatus.Experimental
-    fun auditCanonicalLookup(): AuditCanonicalLookup = AuditCanonicalLookup { input ->
-        if (input.text.isBlank()) null else findDuplicateId(input.contextId.value, input.text, input.id)
+    fun auditCanonicalLookup(): AuditCanonicalLookup = object : AuditCanonicalLookup, AuditAccessTouch {
+        override fun findAuditCanonicalId(input: Proposition): String? =
+            if (input.text.isBlank()) null else findDuplicateId(input.contextId.value, input.text, input.id)
+
+        override fun touchAccessedInWrite(contextId: String, propositionIds: Collection<String>) =
+            refreshAccess(propositionIds, contextId)
     }
 
     /**
@@ -1282,12 +1287,7 @@ class DrivinePropositionRepository(
     @Transactional(propagation = Propagation.SUPPORTS, readOnly = true, noRollbackFor = [Throwable::class])
     override fun touchAccessed(ids: Collection<String>) {
         if (ids.isEmpty()) return
-        val touch = {
-            persistenceManager.execute(
-                cypherQuery("MATCH (p:Proposition) WHERE p.id IN \$ids SET p.lastAccessed = \$now, ${Stamps.setClause("p")}")
-                    .bind(mapOf("ids" to ids.distinct(), "now" to Instant.now())),
-            )
-        }
+        val touch = { refreshAccess(ids) }
         if (inGraphWriteTransaction()) {
             touch()
             return
@@ -1318,6 +1318,21 @@ class DrivinePropositionRepository(
                 setName(name)
             }.executeWithoutResult { touch() }
         }
+    }
+
+    private fun refreshAccess(ids: Collection<String>, contextId: String? = null) {
+        if (ids.isEmpty()) return
+        val scope = if (contextId == null) "" else " AND p.contextId = \$contextId"
+        val params = buildMap {
+            put("ids", ids.distinct())
+            put("now", Instant.now())
+            if (contextId != null) put("contextId", contextId)
+        }
+        persistenceManager.execute(
+            cypherQuery(
+                "MATCH (p:Proposition) WHERE p.id IN \$ids$scope SET p.lastAccessed = \$now, ${Stamps.setClause("p")}"
+            ).bind(params),
+        )
     }
 
     /**

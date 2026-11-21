@@ -77,6 +77,10 @@ protected final class com/embabel/dice/audit/AbstractAuditLog$AuditTimeline {
 	public fun toString ()Ljava/lang/String;
 }
 
+public abstract interface class com/embabel/dice/audit/AuditAccessTouch {
+	public abstract fun touchAccessedInWrite (Ljava/lang/String;Ljava/util/Collection;)V
+}
+
 public final class com/embabel/dice/audit/AuditActorRef {
 	public static final field Companion Lcom/embabel/dice/audit/AuditActorRef$Companion;
 	public fun <init> (Ljava/lang/String;)V

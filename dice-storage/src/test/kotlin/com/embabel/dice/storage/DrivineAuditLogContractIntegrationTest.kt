@@ -39,14 +39,19 @@ import com.embabel.dice.proposition.extraction.ExtractionRunRef
 import com.embabel.dice.proposition.extraction.ExtractionRunStatus
 import com.embabel.dice.storage.sqlite.SqliteTestStore
 import com.embabel.dice.temporal.TemporalMetadata
+import org.drivine.connection.JdbcConnectionProvider
 import org.drivine.manager.PersistenceManager
+import org.drivine.mapper.SubtypeRegistry
 import org.drivine.schema.SchemaCatalog
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.springframework.aop.support.AopUtils
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
@@ -390,4 +395,69 @@ class SqliteAuditLogContractIntegrationTest : DrivineAuditLogContractCases() {
         @DynamicPropertySource
         fun sqliteProperties(registry: DynamicPropertyRegistry) = SqliteTestStore.registerProperties(registry)
     }
+}
+
+@SpringBootTest(classes = [TestApplication::class, AuditTestConfiguration::class, SqliteAuditTestConfiguration::class])
+class SqliteAuditedAccessIntegrationTest {
+
+    @Autowired
+    private lateinit var persistenceManager: PersistenceManager
+
+    @Autowired
+    private lateinit var propositions: DrivinePropositionRepository
+
+    @Autowired
+    private lateinit var transactionManager: PlatformTransactionManager
+
+    @Test
+    fun `audited access refresh updates SQLite without changing history coverage`() {
+        assertTrue(AopUtils.isAopProxy(propositions))
+        val contextId = UUID.randomUUID().toString()
+        val cutover = Instant.parse("2026-01-02T00:00:00.000000001Z")
+        val store = DrivineAuditLogStore(persistenceManager, transactionManager, Clock.fixed(cutover, ZoneOffset.UTC))
+        val live = Proposition(
+            id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
+            text = "Recently accessed fact", mentions = emptyList(), confidence = 0.8,
+            lastAccessed = cutover.minusSeconds(1),
+        )
+        val repo = AuditingPropositionRepository.wrapping(
+            propositions, store, AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE, propositions.auditCanonicalLookup(),
+        )
+        store.initializeBaseline(contextId, cutover, emptyList())
+        repo.save(live)
+        val originalHistory = store.history(contextId, live.id)
+        val originalBeliefSet = store.beliefSetAsOf(contextId, cutover)
+
+        TransactionTemplate(transactionManager).executeWithoutResult { transaction ->
+            repo.touchAccessed(listOf(live.id))
+            assertTrue(requireNotNull(repo.findById(live.id)).lastAccessed > live.lastAccessed)
+            transaction.setRollbackOnly()
+        }
+        assertEquals(live.lastAccessed, repo.findById(live.id)?.lastAccessed)
+
+        repo.touchAccessed(listOf(live.id, "absent"))
+
+        assertTrue(requireNotNull(repo.findById(live.id)).lastAccessed > live.lastAccessed)
+        assertEquals(listOf(AuditKind.CREATED), originalHistory.map { it.kind })
+        assertEquals(listOf(live.id), originalBeliefSet.map { it.id })
+        assertEquals(originalHistory, store.history(contextId, live.id))
+        assertEquals(originalBeliefSet, store.beliefSetAsOf(contextId, cutover))
+    }
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun sqliteProperties(registry: DynamicPropertyRegistry) = SqliteTestStore.registerProperties(registry)
+    }
+}
+
+@TestConfiguration(proxyBeanMethods = false)
+class SqliteAuditTestConfiguration {
+    @Bean
+    fun sqliteAuditProvider(
+        @Value("\${database.datasources.neo.database-name}") path: String,
+        subtypeRegistry: SubtypeRegistry,
+    ): JdbcConnectionProvider = JdbcConnectionProvider.sqlite(
+        name = "neo", path = path, busyTimeoutMillis = 250, subtypeRegistry = subtypeRegistry,
+    )
 }
