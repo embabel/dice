@@ -274,3 +274,4 @@ public final class com/embabel/dice/conformance/RedirectableEventListener : com/
 	public fun onEvent (Lcom/embabel/dice/common/DiceEvent;)V
 	public final fun redirectTo (Lcom/embabel/dice/common/DiceEventListener;)V
 }
+
