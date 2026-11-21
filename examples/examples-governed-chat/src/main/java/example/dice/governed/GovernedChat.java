@@ -72,7 +72,7 @@ public class GovernedChat {
 
     /** Protects an admitted rule from ordinary conflict handling and prompt trimming. */
     public synchronized void pin(String propositionId) {
-        if (facts.pin(propositionId) == null) {
+        if (inContext(propositionId) == null || facts.pin(propositionId) == null) {
             throw new IllegalArgumentException("Unknown support proposition: " + propositionId);
         }
     }
@@ -83,13 +83,18 @@ public class GovernedChat {
 
     /** Evidence for a stored fact and the recorded disposition of any proposed fact. */
     public Explanation explain(String propositionId) {
-        var current = facts.findById(propositionId);
+        var current = inContext(propositionId);
         return new Explanation(current == null ? List.of() : current.getGrounding(),
                 audit.history(CONTEXT, propositionId));
     }
 
     public List<String> beliefsAt(Instant at) {
         return audit.beliefSetAsOf(CONTEXT, at).stream().map(AuditedProposition::getId).toList();
+    }
+
+    private Proposition inContext(String propositionId) {
+        var fact = facts.findById(propositionId);
+        return fact != null && CONTEXT.equals(fact.getContextIdValue()) ? fact : null;
     }
 
     private static List<Proposition> claims(List<ResultVerdict> verdicts) {

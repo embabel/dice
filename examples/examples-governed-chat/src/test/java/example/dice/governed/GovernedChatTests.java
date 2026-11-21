@@ -19,12 +19,14 @@ import com.embabel.dice.audit.AuditCoverageException;
 import com.embabel.dice.audit.AuditKind;
 import com.embabel.dice.audit.AuditRecord;
 import com.embabel.dice.proposition.Proposition;
+import com.embabel.dice.proposition.PropositionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,6 +37,20 @@ class GovernedChatTests {
 
     @Autowired
     GovernedChat chat;
+
+    @Autowired
+    PropositionRepository facts;
+
+    @Test
+    void aKnownIdFromAnotherAccountCannotBePinnedOrExplained() {
+        var other = facts.save(Proposition.draft("another-account", "Private policy", 0.98)
+                .withGrounding(List.of("private-chat")).toProposition());
+
+        assertThatThrownBy(() -> chat.pin(other.getId())).isInstanceOf(IllegalArgumentException.class);
+        assertThat(facts.findById(other.getId()).getPinned()).isFalse();
+        assertThat(chat.explain(other.getId()).groundingIds()).isEmpty();
+        assertThat(chat.explain(other.getId()).history()).isEmpty();
+    }
 
     @Test
     void protectsPolicyAndExplainsWhatTheChatAdmitted() {

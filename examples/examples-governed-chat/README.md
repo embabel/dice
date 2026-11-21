@@ -29,3 +29,20 @@ and audit log. The audit log for this run lasts as long as the application.
 `GovernedChat` is the turn boundary and supplies the example's small application API.
 `GovernedChatApplication` wires the DICE components. `GovernedChatTests` exercises all four
 messages and checks the resulting memory, admission decisions and history.
+
+## Adoption
+
+Keep the gate and pin policy in the application. Resolve the context from the authenticated
+request before exposing the chat. Check that a claim belongs to that context before pinning it
+or returning its grounding. Return a review result to the application for routing.
+
+| Condition | Application behavior |
+|---|---|
+| A claim conflicts with the pinned policy | Return the proposed claim for review. Keep the approved rule available to the prompt. |
+| The pinned facts exceed the prompt budget | Use the selection's `isOverBudget()` flag to handle the overflow before sending the prompt. DICE keeps the pinned facts. |
+| A request predates audit coverage | Return an unavailable-history response. Use the baseline cutover time to tell the caller what history is covered. |
+
+For restart-safe history, use the Drivine audit store with the same transaction manager as
+the proposition repository. Stop writes to the context, capture its complete contents and
+initialize the baseline before enabling the audited writer. A fresh context can start with
+an empty snapshot. See the [audit design and setup](../../docs/design/durable-audit-history.md).

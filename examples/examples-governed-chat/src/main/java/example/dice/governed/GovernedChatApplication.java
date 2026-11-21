@@ -27,6 +27,7 @@ import com.embabel.dice.audit.InMemoryAuditLog;
 import com.embabel.dice.common.SourceAnalysisContext;
 import com.embabel.dice.common.resolver.EscalatingEntityResolver;
 import com.embabel.dice.pipeline.PropositionPipeline;
+import com.embabel.dice.proposition.PropositionRepository;
 import com.embabel.dice.proposition.PropositionStatus;
 import com.embabel.dice.proposition.extraction.LlmPropositionExtractor;
 import com.embabel.dice.proposition.gate.ConfidenceGate;
@@ -44,16 +45,25 @@ import java.util.List;
 class GovernedChatApplication {
 
     @Bean
-    GovernedChat governedChat(Ai ai) {
+    InMemoryAuditLog auditLog() {
+        var audit = new InMemoryAuditLog();
+        audit.initializeBaseline(GovernedChat.CONTEXT, Instant.now(), List.of());
+        return audit;
+    }
+
+    @Bean
+    PropositionRepository facts(InMemoryAuditLog audit) {
+        return AuditingPropositionRepository.wrapping(new InMemoryPropositionRepository(), audit);
+    }
+
+    @Bean
+    GovernedChat governedChat(Ai ai, PropositionRepository facts, InMemoryAuditLog audit) {
         var schema = DataDictionary.fromClasses("refunds", ApprovalRole.class);
         var entities = new InMemoryNamedEntityDataRepository(schema);
         var source = SourceAnalysisContext.withContextId(GovernedChat.CONTEXT)
                 .withEntityResolver(EscalatingEntityResolver.withoutVector(entities))
                 .withSchema(schema)
                 .withMintNewEntities(true);
-        var audit = new InMemoryAuditLog();
-        audit.initializeBaseline(GovernedChat.CONTEXT, Instant.now(), List.of());
-        var facts = AuditingPropositionRepository.wrapping(new InMemoryPropositionRepository(), audit);
         var extractor = LlmPropositionExtractor.builder(LlmOptions.withDefaultLlm()).withAi(ai);
         var pipeline = PropositionPipeline.withExtractor(extractor).withRevision(new ApprovalPolicy(), facts);
         var gates = GateApplier.of(new ExtractionGatePipeline(List.of(
