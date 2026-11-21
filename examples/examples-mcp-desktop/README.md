@@ -50,8 +50,9 @@ endpoint with `mcp-remote`. Merge it into your client's MCP server settings:
 }
 ```
 
-A client that speaks streamable HTTP itself needs no bridge. Point it at
-`http://127.0.0.1:8080/mcp` directly.
+The sample command downloads the current bridge version. In a managed desktop deployment,
+configure the client to use the approved bridge version. A client with native streamable HTTP
+support can connect directly to `http://127.0.0.1:8080/mcp`.
 
 Ask the client what DICE remembers about Acme in the context `demo`, and it should call
 `dice_recall` or `dice_list` and answer with the three facts.
@@ -78,7 +79,8 @@ service. This example runs with its in-memory repository and no embedding servic
 
 `contextId` is a scope the caller picks, not a credential. It keeps one call inside one context,
 but any caller can name any context. This server checks no identity, so it binds `127.0.0.1` by
-default and only accepts connections from this machine. Listening wider, for example with
+default. Any local process that can reach the port can call the tools. Use the sample data for
+the demo and add host authorization before using real tenant data. Listening wider, for example with
 `--server.address=0.0.0.0`, lets anyone who can reach the port list the memories and, with writes
 on, store new ones. Only do that when the host puts its own authorization in front of it.
 
