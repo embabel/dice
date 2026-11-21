@@ -47,8 +47,8 @@ import static org.assertj.core.api.Assertions.tuple;
 /**
  * Two support chats about Acme go through the real pipeline, with the model's replies recorded.
  * In the first a customer says Acme is on the Pro plan. In the second Dana, Acme's admin, says
- * Acme moved back to Basic. The tests print what was stored and check what the article says
- * about it.
+ * Acme moved back to Basic. The tests check the stored facts, resolved entities, and source
+ * evidence on the graph edges.
  */
 @SpringBootTest
 @Import(ScriptedModel.class)
