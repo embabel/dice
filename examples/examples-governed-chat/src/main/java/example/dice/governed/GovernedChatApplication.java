@@ -24,6 +24,9 @@ import com.embabel.dice.agent.Memory;
 import com.embabel.dice.audit.AuditEventListener;
 import com.embabel.dice.audit.AuditingPropositionRepository;
 import com.embabel.dice.audit.InMemoryAuditLog;
+import com.embabel.dice.common.DiceEvent;
+import com.embabel.dice.common.PropositionRejected;
+import com.embabel.dice.common.PropositionRoutedToReview;
 import com.embabel.dice.common.SourceAnalysisContext;
 import com.embabel.dice.common.resolver.EscalatingEntityResolver;
 import com.embabel.dice.pipeline.PropositionPipeline;
@@ -66,13 +69,26 @@ class GovernedChatApplication {
                 .withMintNewEntities(true);
         var extractor = LlmPropositionExtractor.builder(LlmOptions.withDefaultLlm()).withAi(ai);
         var pipeline = PropositionPipeline.withExtractor(extractor).withRevision(new ApprovalPolicy(), facts);
+        var auditEvents = new AuditEventListener(audit);
         var gates = GateApplier.of(new ExtractionGatePipeline(List.of(
                         new ConfidenceGate(0.6), new ConflictClassificationGate())))
-                .withListener(new AuditEventListener(audit));
+                .withListener(event -> recordIncomingDisposition(auditEvents, event));
         var memory = Memory.forContext(GovernedChat.CONTEXT).withRepository(facts)
                 .withEagerQuery(query -> query.withStatuses(PropositionStatus.ACTIVE).withMinConfidence(0.0))
                 .withContextBudget(ContextBudget.ofTokens(4));
         return new GovernedChat(pipeline, source, gates, facts, entities, audit, memory);
+    }
+
+    private static void recordIncomingDisposition(AuditEventListener listener, DiceEvent event) {
+        var claim = switch (event) {
+            case PropositionRejected rejected -> rejected.getProposition();
+            case PropositionRoutedToReview reviewed -> reviewed.getProposition();
+            default -> null;
+        };
+        // A conflict gates the whole revision. This chat records the disposition of the proposal.
+        if (claim != null && !claim.getPinned()) {
+            listener.onEvent(event);
+        }
     }
 
     public record ApprovalRole(String name) {

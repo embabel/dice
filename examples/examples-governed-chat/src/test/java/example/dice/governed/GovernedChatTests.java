@@ -80,7 +80,7 @@ class GovernedChatTests {
         var explanation = chat.explain(rule.getId());
         assertThat(explanation.groundingIds()).containsExactly("policy-1");
         assertThat(explanation.history()).extracting(AuditRecord::getKind)
-                .containsSubsequence(AuditKind.CREATED, AuditKind.PINNED);
+                .containsExactly(AuditKind.CREATED, AuditKind.PINNED);
         assertThat(explanation.history()).filteredOn(record -> record.getKind() == AuditKind.PINNED)
                 .singleElement().satisfies(record -> {
                     assertThat(record.getBefore().getPinned()).isFalse();

@@ -15,6 +15,7 @@
  */
 package example.dice.governed;
 
+import com.embabel.dice.proposition.EntityMention;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionQuery;
 import com.embabel.dice.proposition.PropositionRepository;
@@ -26,6 +27,7 @@ import com.embabel.dice.proposition.revision.RevisionResult;
 import com.embabel.dice.spi.ConflictType;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * In this chat an approval rule names one role. A different named role conflicts with the
@@ -35,7 +37,7 @@ final class ApprovalPolicy implements PropositionReviser {
 
     @Override
     public RevisionResult revise(Proposition incoming, PropositionRepository repository) {
-        if (incoming.getMentions().isEmpty()) {
+        if (approvalRole(incoming).isEmpty()) {
             return new RevisionResult.New(incoming);
         }
         var pinnedRules = repository.query(PropositionQuery.againstContext(incoming.getContextIdValue())
@@ -50,13 +52,20 @@ final class ApprovalPolicy implements PropositionReviser {
 
     @Override
     public List<ClassifiedProposition> classify(Proposition incoming, List<Proposition> candidates) {
+        var incomingRole = approvalRole(incoming);
         return candidates.stream().map(candidate -> {
-            boolean conflicts = !candidate.getMentions().isEmpty() && !incoming.getMentions().isEmpty()
-                    && !candidate.getMentions().getFirst().getSpan().equalsIgnoreCase(
-                            incoming.getMentions().getFirst().getSpan());
+            boolean conflicts = incomingRole.isPresent() && approvalRole(candidate)
+                    .filter(role -> !role.equalsIgnoreCase(incomingRole.get())).isPresent();
             return new ClassifiedProposition(candidate,
                     conflicts ? PropositionRelation.CONTRADICTORY : PropositionRelation.UNRELATED,
                     conflicts ? 1 : 0, conflicts ? "A different role is named" : "No change to the approval role");
         }).toList();
+    }
+
+    private static Optional<String> approvalRole(Proposition proposition) {
+        return proposition.getMentions().stream()
+                .filter(mention -> mention.getType().equals(GovernedChatApplication.ApprovalRole.class.getSimpleName()))
+                .map(EntityMention::getSpan)
+                .findFirst();
     }
 }

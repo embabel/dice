@@ -23,7 +23,7 @@ and audit log. The audit log for this run lasts as long as the application.
 | Apply the policy | `PropositionReviser`, `GateApplier` | `ApprovalPolicy` compares the named role with the pinned rule. A dispute goes to review and a low-confidence claim is rejected. |
 | Store what passed | `GatedChunk.admitted`, `AuditingPropositionRepository` | The chat writes only admitted claims. The repository records the initial rule and the later pin. |
 | Pick prompt memory | `Memory.withContextBudget` | The pinned rule stays when the budget leaves out the email preference. The selection reports that the policy alone exceeds the budget. |
-| Explain a decision | `AuditEventListener`, `AuditLogQuery.history` | The rule names its grounding message. Each withheld claim has its own recorded disposition with a reason. |
+| Explain a decision | `AuditEventListener`, `AuditLogQuery.history` | The rule names its grounding message. Each withheld proposal has a recorded disposition and reason. The approved rule keeps its creation and pin history. |
 | Read as of a time | `AuditSink.initializeBaseline`, `AuditLogQuery.beliefSetAsOf` | The host initializes a complete empty baseline before accepting its first message. An earlier read raises `AuditCoverageException`. |
 
 `GovernedChat` is the turn boundary and supplies the example's small application API.
