@@ -37,3 +37,17 @@ calculated at lookup. A goal the projected facts cannot prove returns `Evidence.
 
 The test also runs the default projection policy. Its confidence floor excludes the plan claim,
 so the projected theory starts with only the two remaining input facts.
+
+## Use this in an application
+
+1. Resolve the tenant or account from the authenticated request. Use that context for
+   `GraphQuery.of(store, contextId)` and to select the propositions that enter the Prolog
+   projection. Keep each context's projected facts separate.
+2. Declare a rule the application owns. Use the conclusion's recorded inputs to explain the
+   result and the rule hash to identify the policy that produced it. The application decides
+   whether to act on that result.
+3. Handle `Evidence.Missing` before deciding. Check whether the required facts were present and
+   satisfied the projection floor. In an approval flow, send an unresolved request for review.
+
+The example starts with grounded propositions. In an application, keep the source record
+available under its grounding id so the explanation can lead a reviewer back to the message.
