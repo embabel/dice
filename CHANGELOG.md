@@ -222,11 +222,6 @@ and the consumer PRs that deliver it).
 
 ### Added
 
-- Call `scopedReads()` on an in-memory, JSON file or Drivine repository to open a scoped
-  read view. `ScopedMemory` applies a host-supplied scope and budget to prompt and tool reads.
-  Returned facts carry their context labels. In-memory and JSON file views support exact scoped
-  similarity search when configured with an embedder. **Compatibility: additive.**
-
 - `NameNormalizer` chooses how entity names are compared, and `PersonNameNormalizer` is the
   built-in implementation with its rules open to change: the labels that mark a person, the titles
   and suffixes removed, and whether middle initials and "Last, First" order are handled. Java
