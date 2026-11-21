@@ -74,9 +74,27 @@ in-memory repository. When a host controls a separate transaction, use a joining
 rollback also rolls back the audit record. Strict mode surfaces a recording failure. The wrapper
 invalidates historical coverage when a write may have escaped a best-effort sink.
 
-For Drivine on Neo4j or SQLite, register the result of `AuditLogSchema.forRegistration()` as a
-`DiceStorageSchema` bean and construct `DrivineAuditLogStore` with the proposition repository's persistence manager and
-transaction manager. SQLite uses the same IMMEDIATE transaction mode as the DICE SQLite starter.
+For Drivine on Neo4j or SQLite, opt in by registering a `DiceStorageSchema` bean for graph
+ownership and a Drivine `SchemaCatalog` bean for its constraints and indexes. If the application
+already aggregates its schemas into a catalog, include the audit schema there. For a Spring app
+that uses separate catalogs, add these methods to its configuration.
+
+```java
+@Bean
+DiceStorageSchema auditStorageSchema() {
+    return AuditLogSchema.forRegistration();
+}
+
+@Bean
+SchemaCatalog auditSchemaCatalog(@Qualifier("auditStorageSchema") DiceStorageSchema schema) {
+    return DiceStorageSchemaKt.diceStorageCatalog(List.of(schema));
+}
+```
+
+Construct the audit store with the proposition repository's persistence manager and transaction
+manager. Use SQLite's `IMMEDIATE` transaction mode, which Drivine's default SQLite datasource
+configures. SQLite updates the audit header as a JSON property document. Lock and counter
+updates can rewrite that document, so a large baseline increases write cost.
 
 ```java
 var audit = new DrivineAuditLogStore(persistenceManager, transactionManager);
@@ -96,9 +114,10 @@ post-commit events.
 
 The sink samples `recordedAt` when assigning the audit position inside the write transaction.
 It preserves nondecreasing timestamps within a context when the clock moves backward.
-An outer transaction may commit later than the timestamps attached to its records. Historical
-replay considers committed records and includes positions stamped at or before the requested
-instant. Treat this timestamp as audit write time. The Drivine schema also provides a fixed set
+An outer transaction may commit later than the timestamps attached to its records. Replay
+includes visible positions stamped at or before the requested instant. Call it outside a host
+write transaction for a committed view. Inside a joined transaction, replay can also see the
+caller's pending records. Treat the timestamp as audit write time. The Drivine schema also provides a fixed set
 of lock stripes so two contexts cannot claim the same newly created proposition ID.
 Drivine reads the retained records for a context under its audit fence when it verifies coverage
 and replays history. Invoke `asOf` and `beliefSetAsOf` with a write-capable transaction manager,

@@ -42,8 +42,9 @@ import java.util.UUID
 import java.util.function.Supplier
 
 /**
- * Durable audit for a Drivine proposition repository. Declare [AuditLogSchema] as a
- * [DiceStorageSchema] and use the same datasource and transaction manager as the repository.
+ * Durable audit for a Drivine proposition repository. Register [AuditLogSchema.forRegistration]
+ * for storage ownership and publish a Drivine catalog using [diceStorageCatalog]. Share the
+ * repository's datasource and transaction manager.
  *
  * Every mutation locks the context header before reading it. Sequence assignment, baseline
  * installation, and erasure then share that transaction with the proposition write. On SQLite the
