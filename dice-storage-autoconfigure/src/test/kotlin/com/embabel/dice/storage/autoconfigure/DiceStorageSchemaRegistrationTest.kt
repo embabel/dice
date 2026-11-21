@@ -16,8 +16,11 @@
 package com.embabel.dice.storage.autoconfigure
 
 import com.embabel.dice.storage.CollectorTraceSchema
+import com.embabel.dice.storage.AuditLogSchema
 import com.embabel.dice.storage.DiceStorageSchema
+import com.embabel.dice.storage.DrivineAuditLogStore
 import com.embabel.dice.storage.LineageSchema
+import com.embabel.dice.storage.diceStorageCatalog
 import org.assertj.core.api.Assertions.assertThat
 import org.drivine.manager.StatelessGraphObjectManager
 import org.drivine.manager.PersistenceManager
@@ -26,6 +29,8 @@ import org.drivine.schema.SchemaCatalog
 import org.drivine.schema.SchemaItemSpec
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
+import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.beans.factory.getBeanProvider
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
@@ -97,6 +102,35 @@ class DiceStorageSchemaRegistrationTest {
     }
 
     @Test
+    fun `the graph backend leaves the audit store and schema unwired by default`() {
+        graphRunner.run { ctx ->
+            val auditSpecs = AuditLogSchema.forRegistration().specs()
+            val registered = ctx.getBeanProvider<DiceStorageSchema>().orderedStream().toList()
+                .flatMap { it.specs() }
+            val ensured = ctx.getBeanProvider<SchemaCatalog>().orderedStream().toList()
+                .flatMap { it.items }
+            assertThat(registered).doesNotContainAnyElementsOf(auditSpecs)
+            assertThat(ensured).doesNotContainAnyElementsOf(auditSpecs)
+            assertThat(ctx).doesNotHaveBean(DrivineAuditLogStore::class.java)
+        }
+    }
+
+    @Test
+    fun `opting into durable audit registers both ownership and database constraints`() {
+        graphRunner.withUserConfiguration(AuditSchemaConfig::class.java)
+            .withPropertyValues("host.audit.datasource=neo")
+            .run { ctx ->
+                val auditSpecs = AuditLogSchema.forRegistration().specs()
+                val registered = ctx.getBeanProvider<DiceStorageSchema>().orderedStream().toList()
+                    .flatMap { it.specs() }
+                val ensured = ctx.getBeanProvider<SchemaCatalog>().orderedStream().toList()
+                    .flatMap { it.items }
+                assertThat(registered).containsAll(auditSpecs)
+                assertThat(ensured).containsAll(auditSpecs)
+            }
+    }
+
+    @Test
     fun `the in-memory backend registers no graph schema at all`() {
         ApplicationContextRunner()
             .withConfiguration(
@@ -128,6 +162,19 @@ class DiceStorageSchemaRegistrationTest {
         /** Store beans that manage their own transactions ask for one of these at wiring time. */
         @Bean
         open fun transactionManager(): PlatformTransactionManager = mock()
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    class AuditSchemaConfig {
+
+        @Bean
+        fun auditStorageSchema(): DiceStorageSchema = AuditLogSchema.forRegistration()
+
+        @Bean
+        fun auditSchemaCatalog(
+            @Qualifier("auditStorageSchema") schema: DiceStorageSchema,
+            @Value("\${host.audit.datasource}") datasource: String,
+        ): SchemaCatalog = diceStorageCatalog(listOf(schema)).forDatabase(datasource)
     }
 
     /** Every `DiceStorageSchema` singleton on this module's classpath. */

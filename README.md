@@ -1647,6 +1647,36 @@ can_consult(Person, Expert, Topic) :-
     expert_in(Expert, Topic).
 ```
 
+#### Derived evidence
+
+`PrologEvidenceProvider` answers a rule goal with `Evidence.Derived`, which tells you which rule worked the answer out and which propositions it was worked out from:
+
+```java
+PrologProjectionResult projection = prologProjector.projectAll(relationships);
+PrologSchema schema = PrologSchema.Companion.withRules(
+        "can_help(X, Topic) :- expert_in(X, Topic).", List.of());
+
+PrologEvidenceProvider provider = PrologEvidenceProvider.of(projection, schema)
+        .withDeclaration(RuleDeclaration.of("can_help(X, Topic)").withInput("expert_in(X, Topic)"))
+        .withRepository(repository);
+
+Evidence evidence = provider.evidence(RuleGoal.of("can_help('alice', T)"));
+if (evidence instanceof Evidence.Derived) {
+    Evidence.Derived derived = (Evidence.Derived) evidence;
+    DerivationRule rule = derived.getRule();        // rule id "can_help/2", plus the goal and its bindings
+    List<String> inputIds = derived.getInputIds();  // the propositions behind expert_in('alice', ...)
+}
+```
+
+Recorded and derived claims stay apart: a conclusion is worked out when you ask for it, and nothing is stored back in the repository.
+Inputs are declared rather than traced, one `RuleDeclaration` per rule clause, so a rule with three clauses needs three declarations.
+If a clause or its declaration uses a cut (`!`) as a goal, `withDeclaration` throws `IllegalArgumentException` naming the predicate and arity. This also applies when you declare a different clause of that predicate. You can still query it through `PrologEngine`.
+Setup logs a warning and skips a declaration that Prolog cannot parse.
+Recursive rules such as `reports_to_chain` can't be declared this way yet.
+Each matched fact record takes the highest decayed confidence among its stored source propositions, or its own confidence if none is found. The conclusion takes the lowest score across all matched records, including records whose arguments normalise to the same atom.
+When a goal can't be proved you get `Evidence.Missing`, and not provable doesn't mean false, since the facts may just not be there yet.
+This is experimental, and the engine behind it may change.
+
 ### Agent Memory
 
 The `Memory` class gives agents access to their stored memories (propositions) within a context.
@@ -2396,10 +2426,9 @@ class DiceApiConfig {
 
 ### Graph-Backed Storage (`dice-storage`)
 
-`InMemoryPropositionRepository` is for tests and demos. For persistence, the **`dice-storage`** module
-provides a graph-backed (Neo4j via [Drivine](https://github.com/drivine/drivine4j))
-`PropositionRepository` — a drop-in for the in-memory one — together with a graph `ChunkHistoryStore`
-and a `DecayManager`.
+Store propositions in Neo4j or a local SQLite file through the same `PropositionRepository` API.
+`dice-storage` uses [Drivine](https://github.com/drivine/drivine4j) and also provides a graph
+`ChunkHistoryStore` and `DecayManager`.
 
 Add `dice-starter-neo4j` (versions from the `dice-dependencies` BOM, see [Installation](#installation))
 and give Drivine one data source. You don't set a DICE property or write any beans:
@@ -2423,11 +2452,24 @@ database:
       database-name: neo4j
 ```
 
+For SQLite, use `dice-starter-sqlite` and set the path to your database file.
+
+```yaml
+database:
+  datasources:
+    local:
+      type: SQLITE
+      database-name: ./dice.db
+```
+
+Drivine opens or creates the file. If startup fails to open it, check that the directory exists
+and the application can write to it.
+
 The starter brings in `dice-storage`, the autoconfiguration and Drivine's Spring Boot starter. Drivine
 builds its factories from the data source, and DICE builds the `PersistenceManager` and
 `StatelessGraphObjectManager` from them. With those in place, the autoconfiguration registers
 `DrivinePropositionRepository` (and the chunk-history store, a scheduled decay sweep and the other
-Drivine stores) and provisions the Neo4j schema (vector + range indexes, uniqueness constraints).
+Drivine stores) and provisions the schema for the chosen backend. Neo4j also gets a native vector index.
 With no data source, DICE uses its in-memory stores. With several data sources, set
 `embabel.dice.store.datasource` to the one DICE should use; otherwise startup stops and lists them.
 Any `PropositionRepository`, `PersistenceManager` or `StatelessGraphObjectManager` bean you define
@@ -2436,9 +2478,10 @@ yourself still wins (`@ConditionalOnMissingBean`), so call sites are unchanged.
 If Drivine is configured but some of DICE's stores still ended up in memory (for example because
 your own auto-configuration registered the `PersistenceManager` after DICE's), startup fails and
 names those stores, so data is never quietly kept in memory. With the starter, the deprecated
-`embabel.dice.store.type` property is no longer needed. A SQLite starter will follow in a later release.
+`embabel.dice.store.type` property is no longer needed.
 
-Adding `dice-starter-neo4j` is what turns this detection on. An app that uses Drivine for its own data
+For SQLite, add `dice-starter-sqlite` and configure a `SQLITE` data source with the file path as
+`database-name`. Either Drivine starter turns on backend detection. An app that uses Drivine for its own data
 without the starter keeps DICE's in-memory stores, as before, and DICE builds no Drivine managers
 for it and writes no schema to its database. Such an app can still set `embabel.dice.store.type=graph`
 to get DICE's Drivine stores on its own `PersistenceManager` and `StatelessGraphObjectManager`.
@@ -2683,7 +2726,7 @@ together, then add one starter. You don't need to define any beans.
 </dependencyManagement>
 
 <dependencies>
-    <!-- In-memory stores. Use dice-starter-neo4j instead for Neo4j. -->
+    <!-- In-memory stores. The Neo4j and SQLite starters support persistent storage. -->
     <dependency>
         <groupId>com.embabel.dice</groupId>
         <artifactId>dice-starter</artifactId>
@@ -2695,10 +2738,10 @@ together, then add one starter. You don't need to define any beans.
 |---------|--------------|
 | `dice-starter` | DICE with in-memory stores |
 | `dice-starter-neo4j` | DICE with Drivine stores on Neo4j, once you add one entry under `database.datasources` (see [Graph-Backed Storage](#graph-backed-storage-dice-storage)) |
+| `dice-starter-sqlite` | DICE with Drivine stores in a local SQLite file, configured under `database.datasources` |
 | `dice-starter-mcp` | DICE's tools over MCP (see [MCP Server](#mcp-server)) |
 
-A SQLite starter will follow in a later release. The proposition store needs an `Ai` bean for
-embeddings, which the agent framework's starter provides.
+The proposition store needs an `Ai` bean for embeddings, which the agent framework's starter provides.
 
 ## Technology Stack
 

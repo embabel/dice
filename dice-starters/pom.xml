@@ -22,6 +22,7 @@
     <modules>
         <module>dice-starter</module>
         <module>dice-starter-neo4j</module>
+        <module>dice-starter-sqlite</module>
         <module>dice-starter-mcp</module>
     </modules>
 

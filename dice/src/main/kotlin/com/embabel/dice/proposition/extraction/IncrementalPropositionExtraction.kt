@@ -19,6 +19,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.chat.Message
+import com.embabel.dice.audit.writeWithAuditAttribution
 import com.embabel.dice.common.NameNormalizer
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.KnownEntity
@@ -1148,7 +1149,7 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
                 logRunLineage(key.runRef.runId, runLinks, lineageFailure)
             }.write(unit)
         } else {
-            val written = boundWriter.write(unit)
+            val written = boundWriter.writeWithAuditAttribution(unit)
             if (currentRun != null) logRunLineage(currentRun.runId, written.runLinks, written.lineageFailure)
             written
         }

@@ -11,7 +11,7 @@
 
     <artifactId>examples-backend-swap</artifactId>
     <name>DICE Examples - Backend Swap</name>
-    <description>The same code on the in-memory store and on Neo4j, switched by one property</description>
+    <description>The same code on the in-memory store, Neo4j, and SQLite</description>
 
     <dependencies>
         <!-- Brings up the Embabel Agent platform, which supplies the Ai bean the stores are built with. -->
@@ -19,10 +19,10 @@
             <groupId>com.embabel.agent</groupId>
             <artifactId>embabel-agent-starter</artifactId>
         </dependency>
-        <!-- Picks the proposition store from embabel.dice.store.type. Brings Drivine for the graph store. -->
+        <!-- Supplies SQLite's JDBC driver and enables DICE store detection from Drivine. -->
         <dependency>
             <groupId>com.embabel.dice</groupId>
-            <artifactId>dice-storage-autoconfigure</artifactId>
+            <artifactId>dice-starter-sqlite</artifactId>
             <version>${dice.version}</version>
         </dependency>
         <dependency>

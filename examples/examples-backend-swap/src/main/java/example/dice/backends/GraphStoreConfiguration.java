@@ -25,15 +25,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * The one piece the graph backend adds: the Neo4j connection DICE's graph store is built on.
+ * The managers for the example's explicit Neo4j configuration.
  *
- * <p>DICE builds the Neo4j proposition store itself, but it needs two Drivine objects that the
- * application has to supply: a {@link PersistenceManager} for queries and a
+ * <p>This configuration supplies a {@link PersistenceManager} for queries and a
  * {@link StatelessGraphObjectManager} for loading and saving objects. Both come from the
  * datasource named {@value #DATASOURCE}, configured under {@code database.datasources.neo}.
  *
- * <p>This class loads only when {@code embabel.dice.store.type=graph}. On the in-memory store
- * there is no Drivine setup at all, and these beans could not be built.
+ * <p>This class loads only when {@code embabel.dice.store.type=graph}. The SQLite path uses
+ * the managers that the DICE starter configures for its datasource.
  */
 @Configuration(proxyBeanMethods = false)
 @EnableDrivine

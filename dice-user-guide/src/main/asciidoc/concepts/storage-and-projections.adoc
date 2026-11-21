@@ -23,8 +23,9 @@ what it genuinely supports:
 | Traversal over the proposition/entity graph.
 
 | `GraphQueryCapable`
-| Native neighbourhood, path and lineage queries, plus the `honorsAuthorityFilter` opt-in that lets
-  the portable graph facade push authority-filtered traversals down to the backend.
+| Native neighbourhood, path and lineage queries. The `honorsAuthorityFilter` opt-in allows native
+  authority filtering for unscoped traversals. `GraphQuery` applies both filters in the portable walk
+  when a traversal supplies a context and an authority floor.
 
 | `TemporalQueryCapable`
 | Queries over validity windows.

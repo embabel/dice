@@ -73,24 +73,22 @@ walk is always there as the floor — graph-shaped *reasoning* shouldn't be chai
 *infrastructure*. A lightweight in-memory setup should still answer "how is A connected to B?"
 without standing up Neo4j.
 
-The durable Neo4j backend implements `GraphQueryCapable`, so graph queries there run as native
-Cypher — for both unscoped and context-scoped queries. The context is pushed straight into the
-traversal (a `contextId` predicate on every hop), so the production callers, which are all
-context-scoped (`DiscoveryController`, `GraphQueryTools`, and downstream consumers), still get the
-native Cypher rather than dropping to the portable walk. A store without the capability, or one that
-doesn't confine a walk to a context itself, falls back to the portable walk below.
+The Neo4j backend implements `GraphQueryCapable`. Without an authority floor, both unscoped and
+context-scoped queries can use native Cypher. For a scoped query, the backend adds a `contextId`
+predicate to every hop. The facade uses the portable walk when the backend lacks the required
+capability or when a query combines a context and an authority floor.
 
 ```mermaid
 flowchart TD
     GQ["GraphQuery.neighborhood(entityId, depth)"] --> CAP{"store implements<br/>GraphQueryCapable?"}
-    CAP -->|"no"| PORTABLE["portable walk: follow proposition<br/>mentions hop by hop (context-scoped)"]
+    CAP -->|"no"| PORTABLE["portable walk: follow proposition mentions<br/>with the requested filters"]
     CAP -->|"yes"| SCOPE{"context-scoped query?"}
     SCOPE -->|"no (unscoped)"| AUTH
     SCOPE -->|"yes AND honorsContextFilter"| AUTH{"authority floor set?"}
     SCOPE -->|"yes, no honorsContextFilter"| PORTABLE
     AUTH -->|"no floor"| NATIVEPLAIN["route to native neighborhood()<br/>with contextId"]
-    AUTH -->|"floor AND honorsAuthorityFilter"| NATIVE["route to native neighborhood()<br/>with minAuthority"]
-    AUTH -->|"floor, no honorsAuthorityFilter"| PORTABLE
+    AUTH -->|"floor AND unscoped AND honorsAuthorityFilter"| NATIVE["route to native neighborhood()<br/>with minAuthority"]
+    AUTH -->|"other query with a floor"| PORTABLE
     NATIVE --> RESULT[GraphNeighborhood]
     NATIVEPLAIN --> RESULT
     PORTABLE --> RESULT
@@ -106,12 +104,11 @@ drops it — unknown provenance is treated as low trust, not waved through. And 
 genuinely isn't there, these operations return empty or null rather than throwing — asking a
 question the backend can't fully answer gives you "nothing found," not an error.
 
-The `GraphQueryCapable.honorsAuthorityFilter` flag is how a native backend opts in to handling the
-filtering itself. When it is false (the default), the portable facade applies authority filtering
-on its own proposition-walk, so the correct result comes back either way. A backend sets it to true
-only after it genuinely honours the `minAuthority` argument in its `neighborhood` and `pathBetween`
-overloads — and if it sets the flag without overriding those overloads, the default bodies throw
-rather than silently returning unfiltered results.
+`GraphQueryCapable.honorsAuthorityFilter` lets a native backend handle authority filtering for
+unscoped queries. A backend sets it to true when its authority-aware `neighborhood` and
+`pathBetween` overloads apply `minAuthority`. The default bodies throw if a backend advertises
+the capability without overriding them. These overloads have no context argument, so a scoped
+query with an authority floor applies both filters in the portable walk.
 
 `GraphQueryCapable.honorsContextFilter` works the same way for context scoping. When it is false (the
 default), the facade keeps a context-scoped query on its own proposition-walk, which already confines

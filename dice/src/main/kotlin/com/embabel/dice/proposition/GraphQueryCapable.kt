@@ -42,7 +42,8 @@ interface GraphQueryCapable {
      * proposition-edge path, so an authority-filtered query still returns correct results even on a
      * backend that knows nothing about authority. Flip it to true only once the authority-aware
      * [neighborhood] and [pathBetween] below genuinely honour their `minAuthority` argument — that is
-     * the signal that lets the facade route filtered queries down here instead of falling back.
+     * the signal that lets the facade route unscoped authority-filtered queries here. When a query
+     * has both a context and an authority floor, the facade applies both on the portable path.
      */
     val honorsAuthorityFilter: Boolean get() = false
 

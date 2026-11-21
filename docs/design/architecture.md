@@ -151,15 +151,13 @@ them:
 | `GraphTraversalCapable` | proposition abstraction-hierarchy traversal |
 | `TemporalQueryCapable` | bitemporal valid/observed window queries |
 
-A separate interface, `GraphQueryCapable`, adds native neighbourhood, path, and lineage queries
-(with `honorsAuthorityFilter` and `honorsContextFilter` as its own opt-ins) for a graph-native
-backend. It is not part of `PropositionRepository` — a store implements it in addition, and
-`GraphQuery` casts the store `as? GraphQueryCapable` at runtime, routing to the native implementation
-when the backend provides one. The durable Neo4j backend (`dice-storage`) implements it and confines
-each walk to the query's context in Cypher, so graph queries there run as native Cypher for both
-unscoped and context-scoped queries (which is what the production callers issue); a store without the
-capability, or one that doesn't confine a walk to a context itself, falls back to the portable,
-store-agnostic walk.
+A backend can implement `GraphQueryCapable` alongside `PropositionRepository` for native
+neighbourhood, path, and lineage queries. The Neo4j implementation uses Cypher to confine a
+context-scoped walk to its context. `GraphQuery` uses the native context overload when the backend
+declares `honorsContextFilter` and the query has no authority floor. For an unscoped query with an
+authority floor, it uses the native authority overload when the backend declares
+`honorsAuthorityFilter`. A scoped query with an authority floor uses the portable walk to apply
+both filters. The portable walk is also the fallback when the backend lacks the required capability.
 
 `TrustScorer` and `AuthorityResolver` are advisory — they score and rank, never delete or hide.
 `AuthorityWeightedTrustScorer` is the production scorer; the default is neutral (everything trusted
