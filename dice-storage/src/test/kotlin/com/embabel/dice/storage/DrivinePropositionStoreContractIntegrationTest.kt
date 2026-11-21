@@ -23,6 +23,16 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionStore
 import com.embabel.dice.storage.model.PropositionView
+import com.embabel.dice.proposition.PropositionStatus
+import com.embabel.dice.store.ContextReadScope
+import com.embabel.dice.store.ReadBudget
+import com.embabel.dice.store.ReadBudgetExceededException
+import com.embabel.dice.store.ReadCriteria
+import com.embabel.dice.store.ReadKeywordQuery
+import com.embabel.dice.store.ReadQuery
+import com.embabel.dice.store.ScopedReadSpec
+import com.embabel.dice.store.StoreCapability
+import com.embabel.dice.store.UnsupportedCapabilityException
 import org.drivine.StaleObjectException
 import org.drivine.manager.PersistenceManager
 import org.drivine.manager.StatelessGraphObjectManager
@@ -62,6 +72,46 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
     fun cleanUp() {
         repository.clearAll()
         persistenceManager.execute(cypherQuery("MATCH (s:Source) DETACH DELETE s"))
+    }
+
+    @Test
+    fun `scoped queries rank filter and cap inside the graph database`() {
+        fun save(id: String, context: String, text: String, status: PropositionStatus = PropositionStatus.ACTIVE) {
+            repository.save(Proposition.draft(context, text, 0.9).withId(id).withStatus(status).toProposition())
+        }
+        save("1", "session", "alpha discount")
+        save("2", "team", "alpha % discount")
+        save("3", "outside", "alpha % private discount")
+        save("4", "Session", "alpha % also private")
+        save("5", "team", "alpha % past discount", PropositionStatus.SUPERSEDED)
+        save("6", "team", "alpha % second discount")
+        val reads = repository.scopedReads()
+        val allowed = ScopedReadSpec.of(ContextReadScope.ofValues("session", "team")).narrow(
+            ReadCriteria.empty().withStatus(PropositionStatus.ACTIVE),
+        )
+        val none = ReadCriteria.empty()
+        val two = ReadBudget.ofRows(2)
+        val three = ReadBudget.ofRows(3)
+
+        assertEquals(listOf("1", "2", "6"), reads.query(allowed, ReadQuery.of(none), three).map { it.id })
+        assertEquals(listOf("2", "6"), reads.matchKeywords(
+            allowed, ReadKeywordQuery.forTokens("ALPHA", "%").withLimit(2), two,
+        ).map { it.id })
+        assertEquals(listOf("2", "6"), reads.matchKeywords(
+            allowed, ReadKeywordQuery.forTokens("%"), two,
+        ).map { it.id })
+        assertEquals(3, reads.count(allowed, none.withMinConfidence(0.9), three))
+        assertEquals(0, reads.count(allowed, none.withMinConfidence(0.95), three))
+        assertEquals(3L, assertThrows<ReadBudgetExceededException> {
+            reads.count(allowed, none, two)
+        }.requested)
+        assertThrows<ReadBudgetExceededException> { reads.query(allowed, ReadQuery.of(none), two) }
+        assertThrows<ReadBudgetExceededException> { reads.matchKeywords(allowed, ReadKeywordQuery.forTokens("alpha"), two) }
+        val denied = assertThrows<UnsupportedCapabilityException> {
+            reads.query(allowed, ReadQuery.of(none.withMinEffectiveConfidence(0.5)).withLimit(3), two)
+        }
+        assertEquals(StoreCapability.SCOPED_READS, denied.capability)
+        assertTrue(denied.message!!.contains("MIN_EFFECTIVE_CONFIDENCE"))
     }
 
     /** The same text in two contexts is not deduplicated, so the two share an embedding and cluster. */

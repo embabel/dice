@@ -1,9 +1,9 @@
 [[features-scoped-reads]]
 === Scoped reads
 
-*Activation*: a store that lists `StoreCapability.SCOPED_READS`, and
-`StoreCapability.SCOPED_VECTOR_SEARCH` for similarity search. `StoreCapabilities.find` returns null
-for a store that does not list the capability. The types are the contract a store implements.
+*Activation*: call `scopedReads()` on an in-memory, JSON file or Drivine repository. For a
+third-party store that implements the capabilities directly, use `StoreCapabilities.find` to
+look up `ScopedReads` and `ScopedVectorSearch`.
 
 *Availability*: `dice`, package `com.embabel.dice.store`.
 
@@ -47,6 +47,26 @@ a spec, and no method of a spec returns a wider one.
 | `ScopedVectorSearch`
 | Similarity search that a store runs under a spec and a budget.
 |===
+
+==== Open a repository view
+
+The view exposes query, count and keyword matching. Pass the scope and budget on each read.
+
+[source,java]
+----
+var repository = new InMemoryPropositionRepository();
+ScopedReads reads = repository.scopedReads();
+----
+
+The in-memory and JSON file views also implement `ScopedVectorSearch` when the repository has
+an embedder. Similarity compares the selected embeddings and throws if they exceed the vector
+candidate cap.
+
+Drivine runs scope selection, filtering, keyword matching, ranking and limits in the database.
+Its supported filters cover status, level, raw confidence, importance, reinforce count and pin.
+It can order by creation time, reinforce count or importance. A request with an unsupported
+criterion or order raises `UnsupportedCapabilityException`. Drivine currently offers a row-only
+view. Keyword matching uses the database's Unicode lower-casing rules.
 
 ==== Building a scope
 
@@ -113,8 +133,8 @@ unchanged or narrowed.
 | The host
 | The `PropositionStore` and the access rules.
 | Deciding which contexts and filters a caller gets and how much a read may take. It resolves
-  `ScopedReads` and `ScopedVectorSearch` with `StoreCapabilities.find`, and it builds the scope, the
-  first spec and the budget.
+  the repository view or looks up the store's capabilities. It builds the scope, the first spec
+  and the budget.
 
 | Reading code
 | A `ScopedReads` or `ScopedVectorSearch` handle, a spec and a budget.
@@ -125,9 +145,8 @@ unchanged or narrowed.
 | Applying them. It does not decide access.
 |===
 
-The handle is the store object seen through one interface, and a budget is a value with public
-factories. Reading code that casts the handle to `PropositionStore`, or builds a spec or a larger
-budget of its own, is outside what the types stop.
+In-process code can create its own specs and budgets. Keep the repository view and the
+creation of specs and budgets in the host when exposing scoped reads to a model.
 
 ==== Reading under a budget
 
@@ -139,8 +158,8 @@ and resolves the capabilities on the store.
 [source,java]
 ----
 ReadBudget budget = ReadBudget.ofRows(200).withMaxVectorCandidates(5_000);
-ScopedReads reads = StoreCapabilities.find(store, ScopedReads.class);
-ScopedVectorSearch search = StoreCapabilities.find(store, ScopedVectorSearch.class);
+ScopedReads reads = repository.scopedReads(); // A repository configured with an embedder
+ScopedVectorSearch search = reads instanceof ScopedVectorSearch vectors ? vectors : null;
 ----
 
 The reading code is handed `reads`, `search`, a spec and the budget.
@@ -300,6 +319,22 @@ if (limit != null) {
 
 The full rules are in the KDoc of `ScopedReads` and `ScopedVectorSearch`. The capability table is in
 <<reference-store-contract-capabilities>>.
+
+==== Recall across contexts with ScopedMemory
+
+`ScopedMemory` implements Embabel's `LlmReference` and `Tool`. The host supplies the view,
+scope and budget. The model can submit search text and a result limit. Each fact is labelled with
+its owning context, even when two contexts store the same text.
+
+[source,java]
+----
+ScopedMemory memory = ScopedMemory.forReads(reads, spec, ReadBudget.ofRows(20))
+        .withEagerQuery(ReadQuery.of(ReadCriteria.empty()).orderedByCreated().withLimit(3));
+----
+
+Memory recalls active propositions with raw confidence of at least 0.5. A row-only budget uses
+keyword search. A budget that permits vector candidates enables hybrid retrieval and requires a
+view with scoped vector support.
 
 ==== Entity candidates
 

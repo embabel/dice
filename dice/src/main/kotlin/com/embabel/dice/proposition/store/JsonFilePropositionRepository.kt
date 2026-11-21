@@ -28,6 +28,8 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.embabel.dice.store.ScopedReads
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
@@ -61,7 +63,6 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
 
     private val propositions = ConcurrentHashMap<String, Proposition>()
     private val embeddings = ConcurrentHashMap<String, FloatArray>()
-    internal val scopedReads = LocalScopedReads { propositions.values }
 
     // Serializes the mutate+flush critical section so concurrent writers cannot persist a
     // torn/stale snapshot and so in-memory state can be rolled back if the disk flush fails.
@@ -102,6 +103,15 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
             failures.size, loaded.size, path, notAttempted, failures.map { it.first }, failures.first().second.message,
         )
     }
+
+    /**
+     * Opens an opt-in read-only view. Each call through it requires a host-supplied spec and budget.
+     * The view also implements scoped vector search when this repository has an embedder.
+     */
+    @ApiStatus.Experimental
+    fun scopedReads(): ScopedReads = embeddingService?.let { embedder ->
+        LocalScopedReads.withVectors({ propositions.values }, embedder::embed, writeLock, embeddings::get)
+    } ?: LocalScopedReads { propositions.values }
 
     override val luceneSyntaxNotes: String
         get() = "no lucene support"

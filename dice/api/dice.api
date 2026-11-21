@@ -5295,6 +5295,7 @@ public final class com/embabel/dice/proposition/store/InMemoryPropositionReposit
 	public fun getLuceneSyntaxNotes ()Ljava/lang/String;
 	public fun getSupportsVector ()Z
 	public fun save (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/proposition/Proposition;
+	public final fun scopedReads ()Lcom/embabel/dice/store/ScopedReads;
 	public fun subtractFoldedEvidence (Ljava/lang/String;Ljava/util/List;Ljava/util/Collection;Ljava/util/Collection;)Lcom/embabel/dice/proposition/Proposition;
 }
 
@@ -5316,6 +5317,7 @@ public final class com/embabel/dice/proposition/store/JsonFilePropositionReposit
 	public fun getStoreType ()Lcom/embabel/dice/proposition/PropositionStoreType;
 	public fun getSupportsVector ()Z
 	public fun save (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/proposition/Proposition;
+	public final fun scopedReads ()Lcom/embabel/dice/store/ScopedReads;
 }
 
 public final class com/embabel/dice/proposition/store/Neo4jRagPropositionRepository : com/embabel/dice/proposition/store/RagAdapterPropositionRepository {

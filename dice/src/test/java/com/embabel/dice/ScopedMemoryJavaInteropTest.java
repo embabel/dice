@@ -1,0 +1,134 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.embabel.dice;
+
+import com.embabel.agent.api.tool.Tool;
+import com.embabel.common.ai.model.EmbeddingService;
+import com.embabel.dice.agent.ScopedMemory;
+import com.embabel.dice.proposition.Proposition;
+import com.embabel.dice.proposition.PropositionRepository;
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
+import com.embabel.dice.proposition.store.JsonFilePropositionRepository;
+import com.embabel.dice.store.ContextReadScope;
+import com.embabel.dice.store.ReadBudget;
+import com.embabel.dice.store.ReadBudgetExceededException;
+import com.embabel.dice.store.ReadCriteria;
+import com.embabel.dice.store.ReadQuery;
+import com.embabel.dice.store.ReadVectorSearchRequest;
+import com.embabel.dice.store.ScopedReadSpec;
+import com.embabel.dice.store.ScopedReads;
+import com.embabel.dice.store.ScopedVectorSearch;
+import com.embabel.dice.store.StoreCapabilities;
+import com.embabel.dice.store.StoreCapability;
+import com.embabel.dice.store.UnsupportedCapabilityException;
+import com.embabel.dice.store.VectorMatch;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+class ScopedMemoryJavaInteropTest {
+
+    private static final ScopedReadSpec ALLOWED =
+            ScopedReadSpec.of(ContextReadScope.ofValues("session", "handbook"));
+    private static final String SHARED = "Escalate the invoice to billing";
+
+    @Test
+    void toolAndEagerReadsLabelBothCopiesAndStayInsideTheHostScope() {
+        InMemoryPropositionRepository store = new InMemoryPropositionRepository();
+        write(store, "session", "1", SHARED);
+        write(store, "handbook", "2", SHARED);
+        write(store, "other-tenant", "3", "Escalate the invoice with a private code");
+        write(store, "Session", "4", "Escalate the invoice with another private code");
+        ScopedReads view = store.scopedReads();
+
+        assertNull(StoreCapabilities.find(store, ScopedReads.class));
+        ScopedMemory memory = ScopedMemory.forReads(view, ALLOWED, ReadBudget.ofRows(2));
+        assertSame(memory, memory.tools().getFirst());
+        assertRecall(text(memory.call("""
+                {"query":"invoice","limit":2,"contextId":"other-tenant"}
+                """)));
+        assertRecall(memory.withEagerQuery(ReadQuery.of(ReadCriteria.empty()).withLimit(2)).contribution());
+        assertTrue(memory.narrowedBy(criteria -> criteria.withMinConfidence(1.0))
+                .contribution().contains("0 memories"));
+    }
+
+    @Test
+    void countOverflowIsReportedAndTheToolRejectsALimitBeyondTheHostBudget() {
+        InMemoryPropositionRepository store = new InMemoryPropositionRepository();
+        write(store, "session", "1", SHARED);
+        write(store, "handbook", "2", SHARED);
+        ScopedMemory memory = ScopedMemory.forReads(store.scopedReads(), ALLOWED, ReadBudget.ofRows(1));
+
+        assertTrue(memory.contribution().contains("more than 1"));
+        assertThrows(ReadBudgetExceededException.class, () -> memory.call("""
+                {"query":"invoice","limit":2}
+                """));
+        UnsupportedCapabilityException failure = assertThrows(UnsupportedCapabilityException.class,
+                () -> ScopedMemory.forReads(store.scopedReads(), ALLOWED,
+                        ReadBudget.ofRows(2).withMaxVectorCandidates(5)));
+        assertEquals(StoreCapability.SCOPED_VECTOR_SEARCH, failure.getCapability());
+    }
+
+    @Test
+    void localViewsRankOnlyScopedVectorsAndEnforceCandidateBudget(@TempDir Path directory) {
+        EmbeddingService embedder = mock(EmbeddingService.class);
+        when(embedder.embed("query")).thenReturn(new float[]{1, 0});
+        when(embedder.embed("closest")).thenReturn(new float[]{1, 0});
+        when(embedder.embed("allowed")).thenReturn(new float[]{0, 1});
+        when(embedder.embed("zero")).thenReturn(new float[]{0, 0});
+
+        InMemoryPropositionRepository inMemory = new InMemoryPropositionRepository(embedder);
+        JsonFilePropositionRepository json = new JsonFilePropositionRepository(directory.resolve("rows.json"), embedder);
+        List.of(inMemory, json).forEach(store -> {
+            write(store, "other-tenant", "0", "closest");
+            write(store, "handbook", "1", "allowed");
+            write(store, "session", "2", "zero");
+        });
+        for (ScopedReads reads : List.of(inMemory.scopedReads(), json.scopedReads())) {
+            ScopedVectorSearch search = assertInstanceOf(ScopedVectorSearch.class, reads);
+            ReadVectorSearchRequest request = ReadVectorSearchRequest.forText("query").withTopK(1);
+            ReadBudget rows = ReadBudget.ofRows(1);
+
+            assertThrows(ReadBudgetExceededException.class,
+                    () -> search.findNearest(ALLOWED, request, rows.withMaxVectorCandidates(1)));
+            List<VectorMatch> matches =
+                    search.findNearest(ALLOWED, request, rows.withMaxVectorCandidates(2));
+            assertEquals(List.of("1"), matches.stream().map(match -> match.getProposition().getId()).toList());
+            assertEquals(0.0, matches.getFirst().getScore().getCosine());
+            ScopedMemory memory = ScopedMemory.forReads(reads, ALLOWED, rows.withMaxVectorCandidates(2));
+            assertTrue(text(memory.call("{\"query\":\"query\"}")).contains("[handbook] allowed"));
+        }
+    }
+
+    private static void write(PropositionRepository store, String context, String id, String text) {
+        store.save(Proposition.draft(context, text, 0.9).withId(id).toProposition());
+    }
+
+    private static String text(Tool.Result result) {
+        return assertInstanceOf(Tool.Result.Text.class, result).getContent();
+    }
+
+    private static void assertRecall(String output) {
+        assertTrue(output.contains("[session] " + SHARED), output);
+        assertTrue(output.contains("[handbook] " + SHARED), output);
+        assertFalse(output.contains("private code"), output);
+    }
+}

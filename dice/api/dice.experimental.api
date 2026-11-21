@@ -43,6 +43,24 @@ public final class com/embabel/dice/agent/GovernanceTools$Companion {
 	public final fun asTools (Lcom/embabel/dice/governance/GovernanceOperationsService;)Ljava/util/List;
 }
 
+public final class com/embabel/dice/agent/ScopedMemory : com/embabel/agent/api/reference/LlmReference, com/embabel/agent/api/tool/Tool {
+	public static final field Companion Lcom/embabel/dice/agent/ScopedMemory$Companion;
+	public fun call (Ljava/lang/String;)Lcom/embabel/agent/api/tool/Tool$Result;
+	public fun contribution ()Ljava/lang/String;
+	public static final fun forReads (Lcom/embabel/dice/store/ScopedReads;Lcom/embabel/dice/store/ScopedReadSpec;Lcom/embabel/dice/store/ReadBudget;)Lcom/embabel/dice/agent/ScopedMemory;
+	public fun getDefinition ()Lcom/embabel/agent/api/tool/Tool$Definition;
+	public fun getDescription ()Ljava/lang/String;
+	public fun getName ()Ljava/lang/String;
+	public final fun narrowedBy (Ljava/util/function/UnaryOperator;)Lcom/embabel/dice/agent/ScopedMemory;
+	public fun notes ()Ljava/lang/String;
+	public fun tools ()Ljava/util/List;
+	public final fun withEagerQuery (Lcom/embabel/dice/store/ReadQuery;)Lcom/embabel/dice/agent/ScopedMemory;
+}
+
+public final class com/embabel/dice/agent/ScopedMemory$Companion {
+	public final fun forReads (Lcom/embabel/dice/store/ScopedReads;Lcom/embabel/dice/store/ScopedReadSpec;Lcom/embabel/dice/store/ReadBudget;)Lcom/embabel/dice/agent/ScopedMemory;
+}
+
 public final class com/embabel/dice/common/ExtractionRunTransitioned : com/embabel/dice/common/DiceEvent {
 	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRun;)V
 	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRun;Ljava/time/Instant;)V

@@ -189,6 +189,7 @@ public class com/embabel/dice/storage/DrivinePropositionRepository : com/embabel
 	public fun query (Lcom/embabel/dice/proposition/PropositionQuery;Z)Ljava/util/List;
 	public fun reembedAll ()Lcom/embabel/dice/proposition/PropositionReembedReport;
 	public fun save (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/proposition/Proposition;
+	public fun scopedReads ()Lcom/embabel/dice/store/ScopedReads;
 	public fun setProvenance (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/proposition/Proposition;
 	public fun subtractFoldedEvidence (Ljava/lang/String;Ljava/util/List;Ljava/util/Collection;Ljava/util/Collection;)Lcom/embabel/dice/proposition/Proposition;
 	public fun touchAccessed (Ljava/util/Collection;)V

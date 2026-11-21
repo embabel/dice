@@ -30,6 +30,8 @@ import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.matchesFilters
 import com.embabel.dice.provenance.ProvenanceEntry
+import com.embabel.dice.store.ScopedReads
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -54,7 +56,15 @@ class InMemoryPropositionRepository(
 
     private val propositions = ConcurrentHashMap<String, Proposition>()
     private val embeddings = ConcurrentHashMap<String, FloatArray>()
-    internal val scopedReads = LocalScopedReads { propositions.values }
+
+    /**
+     * Opens an opt-in read-only view. Each call through it requires a host-supplied spec and budget.
+     * The view also implements scoped vector search when this repository has an embedder.
+     */
+    @ApiStatus.Experimental
+    fun scopedReads(): ScopedReads = embeddingService?.let { embedder ->
+        LocalScopedReads.withVectors({ propositions.values }, embedder::embed, embeddings, embeddings::get)
+    } ?: LocalScopedReads { propositions.values }
 
     override val luceneSyntaxNotes: String
         get() = "no lucene support"
@@ -69,8 +79,10 @@ class InMemoryPropositionRepository(
      */
     override fun save(proposition: Proposition): Proposition {
         val embedding = embeddingService?.embed(proposition.text)
-        propositions[proposition.id] = proposition
-        embedding?.let { embeddings[proposition.id] = it }
+        synchronized(embeddings) {
+            propositions[proposition.id] = proposition
+            embedding?.let { embeddings[proposition.id] = it }
+        }
         return proposition
     }
 
@@ -192,9 +204,9 @@ class InMemoryPropositionRepository(
 
     override fun findAll(): List<Proposition> = propositions.values.toList()
 
-    override fun delete(id: String): Boolean {
+    override fun delete(id: String): Boolean = synchronized(embeddings) {
         embeddings.remove(id)
-        return propositions.remove(id) != null
+        propositions.remove(id) != null
     }
 
     /**
@@ -231,7 +243,7 @@ class InMemoryPropositionRepository(
      *
      * @param snapshot What to put back, as returned by [snapshot].
      */
-    internal fun restore(snapshot: Snapshot) {
+    internal fun restore(snapshot: Snapshot): Unit = synchronized(embeddings) {
         snapshot.propositions.forEach { (id, proposition) ->
             if (proposition == null) {
                 embeddings.remove(id)
@@ -301,7 +313,7 @@ class InMemoryPropositionRepository(
     /**
      * Clear all propositions and cached embeddings. Useful for testing.
      */
-    fun clear() {
+    fun clear(): Unit = synchronized(embeddings) {
         propositions.clear()
         embeddings.clear()
     }

@@ -88,13 +88,13 @@ class ScopedReadsKotlinTest {
     @Test
     fun `in memory reads only the authorized contexts`() {
         val store = InMemoryPropositionRepository()
-        verifyScopedReads(store, store.scopedReads)
+        verifyScopedReads(store, store.scopedReads())
     }
 
     @Test
     fun `JSON file reads only the authorized contexts`(@TempDir directory: Path) {
         val store = JsonFilePropositionRepository(directory.resolve("claims.json"))
-        verifyScopedReads(store, store.scopedReads)
+        verifyScopedReads(store, store.scopedReads())
     }
 
     private fun verifyScopedReads(store: PropositionStore, reads: ScopedReads) {
