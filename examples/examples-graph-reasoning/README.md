@@ -42,9 +42,9 @@ relations projected, asking the same approval rule returns `Evidence.Missing`.
 
 1. Resolve the tenant or account from the authenticated request. Use that context for
    `GraphQuery.of(store, contextId)` and to select the propositions that enter the Prolog
-   projection. Keep each context's projected facts separate. `RuleGoal.withContext` labels
-   the evidence. The propositions supplied to the projection determine which facts the rule
-   can use.
+   projection. Keep each context's projected facts separate. The projection input determines
+   which facts the rule can use. `RuleGoal.withContext` records the requested context in
+   `Evidence.Missing`.
 2. Version the application's approval policy and record that version with its decisions. Use the
    conclusion's recorded inputs to explain the result. The `theory` digest covers the loaded
    rules and facts, including the projected confidence and grounding facts. It can change when
