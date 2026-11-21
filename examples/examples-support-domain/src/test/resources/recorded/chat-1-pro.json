@@ -1,0 +1,15 @@
+{
+  "propositions": [
+    {
+      "text": "Acme is on the Pro plan",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" },
+        { "span": "Pro plan", "type": "Plan", "role": "OBJECT" }
+      ],
+      "confidence": 0.95,
+      "decay": 0.005,
+      "importance": 0.8,
+      "reasoning": "Stated directly by the customer"
+    }
+  ]
+}

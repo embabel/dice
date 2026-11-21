@@ -38,6 +38,7 @@
         <module>examples-governed-chat</module>
         <module>examples-graph-reasoning</module>
         <module>examples-multi-context-memory</module>
+        <module>examples-support-domain</module>
     </modules>
 
     <properties>
