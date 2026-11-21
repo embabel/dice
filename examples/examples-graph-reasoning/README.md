@@ -45,7 +45,8 @@ relations projected, asking the same approval rule returns `Evidence.Missing`.
    projection. Keep each context's projected facts separate.
 2. Version the application's approval policy and record that version with its decisions. Use the
    conclusion's recorded inputs to explain the result. The `theory` digest covers the loaded
-   rules and facts, so it can change when the projected facts change.
+   rules and facts, including the projected confidence and grounding facts. It can change when
+   the facts change.
 3. Handle `Evidence.Missing` before deciding. Check whether the required facts were present and
    satisfied the projection floor. In an approval flow, send an unresolved request for review.
 
