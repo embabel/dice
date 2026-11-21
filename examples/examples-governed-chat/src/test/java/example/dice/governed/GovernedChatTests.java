@@ -27,6 +27,7 @@ import org.springframework.context.annotation.Import;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -99,5 +100,13 @@ class GovernedChatTests {
                     assertThat(record.getReason()).contains("confidence");
                 });
         assertThat(chat.beliefsAt(Instant.now())).containsExactlyInAnyOrder(rule.getId(), accepted.getId());
+        var moreRules = IntStream.rangeClosed(1, 12)
+                .mapToObj(number -> facts.save(Proposition.draft(
+                        GovernedChat.CONTEXT, "Approved refund condition " + number, 0.95).toProposition()))
+                .map(Proposition::getId).toList();
+        moreRules.forEach(chat::pin);
+        assertThat(chat.promptMemory().getSelected()).extracting(Proposition::getId)
+                .hasSize(moreRules.size() + 1).contains(rule.getId()).containsAll(moreRules);
+
     }
 }

@@ -70,7 +70,7 @@ class GovernedChatApplication {
                         new ConfidenceGate(0.6), new ConflictClassificationGate())))
                 .withListener(new AuditEventListener(audit));
         var memory = Memory.forContext(GovernedChat.CONTEXT).withRepository(facts)
-                .withEagerQuery(query -> query.withStatuses(PropositionStatus.ACTIVE).withLimit(10))
+                .withEagerQuery(query -> query.withStatuses(PropositionStatus.ACTIVE).withMinConfidence(0.0))
                 .withContextBudget(ContextBudget.ofTokens(4));
         return new GovernedChat(pipeline, source, gates, facts, entities, audit, memory);
     }

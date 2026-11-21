@@ -39,8 +39,12 @@ or returning its grounding. Return a review result to the application for routin
 | Condition | Application behavior |
 |---|---|
 | A claim conflicts with the pinned policy | Return the proposed claim for review. Keep the approved rule available to the prompt. |
-| The pinned facts exceed the prompt budget | Use the selection's `isOverBudget()` flag to handle the overflow before sending the prompt. DICE keeps the pinned facts. |
+| The pinned facts exceed the prompt budget | Use the selection's `isOverBudget()` flag to handle the overflow before sending the prompt. The selection keeps every pinned candidate. |
 | A request predates audit coverage | Return an unavailable-history response. Use the baseline cutover time to tell the caller what history is covered. |
+
+This small example queries every active claim before applying the prompt budget. For a larger
+context, query the pinned claims separately, add a bounded set of ordinary candidates and call
+`ContextBudget.select`. The token budget controls the selected text. Set read limits separately.
 
 For restart-safe history, use the Drivine audit store with the same transaction manager as
 the proposition repository. Stop writes to the context, capture its complete contents and
