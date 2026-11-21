@@ -157,8 +157,9 @@ and resolves the capabilities on the store.
 
 [source,java]
 ----
+var repository = new InMemoryPropositionRepository(embeddingService);
 ReadBudget budget = ReadBudget.ofRows(200).withMaxVectorCandidates(5_000);
-ScopedReads reads = repository.scopedReads(); // A repository configured with an embedder
+ScopedReads reads = repository.scopedReads();
 ScopedVectorSearch search = reads instanceof ScopedVectorSearch vectors ? vectors : null;
 ----
 
@@ -168,13 +169,11 @@ The reading code is handed `reads`, `search`, a spec and the budget.
 ----
 ReadCriteria aboutAlice = ReadCriteria.empty().withEntityId("alice");
 
-if (reads != null) {
-    List<Proposition> recent = reads.query(
-            active, ReadQuery.of(aboutAlice).orderedByCreated().withLimit(20), budget);
-    int total = reads.count(active, aboutAlice, budget);
-    List<Proposition> mentions = reads.matchKeywords(
-            active, ReadKeywordQuery.forTokens("peanut", "allergy").withLimit(10), budget);
-}
+List<Proposition> recent = reads.query(
+        active, ReadQuery.of(aboutAlice).orderedByCreated().withLimit(20), budget);
+int total = reads.count(active, aboutAlice, budget);
+List<Proposition> mentions = reads.matchKeywords(
+        active, ReadKeywordQuery.forTokens("peanut", "allergy").withLimit(10), budget);
 if (search != null && budget.isVectorSearchAllowed()) {
     List<VectorMatch> nearest = search.findNearest(
             active, ReadVectorSearchRequest.forText("What does Alice eat?").withTopK(5), budget);
@@ -198,7 +197,7 @@ Each read takes criteria of its own, which the store applies along with the filt
 `ReadCriteria.empty()` adds none. Criteria have no context field. To read one context of a spec,
 pass `spec.narrowToContexts(...)`.
 
-A request that a store could not run cannot be built. `withLimit` and `withTopK` reject a value
+Request builders validate arguments. `withLimit` and `withTopK` reject a value
 below 1. `ReadKeywordQuery.forTokens` rejects an empty list and a null or blank token. It holds the
 tokens lower-cased, with duplicates dropped, and a proposition matches when its text contains a
 token, ignoring case. `count` returns at most `maxRows`. A count that would be larger is refused.
