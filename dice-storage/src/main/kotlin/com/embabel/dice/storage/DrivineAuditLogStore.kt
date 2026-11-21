@@ -29,6 +29,7 @@ import com.fasterxml.jackson.annotation.JsonAutoDetect
 import com.fasterxml.jackson.annotation.PropertyAccessor
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import org.drivine.connection.DatabaseType
 import org.drivine.manager.PersistenceManager
 import org.jetbrains.annotations.ApiStatus
 import org.springframework.transaction.PlatformTransactionManager
@@ -61,9 +62,10 @@ class DrivineAuditLogStore @JvmOverloads constructor(
 
     override val transactionParticipation = AuditTransactionParticipation.JOINS_HOST_TRANSACTION
     private val transactions = TransactionTemplate(transactionManager)
-    private val committedEvents = TransactionTemplate(transactionManager).apply {
+    private val independentWrites = TransactionTemplate(transactionManager).apply {
         propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
     }
+    private val sqliteReadOnlyAccess = TransactionTemplate(transactionManager).apply { isReadOnly = true }
 
     override fun initializeBaseline(contextId: String, cutover: Instant, completeSnapshot: Collection<Proposition>) {
         val claims = baselineOf(contextId, completeSnapshot)
@@ -97,7 +99,7 @@ class DrivineAuditLogStore @JvmOverloads constructor(
     }
 
     override fun appendAfterCommit(contextId: String, entry: AuditEntry): AuditRecord =
-        transaction(committedEvents) { append(contextId, entry) }
+        transaction(independentWrites) { append(contextId, entry) }
 
     override fun eraseContext(contextId: String, actor: AuditActorRef?): AuditRecord = locked(contextId) { state ->
         if (state.cutover == null && state.sequence > 0 && state.lastErasure == state.sequence) {
@@ -127,6 +129,17 @@ class DrivineAuditLogStore @JvmOverloads constructor(
 
     override fun <T> duringWrite(contextId: String, action: Supplier<T>): T =
         locked(contextId) { action.get() }
+
+    override fun duringAccessTouch(contextId: String, action: Runnable) {
+        val boundary = when {
+            !TransactionSynchronizationManager.isCurrentTransactionReadOnly() -> transactions
+            // SQLite's first statement takes the file's writer lock even in a read-only Spring
+            // transaction. The same connection can refresh access metadata and hold the audit fence.
+            persistenceManager.type == DatabaseType.SQLITE -> sqliteReadOnlyAccess
+            else -> independentWrites
+        }
+        locked(contextId, boundary) { action.run() }
+    }
 
     override fun <T> duringPropositionCreations(
         contextId: String,
@@ -237,9 +250,13 @@ class DrivineAuditLogStore @JvmOverloads constructor(
             }
         }
 
-    private fun <T> locked(contextId: String, action: (ContextState) -> T): T {
+    private fun <T> locked(
+        contextId: String,
+        boundary: TransactionTemplate = transactions,
+        action: (ContextState) -> T,
+    ): T {
         requireContext(contextId)
-        return transaction { action(checkNotNull(lock(contextId, create = true))) }
+        return transaction(boundary) { action(checkNotNull(lock(contextId, create = true))) }
     }
 
     private fun lock(contextId: String, create: Boolean, includeBaseline: Boolean = false): ContextState? {

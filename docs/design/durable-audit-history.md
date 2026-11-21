@@ -123,6 +123,11 @@ extraction events are recorded in their own transaction after the run commits. J
 writes use strict failure handling. `LOG_AND_CONTINUE` applies to best-effort sinks and
 post-commit events.
 
+Access timestamp refresh holds the same context fence. It joins a writable host transaction.
+With a Spring read-only transaction, SQLite refreshes on the caller's connection and rolls back
+with it. Its first statement already reserves the file's writer slot. Neo4j opens a separate
+writable transaction for the refresh.
+
 The sink samples `recordedAt` when assigning the audit position inside the write transaction.
 It preserves nondecreasing timestamps within a context when the clock moves backward.
 An outer transaction may commit later than the timestamps attached to its records. Replay

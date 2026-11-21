@@ -444,6 +444,52 @@ class SqliteAuditedAccessIntegrationTest {
         assertEquals(originalBeliefSet, store.beliefSetAsOf(contextId, cutover))
     }
 
+    @Test
+    fun `audited access refresh preserves standalone read-only transaction behavior on SQLite`() {
+        assertTrue(AopUtils.isAopProxy(propositions))
+        val contextId = UUID.randomUUID().toString()
+        val cutover = Instant.parse("2026-01-02T00:00:00Z")
+        val store = DrivineAuditLogStore(persistenceManager, transactionManager, Clock.fixed(cutover, ZoneOffset.UTC))
+        val audited = AuditingPropositionRepository.wrapping(
+            propositions, store, AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE, propositions.auditCanonicalLookup(),
+        )
+        val control = Proposition(
+            id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
+            text = "Standalone access refresh control", mentions = emptyList(), confidence = 0.8,
+            lastAccessed = cutover.minusSeconds(1),
+        )
+        val live = control.copy(id = UUID.randomUUID().toString(), text = "Audited access refresh")
+        store.initializeBaseline(contextId, cutover, emptyList())
+        audited.saveAll(listOf(control, live))
+        val history = store.query(contextId, 0, 10)
+        val baseline = store.beliefSetAsOf(contextId, cutover)
+        val readOnly = TransactionTemplate(transactionManager).apply { isReadOnly = true }
+
+        readOnly.executeWithoutResult { transaction ->
+            assertEquals(control.lastAccessed, propositions.findById(control.id)?.lastAccessed)
+            propositions.touchAccessed(listOf(control.id))
+            assertTrue(requireNotNull(propositions.findById(control.id)).lastAccessed > control.lastAccessed)
+            transaction.setRollbackOnly()
+        }
+        assertEquals(control.lastAccessed, propositions.findById(control.id)?.lastAccessed)
+
+        readOnly.executeWithoutResult { transaction ->
+            assertEquals(live.lastAccessed, audited.findById(live.id)?.lastAccessed)
+            audited.touchAccessed(listOf(live.id, "absent"))
+            assertTrue(requireNotNull(audited.findById(live.id)).lastAccessed > live.lastAccessed)
+            transaction.setRollbackOnly()
+        }
+        assertEquals(live.lastAccessed, audited.findById(live.id)?.lastAccessed)
+
+        readOnly.executeWithoutResult {
+            assertEquals(live.lastAccessed, audited.findById(live.id)?.lastAccessed)
+            audited.touchAccessed(listOf(live.id))
+        }
+        assertTrue(requireNotNull(audited.findById(live.id)).lastAccessed > live.lastAccessed)
+        assertEquals(history, store.query(contextId, 0, 10))
+        assertEquals(baseline, store.beliefSetAsOf(contextId, cutover))
+    }
+
     companion object {
         @JvmStatic
         @DynamicPropertySource

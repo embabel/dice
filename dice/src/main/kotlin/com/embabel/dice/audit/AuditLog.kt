@@ -56,6 +56,12 @@ interface AuditSink {
     fun <T> duringWrite(contextId: String, action: Supplier<T>): T
 
     /**
+     * Fence a backend-native access timestamp update. The sink can select a compatible transaction
+     * boundary for this metadata-only operation when a host transaction is read-only.
+     */
+    fun duringAccessTouch(contextId: String, action: Runnable) = duringWrite(contextId) { action.run() }
+
+    /**
      * Fence first assignments of globally keyed proposition IDs across contexts. Called inside
      * [duringWrite]. Acquire all requested fences in a stable order and hold them until the
      * same write boundary completes.

@@ -115,13 +115,15 @@ open class AuditingPropositionRepository private constructor(
         } else null
         val byContext = ids.distinct().mapNotNull(delegate::findById).groupBy { it.contextId.value }
         for ((contextId, propositions) in byContext) {
-            sink.duringWrite(contextId) {
+            val refresh = Runnable {
                 val liveIds = propositions.mapNotNull { currentInContext(it.id, contextId)?.id }
                 if (liveIds.isNotEmpty()) mutate(contextId) {
                     if (joinedTouch != null) joinedTouch.touchAccessedInWrite(contextId, liveIds)
                     else delegate.touchAccessed(liveIds)
                 }
             }
+            if (joinedTouch != null) sink.duringAccessTouch(contextId, refresh)
+            else sink.duringWrite(contextId) { refresh.run() }
         }
     }
 
