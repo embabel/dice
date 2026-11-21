@@ -16,6 +16,10 @@
 package com.embabel.dice.proposition
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.audit.AuditRunContext
+import com.embabel.dice.audit.AuditRunKind
+import com.embabel.dice.audit.AuditRunRef
+import java.util.UUID
 
 /**
  * Storage-agnostic [DecaySweeper] over a [PropositionRepository], plus an optional hook to
@@ -78,10 +82,13 @@ abstract class DecayManager(
                 DecaySweepResult.NoOp(emptyReason)
             } else {
                 val decisions = targets.map { it to config.policy.evaluate(it) }
+                val run = AuditRunRef(AuditRunKind.DECAY, UUID.randomUUID().toString())
+                fun save(proposition: Proposition): Proposition =
+                    AuditRunContext.withRun(proposition.contextId.value, run) { repository.save(proposition) }
 
                 val revived = decisions
                     .filter { it.second == PropositionStatus.ACTIVE }
-                    .map { repository.save(it.first.withStatus(PropositionStatus.ACTIVE)) }
+                    .map { save(it.first.withStatus(PropositionStatus.ACTIVE)) }
 
                 val toStale = decisions
                     .filter { it.second == PropositionStatus.STALE }
@@ -94,10 +101,12 @@ abstract class DecayManager(
                         .filter { it.first.status == PropositionStatus.STALE && it.second != PropositionStatus.ACTIVE }
                         .map { it.first }
                     pruned = (toStale + alreadyStale).distinctBy { it.id }
-                    pruned.forEach { repository.delete(it.id) }
+                    pruned.forEach { proposition ->
+                        AuditRunContext.withRun(proposition.contextId.value, run) { repository.delete(proposition.id) }
+                    }
                     transitioned = emptyList()
                 } else {
-                    transitioned = toStale.map { repository.save(it.withStatus(PropositionStatus.STALE)) }
+                    transitioned = toStale.map { save(it.withStatus(PropositionStatus.STALE)) }
                     pruned = emptyList()
                 }
 

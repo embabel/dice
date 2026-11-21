@@ -1,3 +1,13 @@
+public abstract class com/embabel/dice/conformance/AbstractAuditLogContractTest {
+	public fun <init> ()V
+	public fun aFencedNewCutoverRecoversInvalidatedCoverage ()V
+	public fun completeBaselinesRejectForeignAndDuplicateRows ()V
+	public fun concurrentAppendsAllocateOnePositionPerRecord ()V
+	public fun knownGapsAndInconsistentBeforeImagesFailClosed ()V
+	protected abstract fun log ()Lcom/embabel/dice/audit/AbstractAuditLog;
+	public fun updatesAndDeletionsReplayAndErasureLeavesOneScopedTombstone ()V
+}
+
 public abstract class com/embabel/dice/conformance/AbstractChunkHistoryStoreContractTest {
 	public fun <init> ()V
 	public fun aBookmarkIsTrackedPerContext ()V

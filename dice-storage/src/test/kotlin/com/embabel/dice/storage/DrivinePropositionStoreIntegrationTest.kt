@@ -2783,6 +2783,20 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals(old, reloadedC.lastAccessed, "an untouched proposition's lastAccessed must be unchanged")
     }
 
+    @Test
+    fun `touchAccessed commits outside a caller's Neo4j read transaction`() {
+        val old = Instant.now().minus(Duration.ofDays(30))
+        val saved = repository.save(prop("fact read in a transaction", contentRevised = old, lastAccessed = old))
+
+        TransactionTemplate(transactionManager).apply { isReadOnly = true }.executeWithoutResult { status ->
+            assertEquals(old, repository.findById(saved.id)!!.lastAccessed)
+            repository.touchAccessed(listOf(saved.id))
+            status.setRollbackOnly()
+        }
+
+        assertTrue(repository.findById(saved.id)!!.lastAccessed.isAfter(old))
+    }
+
     /** Access refreshes decay: a touched DECAYING proposition's effective confidence recovers. */
     @Test
     fun `touchAccessed refreshes decay for a DECAYING proposition`() {

@@ -636,9 +636,9 @@ internal class StoreBackendCheck(environment: Environment, beanFactory: Configur
             }
         } else if (StoreBackend.known(value)) {
             logger.warn(
-                "{} is deprecated and will be removed. With dice-starter-neo4j on the classpath, DICE uses its " +
-                    "Drivine stores when Drivine is configured and its in-memory stores otherwise, so the " +
-                    "property can go. Keep '{}' only to force the in-memory stores while Drivine is present.",
+                "{} is deprecated and will be removed. Enable automatic store detection before removing it. " +
+                    "With detection enabled, DICE uses its Drivine stores when Drivine is configured and its " +
+                    "in-memory stores otherwise. Keep '{}' to force the in-memory stores when Drivine is present.",
                 StoreBackend.TYPE_PROPERTY,
                 StoreBackend.IN_MEMORY,
             )
@@ -646,8 +646,9 @@ internal class StoreBackendCheck(environment: Environment, beanFactory: Configur
             logger.warn(
                 // Quoted, so a stray blank around 'graph' shows up as the reason.
                 "{}='{}' isn't a value DICE knows, so DICE is using its in-memory stores. The accepted values " +
-                    "are '{}' and '{}'. The property is deprecated and will be removed: with dice-starter-neo4j " +
-                    "on the classpath and the property unset, DICE picks its stores from whether Drivine is configured.",
+                    "are '{}' and '{}'. The property is deprecated and will be removed. " +
+                    "With automatic store detection enabled and the property unset, DICE picks its stores " +
+                    "based on whether Drivine is configured.",
                 StoreBackend.TYPE_PROPERTY,
                 value,
                 StoreBackend.GRAPH,
