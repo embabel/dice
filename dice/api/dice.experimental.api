@@ -684,6 +684,46 @@ public final class com/embabel/dice/evidence/RetrieverId$Companion {
 	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RetrieverId;
 }
 
+public final class com/embabel/dice/evidence/RuleDeclaration {
+	public static final field Companion Lcom/embabel/dice/evidence/RuleDeclaration$Companion;
+	public synthetic fun <init> (Ljava/lang/String;Ljava/util/List;Ljava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getArity ()I
+	public final fun getGuards ()Ljava/util/List;
+	public final fun getHead ()Ljava/lang/String;
+	public final fun getInputs ()Ljava/util/List;
+	public final fun getPredicate ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleDeclaration;
+	public fun toString ()Ljava/lang/String;
+	public final fun withGuard (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleDeclaration;
+	public final fun withInput (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleDeclaration;
+}
+
+public final class com/embabel/dice/evidence/RuleDeclaration$Companion {
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleDeclaration;
+}
+
+public final class com/embabel/dice/evidence/RuleGoal {
+	public static final field Companion Lcom/embabel/dice/evidence/RuleGoal$Companion;
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getArity ()I
+	public final fun getContextId ()Ljava/lang/String;
+	public final fun getGoal ()Ljava/lang/String;
+	public final fun getLimit ()I
+	public final fun getPredicate ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleGoal;
+	public fun toString ()Ljava/lang/String;
+	public final fun withContext (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleGoal;
+	public final fun withLimit (I)Lcom/embabel/dice/evidence/RuleGoal;
+}
+
+public final class com/embabel/dice/evidence/RuleGoal$Companion {
+	public final fun of (Ljava/lang/String;)Lcom/embabel/dice/evidence/RuleGoal;
+}
+
 public final class com/embabel/dice/evidence/Searched {
 	public static final field Companion Lcom/embabel/dice/evidence/Searched$Companion;
 	public synthetic fun <init> (Ljava/util/Set;Ljava/lang/String;Ljava/util/Map;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -919,6 +959,21 @@ public final class com/embabel/dice/governance/TypeRenameDto {
 	public final fun getBefore ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/projection/prolog/PrologEvidenceProvider : com/embabel/dice/evidence/EvidenceProvider {
+	public static final field Companion Lcom/embabel/dice/projection/prolog/PrologEvidenceProvider$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/projection/prolog/PrologProjectionResult;Lcom/embabel/dice/projection/prolog/PrologSchema;Ljava/util/List;Lcom/embabel/dice/proposition/PropositionStore;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun conclusions (Lcom/embabel/dice/evidence/RuleGoal;)Ljava/util/List;
+	public fun evidence (Lcom/embabel/dice/evidence/RuleGoal;)Lcom/embabel/dice/evidence/Evidence;
+	public synthetic fun evidence (Ljava/lang/Object;)Lcom/embabel/dice/evidence/Evidence;
+	public static final fun of (Lcom/embabel/dice/projection/prolog/PrologProjectionResult;Lcom/embabel/dice/projection/prolog/PrologSchema;)Lcom/embabel/dice/projection/prolog/PrologEvidenceProvider;
+	public final fun withDeclaration (Lcom/embabel/dice/evidence/RuleDeclaration;)Lcom/embabel/dice/projection/prolog/PrologEvidenceProvider;
+	public final fun withRepository (Lcom/embabel/dice/proposition/PropositionStore;)Lcom/embabel/dice/projection/prolog/PrologEvidenceProvider;
+}
+
+public final class com/embabel/dice/projection/prolog/PrologEvidenceProvider$Companion {
+	public final fun of (Lcom/embabel/dice/projection/prolog/PrologProjectionResult;Lcom/embabel/dice/projection/prolog/PrologSchema;)Lcom/embabel/dice/projection/prolog/PrologEvidenceProvider;
 }
 
 public abstract interface class com/embabel/dice/projection/prolog/PrologProjector : com/embabel/dice/proposition/Projector {
