@@ -32,8 +32,12 @@ commitment. They get pinned at the 1.0 release.
 | DICE does not pin Spring Boot itself.
 
 | Neo4j
-| Reached through Drivine; the release POM declares its version.
-| Only needed for the graph backend. The in-memory and JSON-file backends need no Neo4j.
+| Driver supplied by Drivine
+| Used with a Neo4j datasource.
+
+| SQLite
+| `sqlite-jdbc` supplied by `dice-starter-sqlite`
+| Used with a local SQLite datasource.
 
 | Kotlin
 | 2.2.21 (every module)
@@ -84,13 +88,17 @@ commitment. They get pinned at the 1.0 release.
 | `dice` + `spring-webmvc`
 | Opt-in
 
-| Graph-backed storage
-| `dice-storage` (+ `dice-storage-autoconfigure`) + Neo4j
+| <<features-graph-storage>>
+| `dice-storage` with Drivine and Neo4j or SQLite
 | Stable
 
-| Vector index
-| `dice-storage-autoconfigure` + graph backend + `Ai` bean
+| <<features-vector-index>>
+| `dice-storage-autoconfigure` with Neo4j and an embedding model
 | Stable
+
+| <<features-audit-history>>
+| `dice-storage` with a registered audit schema
+| Experimental
 
 | Decay tick
 | `dice-storage-autoconfigure`

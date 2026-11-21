@@ -1,0 +1,56 @@
+[[features-audit-history]]
+=== Proposition audit history
+
+*Activation*: Register the `DiceStorageSchema` returned by `AuditLogSchema.forRegistration()`
+and add it to a Drivine `SchemaCatalog` targeted at the proposition datasource. Construct a
+`DrivineAuditLogStore` and wrap the repository with `AuditingPropositionRepository.wrapping(...)`.
+
+*Availability*: `dice` provides the audit APIs. `dice-storage` persists history on Neo4j and SQLite.
+
+[WARNING]
+====
+Experimental. The API may change before 1.0.
+====
+
+The application authorizes access to each context and routes all proposition writes through the
+audited repository. Use the direct manager returned by `PersistenceManagerFactory.get(datasource)`
+and the same Spring transaction manager as the proposition repository. For schema registration and
+transaction behavior, see the
+https://github.com/embabel/dice/blob/main/docs/design/durable-audit-history.md[Drivine audit setup].
+
+==== Establish coverage
+
+Fence every writer to the context during cutover. Pause writers that still use the original
+repository. Take a complete snapshot under the audit fence, including propositions in non-active
+states. Resume writes through the audited repository.
+
+[source,java]
+----
+var audit = new DrivineAuditLogStore(
+        persistenceManagerFactory.get(datasource), transactionManager);
+var audited = AuditingPropositionRepository.wrapping(
+        repository, audit, attributionProvider, AuditFailurePolicy.FAIL_WRITE,
+        repository.auditCanonicalLookup());
+
+audit.duringWrite(contextId, () -> {
+    var cutover = Instant.now();
+    var snapshot = repository.query(PropositionQuery.againstContext(contextId));
+    audit.initializeBaseline(contextId, cutover, snapshot);
+    return null;
+});
+----
+
+Pass an empty snapshot only after verifying that the context contains no propositions.
+
+==== Read recorded and historical state
+
+Use `history(contextId, propositionId)` for the records of one proposition. Use
+`beliefSetAsOf(contextId, instant)` to reconstruct the context at an audit write time.
+Call historical queries outside any host transaction for a committed view.
+
+Replay covers text, lifecycle status, raw confidence, importance, pinning and temporal metadata.
+The live repository provides grounding, provenance and the metadata map for the current
+proposition. For a covered instant, `asOf(contextId, propositionId, instant)` returns `null` if
+the proposition was absent.
+Historical queries throw `AuditCoverageException` when the requested instant predates the
+baseline, exceeds the observed horizon or lacks a complete audit trail.

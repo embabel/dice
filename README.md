@@ -1728,7 +1728,8 @@ The tool surface is deliberately minimal: one freeform `query` plus an optional 
 - **No parameters** or `{}`: Returns all memories ordered by confidence.
 
 **Every returned line carries two compact annotations when available:**
-- `— source: …` — provenance, supplied by an optional [`ProvenanceResolver`](src/main/kotlin/com/embabel/dice/agent/ProvenanceResolver.kt)
+- The `source:` annotation comes from an optional
+  [`ProvenanceResolver`](dice/src/main/kotlin/com/embabel/dice/agent/ProvenanceResolver.kt)
   wired via `withProvenance(...)`. Propositions are extracted from sources (emails, meetings, docs); the
   resolver turns a proposition's lineage into a readable descriptor (subject / title / name) so the LLM
   can cite where a fact came from straight from a recall — no separate citation tool. This is **not** a

@@ -6,8 +6,7 @@ The module table and individual READMEs say which stores each example uses.
 Examples are written in Java. A Kotlin example appears where Kotlin has its own entry point, such
 as a typed `ContextId` or a builder block.
 
-The model's replies are recorded in the repository and replayed by a scripted model, so the build
-needs no API key and no running service.
+The examples replay recorded model replies. They need no model API key.
 
 ## Modules
 
@@ -48,7 +47,8 @@ Build one example and what it depends on:
 ./mvnw -B -f examples/pom.xml -pl examples-java -am verify
 ```
 
-JDK 21 is the only prerequisite.
+Use JDK 21. Run Docker to include the Neo4j tests. Testcontainers skips those tests when Docker
+is unavailable.
 
 The Build workflow builds the examples right after the library, on every pull request and every
 push. A change to the library's public API that breaks an example fails there, so fix the example

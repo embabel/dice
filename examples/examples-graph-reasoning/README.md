@@ -5,7 +5,7 @@ follows a graph path from Acme to Dana, then asks a rule who should approve the 
 
 ## Run
 
-Install DICE at the repository root, then run the example:
+[Install DICE](../README.md#build), then run the example from the repository root.
 
 ```bash
 ./mvnw -B -f examples/pom.xml -pl examples-graph-reasoning -am verify

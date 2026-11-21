@@ -75,6 +75,16 @@ than editing facts.
 
 `PrologTypes` holds the type mapping between DICE's model and Prolog terms.
 
+==== Derived evidence
+
+Build a `PrologEvidenceProvider` from projected facts and declare each rule's evidence inputs.
+Call `evidence(RuleGoal.of(...))` to ask for a conclusion. A derived result carries the rule
+reference, bindings and input proposition IDs. A lookup that cannot return a supported conclusion
+yields `Evidence.Missing`. Keep the outcome unresolved when your application needs evidence to
+make a decision.
+
+The https://github.com/embabel/dice/tree/main/examples/examples-graph-reasoning[graph reasoning example] runs an approval rule and tests both outcomes.
+
 ==== The tuProlog pin
 
 DICE pins tuProlog to 1.0.4. This constrains DICE's build, not yours. If you bring your own

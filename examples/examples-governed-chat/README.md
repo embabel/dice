@@ -6,7 +6,7 @@ fact in the prompt and records what happened.
 
 ## Run
 
-Install DICE at the repository root, then run the example:
+[Install DICE](../README.md#build), then run the example from the repository root.
 
 ```bash
 ./mvnw -B -f examples/pom.xml -pl examples-governed-chat -am verify

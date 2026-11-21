@@ -12,10 +12,14 @@ never have to guess whether a feature is active.
 | Surface | Activation condition
 
 | <<features-graph-storage>>
-| `embabel.dice.store.type=graph`
+| `dice-starter-neo4j` or `dice-starter-sqlite` with a configured Drivine datasource. The
+deprecated `embabel.dice.store.type=graph` enables explicitly configured Drivine stores.
 
 | <<features-vector-index>>
-| `embabel.dice.store.vector-index.enabled=true` (on by default, graph backend only)
+| Neo4j with an embedding model. Enabled by default.
+
+| <<features-audit-history>>
+| Register the audit schema on the proposition datasource and wrap the repository. Experimental.
 
 | <<features-decay>>
 | `embabel.dice.store.decay.enabled=true` (on by default); `prune-stale` is `false`
@@ -42,6 +46,8 @@ never have to guess whether a feature is active.
 include::graph-storage.adoc[]
 
 include::vector-index.adoc[]
+
+include::audit-history.adoc[]
 
 include::decay.adoc[]
 
