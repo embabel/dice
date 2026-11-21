@@ -76,7 +76,7 @@ class GraphReasoningTests {
     }
 
     @Test
-    void walksTheShortestPathAndTracesAnEdgeToItsChat() {
+    void followsAPathAndTracesAnEdgeToItsChat() {
         var graph = GraphQuery.of(store, CONTEXT, 2);
         var tools = new GraphQueryTools(graph);
 
@@ -100,12 +100,28 @@ class GraphReasoningTests {
         var recorded = store.query(PropositionQuery.againstContext(CONTEXT));
         var dictionary = DataDictionary.fromClasses("support");
         var projector = RelationBasedGraphProjector.from(relations);
-        assertThat(projector.projectAll(recorded, dictionary).getProjected()).hasSize(2);
+        var schema = PrologSchema.Companion.withRules(RULE, List.of());
+        var prologProjector = new DefaultPrologProjector(
+                /* graphProjector */ null, schema, /* includeConfidence */ true, /* includeGrounding */ true);
+        var declaration = RuleDeclaration.of("approver(Customer, Admin)")
+                .withInput("has_account(Customer, Account)")
+                .withInput("administers(Admin, Account)")
+                .withInput("uses(Account, basic)");
+        var goal = RuleGoal.of("approver(acme, Admin)").withContext(CONTEXT);
+
+        var defaultProjection = prologProjector.projectAll(projector.projectAll(recorded, dictionary).getProjected());
+        assertThat(defaultProjection.getFacts()).extracting(PrologFact::getPredicate)
+                .containsExactlyInAnyOrder("has_account", "administers");
+        var defaultProvider = PrologEvidenceProvider.of(defaultProjection, schema)
+                .withDeclaration(declaration)
+                .withRepository(store);
+        assertThat(defaultProvider.evidence(goal)).isInstanceOfSatisfying(Evidence.Missing.class,
+                evidence -> assertThat(evidence.getSearched().getQuery()).isEqualTo("approver(acme, Admin)"));
+
         var edges = projector.withDefaultPolicy(0.8)
                 .projectAll(recorded, dictionary)
                 .getProjected();
-        var schema = PrologSchema.Companion.withRules(RULE, List.of());
-        var projection = new DefaultPrologProjector(null, schema, true, true).projectAll(edges);
+        var projection = prologProjector.projectAll(edges);
         var tools = new PrologTools(projection, schema, Map.of());
 
         assertThat(projection.getFacts()).extracting(PrologFact::getPredicate)
@@ -113,17 +129,13 @@ class GraphReasoningTests {
         assertThat(tools.queryProlog("approver(acme, Admin)")).contains("dana");
         assertThat(tools.checkFact("approver(acme, dana)")).contains("Yes");
 
-        var declaration = RuleDeclaration.of("approver(Customer, Admin)")
-                .withInput("has_account(Customer, Account)")
-                .withInput("administers(Admin, Account)")
-                .withInput("uses(Account, basic)");
         var provider = PrologEvidenceProvider.of(projection, schema)
                 .withDeclaration(declaration)
                 .withRepository(store);
 
         var stored = EvidenceConverter.create().fromPropositions(recorded, Searched.of(CONTEXT));
         assertThat(stored).isInstanceOf(Evidence.Recorded.class);
-        assertThat(provider.evidence(RuleGoal.of("approver(acme, Admin)").withContext(CONTEXT)))
+        assertThat(provider.evidence(goal))
                 .isInstanceOfSatisfying(Evidence.Derived.class, conclusion -> {
                     assertThat(conclusion.getConclusion()).isEqualTo("approver(acme, 'dana')");
                     assertThat(conclusion.getRule().getRuleId()).isEqualTo("approver/2");
