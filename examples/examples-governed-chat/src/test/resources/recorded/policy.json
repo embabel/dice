@@ -1,0 +1,18 @@
+{
+  "propositions": [
+    {
+      "text": "Only supervisors may approve refunds.",
+      "mentions": [
+        {
+          "span": "supervisors",
+          "type": "ApprovalRole",
+          "role": "SUBJECT"
+        }
+      ],
+      "confidence": 0.96,
+      "decay": 0,
+      "importance": 0.7,
+      "reasoning": "States the refund policy"
+    }
+  ]
+}
