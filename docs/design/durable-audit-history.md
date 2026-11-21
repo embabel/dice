@@ -31,8 +31,9 @@ non-active states. Transaction timestamps place decisions on the audit timeline.
    outcomes. Continue routing lifecycle writes, including decay, collection, and quarantine,
    through the wrapped repository. Configure the attribution provider with opaque identifiers and
    reason codes safe to retain. Custom maintenance can bind its run using `AuditRunContext.withRun`.
-   Drivine supplies its canonical lookup. Supply an `AuditCanonicalLookup` when using a custom
-   deduplicating repository or a decorator that hides the repository's lookup.
+   A deduplicating repository supplies its `AuditCanonicalLookup` explicitly. Use
+   `repository.auditCanonicalLookup()` for Drivine, including when audit is outside another
+   repository decorator.
 3. Fence all context writers, take a complete snapshot, and initialize the baseline in that
    interval. Pause workers or have all writers share the same sink's write fence. A host certifies
    snapshot completeness, including any data a customized reader might otherwise filter.
@@ -74,6 +75,14 @@ escaped recording.
 For Drivine on Neo4j or SQLite, register `AuditLogSchema.INSTANCE` as a `DiceStorageSchema` bean
 and construct `DrivineAuditLogStore` with the proposition repository's persistence manager and
 transaction manager. SQLite uses the same IMMEDIATE transaction mode as the DICE SQLite starter.
+
+```java
+var audit = new DrivineAuditLogStore(persistenceManager, transactionManager);
+var audited = AuditingPropositionRepository.wrapping(
+        repository, audit, attributionProvider, AuditFailurePolicy.FAIL_WRITE,
+        repository.auditCanonicalLookup());
+```
+
 The audit store declares `JOINS_HOST_TRANSACTION`. If a host transaction is already open, the
 live change and record join it and become visible on commit. Otherwise the audited boundary opens
 one for that context write. Use the same transaction manager and datasource for the repository

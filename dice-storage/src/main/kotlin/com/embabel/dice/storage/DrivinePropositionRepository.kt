@@ -139,7 +139,7 @@ class DrivinePropositionRepository(
      * [findClusters] Cypher. Defaults to the canonical [VECTOR_INDEX]; overridable only for tests.
      */
     private val vectorIndexName: String = VECTOR_INDEX,
-) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable, AuditCanonicalLookup {
+) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable {
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
 
@@ -792,9 +792,11 @@ class DrivinePropositionRepository(
         "contentHash" to edge.contentHash,
     )
 
-    @Transactional(readOnly = true)
-    override fun findAuditCanonicalId(input: Proposition): String? =
+    /** Supplies the same preimage lookup the save path uses, for an opted-in audit wrapper. */
+    @org.jetbrains.annotations.ApiStatus.Experimental
+    fun auditCanonicalLookup(): AuditCanonicalLookup = AuditCanonicalLookup { input ->
         if (input.text.isBlank()) null else findDuplicateId(input.contextId.value, input.text, input.id)
+    }
 
     /**
      * Id of an existing proposition with the same `contextId` and exact `text` (excluding the

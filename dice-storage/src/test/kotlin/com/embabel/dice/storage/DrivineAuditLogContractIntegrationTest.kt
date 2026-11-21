@@ -22,6 +22,7 @@ import com.embabel.dice.audit.AuditContextProvider
 import com.embabel.dice.audit.InMemoryAuditLog
 import com.embabel.dice.audit.AuditEntry
 import com.embabel.dice.audit.AuditEventListener
+import com.embabel.dice.audit.AuditFailurePolicy
 import com.embabel.dice.audit.AuditRunKind
 import com.embabel.dice.audit.AuditRunRef
 import com.embabel.dice.audit.AuditKind
@@ -126,7 +127,9 @@ abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
         val contextId = UUID.randomUUID().toString()
         val live = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
             text = "Durable duplicate", mentions = emptyList(), confidence = 0.8)
-        val repo = AuditingPropositionRepository.wrapping(propositions, store)
+        val repo = AuditingPropositionRepository.wrapping(
+            propositions, store, AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE, propositions.auditCanonicalLookup(),
+        )
         store.initializeBaseline(contextId, recordedAt, emptyList())
         repo.save(live)
 
@@ -156,7 +159,9 @@ abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
         val contextId = UUID.randomUUID().toString()
         val live = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
             text = "Durable proposition", mentions = emptyList(), confidence = 0.8)
-        val repo = AuditingPropositionRepository.wrapping(propositions, store)
+        val repo = AuditingPropositionRepository.wrapping(
+            propositions, store, AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE, propositions.auditCanonicalLookup(),
+        )
         assertThrows(IllegalStateException::class.java) {
             store.duringWrite(contextId) {
                 store.initializeBaseline(contextId, recordedAt, emptyList())
