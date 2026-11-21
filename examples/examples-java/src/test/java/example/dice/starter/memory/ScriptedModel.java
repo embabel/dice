@@ -30,19 +30,26 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * What the tests add to the application: the model they run against, and a record of the
  * DICE events published while they run.
+ *
+ * <p>It is public so the triage tests, which live in another package, can import it too.
  */
 @TestConfiguration(proxyBeanMethods = false)
-class ScriptedModel {
+public class ScriptedModel {
 
     /**
      * Replays one recorded reply per ticket text, matched on a few of its words, which the
-     * extraction prompt contains.
+     * extraction prompt contains. Triaging a ticket gets its own reply.
      *
      * @return the scripted model
      */
     @Bean
     ScriptedChatModel scriptedChatModel() {
         return ScriptedChatModel.script()
+                // A decision prompt starts its user message with {"input":" and the ticket text,
+                // which also holds the fragments below, so the triage rules come first.
+                .whenPromptContains("{\"input\":\"Follow-up with Ada Okafor", new ClassPathResource("recorded/triage-1057.json"))
+                .whenPromptContains("{\"input\":\"Ben Ruiz at Globex", new ClassPathResource("recorded/triage-2210.json"))
+                .whenPromptContains("{\"input\":\"Ada Okafor at Globex asked", new ClassPathResource("recorded/triage-2231-garbled.json"))
                 .whenPromptContains("Ada Okafor from Acme wrote in", new ClassPathResource("recorded/ticket-1042.json"))
                 .whenPromptContains("Follow-up with Ada Okafor", new ClassPathResource("recorded/ticket-1057.json"))
                 // The edited ticket-2210 keeps its opening words, so its rule comes first and
