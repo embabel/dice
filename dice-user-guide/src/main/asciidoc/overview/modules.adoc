@@ -22,6 +22,11 @@ one starter, and define no beans of their own.
   Add one entry under `database.datasources` and DICE uses its Drivine stores.
 | You want propositions in Neo4j.
 
+| `dice-starter-sqlite`
+| `dice-starter` plus `dice-storage`, Drivine's Spring Boot starter and the SQLite JDBC driver.
+  Add a SQLite data source under `database.datasources` and DICE uses its Drivine stores.
+| You want propositions in a local SQLite file.
+
 | `dice-starter-mcp`
 | `dice-starter` plus `dice-mcp-autoconfigure` and the agent framework's MCP server module.
 | You want DICE's tools exported over MCP.
@@ -34,8 +39,8 @@ one starter, and define no beans of their own.
 | Always. Everything else depends on it.
 
 | `dice-storage`
-| A Drivine/Neo4j implementation of `PropositionRepository`, `ChunkHistoryStore` and `DecayManager`.
-| You want propositions in Neo4j rather than in memory.
+| A Drivine implementation of `PropositionRepository`, `ChunkHistoryStore` and `DecayManager`.
+| You want propositions in Neo4j or SQLite.
 
 | `dice-storage-autoconfigure`
 | Spring Boot auto-configuration: the Drivine stores when Drivine is configured and the in-memory
@@ -69,8 +74,6 @@ one starter, and define no beans of their own.
 | You are writing a storage backend and want its tests to check the documented behaviour of each
   store interface. Add it at test scope.
 |===
-
-A SQLite starter will follow in a later release.
 
 `dice-integration-tests` is test-only: it holds the cross-feature end-to-end harness and is not
 published for consumption.

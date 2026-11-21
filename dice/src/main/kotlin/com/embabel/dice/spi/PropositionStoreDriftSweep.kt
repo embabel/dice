@@ -18,6 +18,10 @@ package com.embabel.dice.spi
 import org.jetbrains.annotations.ApiStatus
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.audit.AuditRunContext
+import com.embabel.dice.audit.AuditRunKind
+import com.embabel.dice.audit.AuditRunRef
+import com.embabel.dice.metamodel.MetamodelDiff
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.DiceMetadataKeys
 import com.embabel.dice.common.PropositionStatusChanged
@@ -26,6 +30,7 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStore
 import org.slf4j.LoggerFactory
 import java.time.Instant
+import java.util.UUID
 
 /**
  * The reference [DriftSweepCapable]: a working sweep over any [PropositionStore], and the executable
@@ -83,6 +88,23 @@ class PropositionStoreDriftSweep @JvmOverloads constructor(
             .filter { afterId == null || it.id > afterId }
             .take(limit)
     }
+
+    override fun sweep(
+        diff: MetamodelDiff,
+        policy: DriftQuarantinePolicy,
+        contextId: ContextId,
+        batchSize: Int,
+    ): QuarantineResult = AuditRunContext.withRun(contextId.value, AuditRunRef(AuditRunKind.DRIFT, UUID.randomUUID().toString())) {
+        super.sweep(diff, policy, contextId, batchSize)
+    }
+
+    @JvmOverloads
+    fun sweepValue(
+        diff: MetamodelDiff,
+        policy: DriftQuarantinePolicy,
+        contextIdValue: String,
+        batchSize: Int = DriftSweepCapable.DEFAULT_BATCH_SIZE,
+    ): QuarantineResult = sweep(diff, policy, ContextId(contextIdValue), batchSize)
 
     override fun applyQuarantine(decision: QuarantineDecision.Quarantined): Proposition {
         val saved = propositions.save(decision.proposition)

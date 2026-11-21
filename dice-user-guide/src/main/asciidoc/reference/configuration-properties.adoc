@@ -14,9 +14,8 @@ Read by `dice-storage-autoconfigure`.
 | `embabel.dice.store.type`
 | `String`
 | `in-memory`
-| *Deprecated.* Without `dice-starter-neo4j`, the default is what you get: the in-memory stores, as it
-  always was, even if the application uses Drivine for its own data. Detection applies only with
-  `dice-starter-neo4j` on the classpath and the property unset (blank counts as unset): DICE then uses
+| *Deprecated.* The default is in-memory storage. With either `dice-starter-neo4j` or
+  `dice-starter-sqlite` on the classpath and the property unset (blank counts as unset), DICE uses
   its Drivine stores when the application has a Drivine `PersistenceManager` bean, and its in-memory
   stores otherwise. A set value is still honoured for now, with or without the starter. `in-memory`
   forces the in-memory stores even when Drivine is configured. `graph` forces the Drivine stores.
@@ -46,7 +45,7 @@ Read by `dice-storage-autoconfigure`.
 | `embabel.dice.store.vector-index.enabled`
 | `boolean`
 | `true`
-| Whether the proposition embedding vector index is created. Graph backend only.
+| Whether DICE creates the native proposition vector index on Neo4j. Applies to Neo4j only.
 |===
 
 The vector index's label, property, name and similarity are *not* configurable — they are fixed by

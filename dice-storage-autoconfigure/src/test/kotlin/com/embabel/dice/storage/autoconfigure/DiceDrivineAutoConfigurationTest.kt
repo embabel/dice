@@ -22,6 +22,7 @@ import com.embabel.dice.incremental.InMemoryChunkHistoryStore
 import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
+import com.embabel.dice.storage.DiceOwnedSchema
 import com.embabel.dice.storage.DrivineChunkHistoryStore
 import com.embabel.dice.storage.DrivinePropositionRepository
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -315,6 +316,31 @@ class DiceDrivineAutoConfigurationTest {
                 "embabel.dice.metamodel.enabled=true",
             )
             .run { ctx -> assertCatalogOnlyOn(ctx, "metamodelSchema", "other") }
+    }
+
+    @Test
+    fun `the host audit catalog targets the repository datasource and exposes its ownership shapes`() {
+        runnerWithMetamodel
+            .withUserConfiguration(DiceStorageSchemaRegistrationTest.AuditSchemaConfig::class.java)
+            .withPropertyValues(
+                *datasource("neo"),
+                *datasource("audit-data"),
+                "embabel.dice.store.datasource=audit-data",
+                "host.audit.datasource=audit-data",
+            )
+            .run { ctx ->
+                assertThat(ctx).hasNotFailed()
+                val repository = ctx.getBean<PropositionRepository>()
+                val manager = ctx.getBean<PersistenceManager>()
+                assertThat(repository).extracting("persistenceManager").isSameAs(manager)
+                assertThat(manager.database).isEqualTo("audit-data")
+                assertCatalogOnlyOn(ctx, "auditSchemaCatalog", manager.database)
+
+                assertThat(ctx.getBean<DiceOwnedSchema>().nodeShapes)
+                    .containsEntry("DiceAuditContext", listOf("contextId"))
+                    .containsEntry("DiceAuditRecord", listOf("contextId", "sequence"))
+                    .containsEntry("DiceAuditIdentityFence", listOf("stripe"))
+            }
     }
 
     @Test

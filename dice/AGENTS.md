@@ -20,7 +20,7 @@ Kotlin 2.2.21 (from the build parent), Java 21. `embabel-agent-api` and `embabel
 - `VectorSearchCapable` — `findSimilarWithScores`, `findClusters`
 - `GraphTraversalCapable` — traversal helpers over the proposition abstraction hierarchy
 - `TemporalQueryCapable` — bitemporal queries
-- `GraphQueryCapable` — native neighbourhood, path-between, and why-explain lineage queries over the entity-relationship graph; also declares `honorsAuthorityFilter` so the portable graph facade can route authority-filtered traversals to the native backend rather than falling back to proposition-walk
+- `GraphQueryCapable` provides native neighbourhood, path, and lineage queries. Its `honorsAuthorityFilter` opt-in applies to unscoped traversals. `GraphQuery` uses the portable walk when both a context and an authority floor are set.
 
 `CoreSearchOperations` is a separate RAG bridge (vector + text search), not a capability fragment a backend opts into.
 

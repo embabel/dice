@@ -19,9 +19,12 @@ import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.DecayManager
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionRepository
+import org.drivine.connection.DatabaseType
+import org.drivine.manager.DelegatingPersistenceManager
 import org.drivine.manager.PersistenceManager
 import org.drivine.model.Stamps
 import org.drivine.query.QuerySpecification
+import org.drivine.transaction.Transactions
 import java.time.Instant
 
 /**
@@ -42,7 +45,10 @@ import java.time.Instant
  * an enclosing one — `DecayManager` opens none, and callers must not wrap it in `@Transactional`.)
  *
  * The batching applies on Neo4j. On Drivine's SQL stores the sweep compiles to one statement, which
- * commits or rolls back as a unit.
+ * commits or rolls back as a unit. On SQLite that statement runs in a Drivine transaction, which
+ * takes the file's write lock as it begins and waits for another writer up to the busy timeout. A
+ * bare statement reads first and asks for the lock after, and SQLite refuses that at once while
+ * another connection writes.
  */
 class GraphDecayManager(
     repository: PropositionRepository,
@@ -56,10 +62,14 @@ class GraphDecayManager(
 
     private fun sweep(match: String, extraParams: Map<String, Any>) {
         val now = Instant.now()
-        persistenceManager.execute(
-            cypherQuery("$match\nCALL {\n  WITH p\n$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $BATCH_ROWS ROWS")
-                .bind(extraParams + mapOf("now" to now))
-        )
+        val statement = cypherQuery("$match\nCALL {\n  WITH p\n$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $BATCH_ROWS ROWS")
+            .bind(extraParams + mapOf("now" to now))
+        val holder = (persistenceManager as? DelegatingPersistenceManager)?.contextHolder
+        if (persistenceManager.type == DatabaseType.SQLITE && holder != null) {
+            Transactions(holder).transaction { persistenceManager.execute(statement) }
+        } else {
+            persistenceManager.execute(statement)
+        }
     }
 
     private companion object {
