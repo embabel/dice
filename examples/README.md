@@ -17,6 +17,7 @@ needs no API key and no running service.
 | [`examples-kotlin`](examples-kotlin) | The parts of the same API that read differently from Kotlin. |
 | [`examples-decision-revision`](examples-decision-revision) | Showcase: an Embabel decision chooses how a new fact revises stored ones. |
 | [`examples-backend-swap`](examples-backend-swap) | Showcase: the same code on the in-memory store and on Neo4j, switched by one property. |
+| [`examples-multi-context-memory`](examples-multi-context-memory) | Recall across a support session and handbook under a scope and budget set by the host. |
 | [`examples-common`](examples-common) | Test support the examples share: the scripted model and its recorded replies. |
 
 Each module has its own README. The tests are the examples.
