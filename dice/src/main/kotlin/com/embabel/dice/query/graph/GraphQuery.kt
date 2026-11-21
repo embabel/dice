@@ -81,11 +81,10 @@ class GraphQuery(
      * own [maxDepth] ceiling goes along with it, so a native backend clamps its walk to the same bound
      * the portable path enforces rather than a value it hardcodes itself.
      *
-     * When [minAuthority] is set, the query routes to a native [GraphQueryCapable] store only if that
-     * store declares [GraphQueryCapable.honorsAuthorityFilter] — letting a graph backend apply the
-     * floor in its own engine. Otherwise the filter runs on the portable proposition-edge path,
-     * re-resolving authority from provenance at query time, so the result is correct even on a backend
-     * that ignores authority.
+     * When [minAuthority] is set, the query routes to a native [GraphQueryCapable] store only for an
+     * unscoped query on a store that declares [GraphQueryCapable.honorsAuthorityFilter]. The native
+     * authority overload has no context argument. The portable path applies both filters when the
+     * query also has a context.
      *
      * **Legacy-edge behaviour:** propositions with no provenance entries resolve to
      * [AuthorityTier.UNKNOWN] (ordinal 3, the weakest tier). Because every named [minAuthority]
@@ -99,7 +98,7 @@ class GraphQuery(
         return when {
             native == null -> defaultNeighborhood(entityId, depth, minAuthority)
             minAuthority == null -> native.neighborhood(entityId, depth, contextId, maxDepth)
-            native.honorsAuthorityFilter -> native.neighborhood(entityId, depth, minAuthority, maxDepth)
+            contextId == null && native.honorsAuthorityFilter -> native.neighborhood(entityId, depth, minAuthority, maxDepth)
             else -> defaultNeighborhood(entityId, depth, minAuthority)
         }
     }
@@ -111,9 +110,9 @@ class GraphQuery(
      * queries when the store declares [GraphQueryCapable.honorsContextFilter]; otherwise runs bounded,
      * cycle-safe BFS over ACTIVE proposition edges. This query's own [maxDepth] ceiling is passed along
      * to the native adapter too, so it bounds the walk to the same hop ceiling the portable path uses.
-     * When [minAuthority] is set, the native adapter is
-     * consulted only if it declares [GraphQueryCapable.honorsAuthorityFilter]; otherwise the portable
-     * path applies the floor (re-resolving authority from provenance), as in [neighborhood].
+     * When [minAuthority] is set, the native adapter is consulted only for an unscoped query on a
+     * store that declares [GraphQueryCapable.honorsAuthorityFilter]. The portable path applies both
+     * filters when the query also has a context, as in [neighborhood].
      *
      * The return type is a list because a native graph adapter may enumerate multiple paths, but the
      * portable default body returns at most a single path: the first shortest path BFS discovers (an
@@ -132,7 +131,7 @@ class GraphQuery(
         return when {
             native == null -> defaultPathBetween(entityIdA, entityIdB, minAuthority)
             minAuthority == null -> native.pathBetween(entityIdA, entityIdB, contextId, maxDepth)
-            native.honorsAuthorityFilter -> native.pathBetween(entityIdA, entityIdB, minAuthority, maxDepth)
+            contextId == null && native.honorsAuthorityFilter -> native.pathBetween(entityIdA, entityIdB, minAuthority, maxDepth)
             else -> defaultPathBetween(entityIdA, entityIdB, minAuthority)
         }
     }
@@ -282,5 +281,47 @@ class GraphQuery(
             status = prop.status,
             temporal = prop.temporal,
         )
+    }
+
+    /**
+     * Factories so Java code can build a query. The constructor takes a Kotlin `ContextId`, which
+     * Java can't create or pass, so these take the context id as a plain string instead. Use
+     * [withAuthorityResolver] afterwards to swap in a different authority resolver.
+     */
+    companion object {
+
+        /**
+         * Builds a query that looks across every context in the store.
+         *
+         * @param store the store to query
+         * @return a query over the whole store
+         */
+        @JvmStatic
+        fun of(store: PropositionStore): GraphQuery = GraphQuery(store)
+
+        /**
+         * Builds a query that only sees one context.
+         *
+         * @param store the store to query
+         * @param contextId the context to stay inside. Blank values are rejected.
+         * @return a query confined to that context
+         * @throws IllegalArgumentException if [contextId] is blank
+         */
+        @JvmStatic
+        fun of(store: PropositionStore, contextId: String): GraphQuery =
+            GraphQuery(store, ContextId(contextId))
+
+        /**
+         * Builds a query that only sees one context and never walks more than [maxDepth] hops.
+         *
+         * @param store the store to query
+         * @param contextId the context to stay inside. Blank values are rejected.
+         * @param maxDepth the most hops any walk may take; must be at least 1
+         * @return a query confined to that context with that hop limit
+         * @throws IllegalArgumentException if [contextId] is blank or [maxDepth] is less than 1
+         */
+        @JvmStatic
+        fun of(store: PropositionStore, contextId: String, maxDepth: Int): GraphQuery =
+            GraphQuery(store, ContextId(contextId), maxDepth)
     }
 }

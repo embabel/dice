@@ -24,11 +24,10 @@ import org.drivine.schema.SchemaItemSpec
  * One dice-owned Cypher-backed store's schema: the constraints and indexes it needs, and the
  * relationship types it writes for dice's own bookkeeping.
  *
- * An application registers these as beans, and the registered set does two jobs at once. Drivine
- * ensures the DDL from it ([diceStorageCatalog]), and [DiceOwnedSchema] reads the same set to work
- * out which nodes and edges in a shared graph are dice's own, so a whole-graph drift check leaves
- * them alone. Making one list answer both questions is the point: a store whose schema reaches the
- * database has, by construction, reached the ownership rule too.
+ * An application registers these as beans for [DiceOwnedSchema]. It also publishes a Drivine
+ * [SchemaCatalog] built from the same schemas using [diceStorageCatalog]. Drivine applies the DDL
+ * from the catalog, and the ownership beans tell whole-graph drift checks which nodes and edges
+ * belong to the stores.
  *
  * Adding a store is therefore a two-file job in the slice that adds it: declare its schema object
  * beside the store, and register it where the application wires its stores. Nothing in the drift

@@ -112,9 +112,10 @@ if (repository instanceof GraphQueryCapable g)   { /* neighbourhood, path, linea
 if (repository instanceof TemporalQueryCapable t) { /* validity windows */ }
 ----
 
-`GraphQueryCapable` gives you `GraphNeighborhood`, `GraphPath` and `PropositionLineage`. Backends
-that support it may also report `honorsAuthorityFilter`, letting authority-filtered traversals run
-natively rather than being filtered afterwards.
+`GraphQueryCapable` gives you `GraphNeighborhood`, `GraphPath` and `PropositionLineage`. A backend
+that reports `honorsAuthorityFilter` can apply an authority floor during an unscoped native
+traversal. When you supply both a context and an authority floor, `GraphQuery` applies both
+filters during the portable walk.
 
 When you would rather not choose, use `RetrievalRouter`: it picks a `RetrievalMode` — vector, graph
 or lexical — from the shape of the query, and applies authority filtering at query time.
