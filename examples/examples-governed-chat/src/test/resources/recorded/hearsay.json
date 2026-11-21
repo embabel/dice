@@ -1,0 +1,12 @@
+{
+  "propositions": [
+    {
+      "text": "Refunds must be mailed.",
+      "mentions": [],
+      "confidence": 0.3,
+      "decay": 0,
+      "importance": 0.7,
+      "reasoning": "The speaker is unsure"
+    }
+  ]
+}
