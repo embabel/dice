@@ -43,6 +43,355 @@ public final class com/embabel/dice/agent/GovernanceTools$Companion {
 	public final fun asTools (Lcom/embabel/dice/governance/GovernanceOperationsService;)Ljava/util/List;
 }
 
+public abstract class com/embabel/dice/audit/AbstractAuditLog : com/embabel/dice/audit/AuditLogQuery, com/embabel/dice/audit/AuditSink {
+	public fun <init> ()V
+	public final fun asOf (Ljava/lang/String;Ljava/lang/String;Ljava/time/Instant;)Lcom/embabel/dice/audit/AuditedProposition;
+	protected final fun baselineOf (Ljava/lang/String;Ljava/util/Collection;)Ljava/util/List;
+	public final fun beliefSetAsOf (Ljava/lang/String;Ljava/time/Instant;)Ljava/util/List;
+	protected final fun requireAppend (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)V
+	protected final fun requireContext (Ljava/lang/String;)V
+	protected final fun requirePage (Ljava/lang/String;JI)V
+	protected abstract fun timeline (Ljava/lang/String;Ljava/time/Instant;)Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;
+}
+
+protected final class com/embabel/dice/audit/AbstractAuditLog$AuditTimeline {
+	public fun <init> (Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/util/List;)V
+	public final fun component1 ()Ljava/time/Instant;
+	public final fun component2 ()Ljava/time/Instant;
+	public final fun component3 ()Ljava/util/List;
+	public final fun component4 ()Ljava/util/List;
+	public final fun copy (Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;
+	public static synthetic fun copy$default (Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBaseline ()Ljava/util/List;
+	public final fun getCutover ()Ljava/time/Instant;
+	public final fun getInvalidFrom ()Ljava/time/Instant;
+	public final fun getRecords ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/audit/AuditActorRef {
+	public static final field Companion Lcom/embabel/dice/audit/AuditActorRef$Companion;
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lcom/embabel/dice/audit/AuditActorRef;
+	public static synthetic fun copy$default (Lcom/embabel/dice/audit/AuditActorRef;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/audit/AuditActorRef;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getToken ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/audit/AuditActorRef$Companion {
+}
+
+public final class com/embabel/dice/audit/AuditAttribution {
+	public fun <init> ()V
+	public fun <init> (Lcom/embabel/dice/audit/AuditActorRef;)V
+	public fun <init> (Lcom/embabel/dice/audit/AuditActorRef;Lcom/embabel/dice/audit/AuditRunRef;)V
+	public fun <init> (Lcom/embabel/dice/audit/AuditActorRef;Lcom/embabel/dice/audit/AuditRunRef;Ljava/lang/String;)V
+	public synthetic fun <init> (Lcom/embabel/dice/audit/AuditActorRef;Lcom/embabel/dice/audit/AuditRunRef;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/dice/audit/AuditActorRef;
+	public final fun component2 ()Lcom/embabel/dice/audit/AuditRunRef;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun copy (Lcom/embabel/dice/audit/AuditActorRef;Lcom/embabel/dice/audit/AuditRunRef;Ljava/lang/String;)Lcom/embabel/dice/audit/AuditAttribution;
+	public static synthetic fun copy$default (Lcom/embabel/dice/audit/AuditAttribution;Lcom/embabel/dice/audit/AuditActorRef;Lcom/embabel/dice/audit/AuditRunRef;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/audit/AuditAttribution;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getActor ()Lcom/embabel/dice/audit/AuditActorRef;
+	public final fun getReason ()Ljava/lang/String;
+	public final fun getRun ()Lcom/embabel/dice/audit/AuditRunRef;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class com/embabel/dice/audit/AuditContextProvider {
+	public static final field Companion Lcom/embabel/dice/audit/AuditContextProvider$Companion;
+	public static final field NONE Lcom/embabel/dice/audit/AuditContextProvider;
+	public abstract fun attributionFor (Ljava/lang/String;)Lcom/embabel/dice/audit/AuditAttribution;
+}
+
+public final class com/embabel/dice/audit/AuditContextProvider$Companion {
+}
+
+public final class com/embabel/dice/audit/AuditCoverageException : java/lang/IllegalStateException {
+	public fun <init> ()V
+}
+
+public final class com/embabel/dice/audit/AuditEntry {
+	public fun <init> (Lcom/embabel/dice/audit/AuditKind;)V
+	public fun <init> (Lcom/embabel/dice/audit/AuditKind;Ljava/lang/String;)V
+	public fun <init> (Lcom/embabel/dice/audit/AuditKind;Ljava/lang/String;Lcom/embabel/dice/audit/AuditedProposition;)V
+	public fun <init> (Lcom/embabel/dice/audit/AuditKind;Ljava/lang/String;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditedProposition;)V
+	public fun <init> (Lcom/embabel/dice/audit/AuditKind;Ljava/lang/String;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditAttribution;)V
+	public fun <init> (Lcom/embabel/dice/audit/AuditKind;Ljava/lang/String;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditAttribution;Ljava/lang/Long;)V
+	public fun <init> (Lcom/embabel/dice/audit/AuditKind;Ljava/lang/String;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditAttribution;Ljava/lang/Long;Ljava/lang/Long;)V
+	public synthetic fun <init> (Lcom/embabel/dice/audit/AuditKind;Ljava/lang/String;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditAttribution;Ljava/lang/Long;Ljava/lang/Long;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lcom/embabel/dice/audit/AuditKind;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Lcom/embabel/dice/audit/AuditedProposition;
+	public final fun component4 ()Lcom/embabel/dice/audit/AuditedProposition;
+	public final fun component5 ()Lcom/embabel/dice/audit/AuditAttribution;
+	public final fun component6 ()Ljava/lang/Long;
+	public final fun component7 ()Ljava/lang/Long;
+	public final fun copy (Lcom/embabel/dice/audit/AuditKind;Ljava/lang/String;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditAttribution;Ljava/lang/Long;Ljava/lang/Long;)Lcom/embabel/dice/audit/AuditEntry;
+	public static synthetic fun copy$default (Lcom/embabel/dice/audit/AuditEntry;Lcom/embabel/dice/audit/AuditKind;Ljava/lang/String;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditedProposition;Lcom/embabel/dice/audit/AuditAttribution;Ljava/lang/Long;Ljava/lang/Long;ILjava/lang/Object;)Lcom/embabel/dice/audit/AuditEntry;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAfter ()Lcom/embabel/dice/audit/AuditedProposition;
+	public final fun getAttribution ()Lcom/embabel/dice/audit/AuditAttribution;
+	public final fun getBefore ()Lcom/embabel/dice/audit/AuditedProposition;
+	public final fun getChanges ()Ljava/util/List;
+	public final fun getErasedBaselineCount ()Ljava/lang/Long;
+	public final fun getErasedRecordCount ()Ljava/lang/Long;
+	public final fun getKind ()Lcom/embabel/dice/audit/AuditKind;
+	public final fun getPropositionId ()Ljava/lang/String;
+	public final fun getReason ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/audit/AuditEventListener : com/embabel/dice/common/DiceEventListener {
+	public fun <init> (Lcom/embabel/dice/audit/AuditSink;)V
+	public fun <init> (Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;)V
+	public fun <init> (Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;)V
+	public synthetic fun <init> (Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun onEvent (Lcom/embabel/dice/common/DiceEvent;)V
+}
+
+public final class com/embabel/dice/audit/AuditFailurePolicy : java/lang/Enum {
+	public static final field FAIL_WRITE Lcom/embabel/dice/audit/AuditFailurePolicy;
+	public static final field LOG_AND_CONTINUE Lcom/embabel/dice/audit/AuditFailurePolicy;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/audit/AuditFailurePolicy;
+	public static fun values ()[Lcom/embabel/dice/audit/AuditFailurePolicy;
+}
+
+public final class com/embabel/dice/audit/AuditField : java/lang/Enum {
+	public static final field CONFIDENCE Lcom/embabel/dice/audit/AuditField;
+	public static final field IMPORTANCE Lcom/embabel/dice/audit/AuditField;
+	public static final field PINNED Lcom/embabel/dice/audit/AuditField;
+	public static final field STATUS Lcom/embabel/dice/audit/AuditField;
+	public static final field TEMPORAL Lcom/embabel/dice/audit/AuditField;
+	public static final field TEXT Lcom/embabel/dice/audit/AuditField;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/audit/AuditField;
+	public static fun values ()[Lcom/embabel/dice/audit/AuditField;
+}
+
+public final class com/embabel/dice/audit/AuditFieldChange {
+	public fun <init> (Lcom/embabel/dice/audit/AuditField;Ljava/lang/Object;Ljava/lang/Object;)V
+	public final fun component1 ()Lcom/embabel/dice/audit/AuditField;
+	public final fun component2 ()Ljava/lang/Object;
+	public final fun component3 ()Ljava/lang/Object;
+	public final fun copy (Lcom/embabel/dice/audit/AuditField;Ljava/lang/Object;Ljava/lang/Object;)Lcom/embabel/dice/audit/AuditFieldChange;
+	public static synthetic fun copy$default (Lcom/embabel/dice/audit/AuditFieldChange;Lcom/embabel/dice/audit/AuditField;Ljava/lang/Object;Ljava/lang/Object;ILjava/lang/Object;)Lcom/embabel/dice/audit/AuditFieldChange;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getField ()Lcom/embabel/dice/audit/AuditField;
+	public final fun getNewValue ()Ljava/lang/Object;
+	public final fun getOldValue ()Ljava/lang/Object;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/audit/AuditKind : java/lang/Enum {
+	public static final field CHANGED Lcom/embabel/dice/audit/AuditKind;
+	public static final field CREATED Lcom/embabel/dice/audit/AuditKind;
+	public static final field DELETED Lcom/embabel/dice/audit/AuditKind;
+	public static final field ERASURE Lcom/embabel/dice/audit/AuditKind;
+	public static final field EXTRACTION_RUN_ENDED Lcom/embabel/dice/audit/AuditKind;
+	public static final field GATE_DEMOTED Lcom/embabel/dice/audit/AuditKind;
+	public static final field GATE_PROJECTION_SKIPPED Lcom/embabel/dice/audit/AuditKind;
+	public static final field GATE_REJECTED Lcom/embabel/dice/audit/AuditKind;
+	public static final field GATE_REVIEW Lcom/embabel/dice/audit/AuditKind;
+	public static final field PINNED Lcom/embabel/dice/audit/AuditKind;
+	public static final field UNPINNED Lcom/embabel/dice/audit/AuditKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/audit/AuditKind;
+	public static fun values ()[Lcom/embabel/dice/audit/AuditKind;
+}
+
+public abstract interface class com/embabel/dice/audit/AuditLogQuery {
+	public abstract fun asOf (Ljava/lang/String;Ljava/lang/String;Ljava/time/Instant;)Lcom/embabel/dice/audit/AuditedProposition;
+	public abstract fun beliefSetAsOf (Ljava/lang/String;Ljava/time/Instant;)Ljava/util/List;
+	public abstract fun history (Ljava/lang/String;Ljava/lang/String;)Ljava/util/List;
+	public abstract fun query (Ljava/lang/String;JI)Ljava/util/List;
+}
+
+public final class com/embabel/dice/audit/AuditRecord {
+	public fun <init> (Ljava/lang/String;JLjava/time/Instant;Lcom/embabel/dice/audit/AuditEntry;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()J
+	public final fun component3 ()Ljava/time/Instant;
+	public final fun component4 ()Lcom/embabel/dice/audit/AuditEntry;
+	public final fun copy (Ljava/lang/String;JLjava/time/Instant;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
+	public static synthetic fun copy$default (Lcom/embabel/dice/audit/AuditRecord;Ljava/lang/String;JLjava/time/Instant;Lcom/embabel/dice/audit/AuditEntry;ILjava/lang/Object;)Lcom/embabel/dice/audit/AuditRecord;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAfter ()Lcom/embabel/dice/audit/AuditedProposition;
+	public final fun getAttribution ()Lcom/embabel/dice/audit/AuditAttribution;
+	public final fun getBefore ()Lcom/embabel/dice/audit/AuditedProposition;
+	public final fun getChanges ()Ljava/util/List;
+	public final fun getContextId ()Ljava/lang/String;
+	public final fun getEntry ()Lcom/embabel/dice/audit/AuditEntry;
+	public final fun getErasedBaselineCount ()Ljava/lang/Long;
+	public final fun getErasedRecordCount ()Ljava/lang/Long;
+	public final fun getKind ()Lcom/embabel/dice/audit/AuditKind;
+	public final fun getPropositionId ()Ljava/lang/String;
+	public final fun getReason ()Ljava/lang/String;
+	public final fun getRecordedAt ()Ljava/time/Instant;
+	public final fun getSequence ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/audit/AuditRunKind : java/lang/Enum {
+	public static final field COLLECTOR Lcom/embabel/dice/audit/AuditRunKind;
+	public static final field DECAY Lcom/embabel/dice/audit/AuditRunKind;
+	public static final field DRIFT Lcom/embabel/dice/audit/AuditRunKind;
+	public static final field EXTRACTION Lcom/embabel/dice/audit/AuditRunKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/audit/AuditRunKind;
+	public static fun values ()[Lcom/embabel/dice/audit/AuditRunKind;
+}
+
+public final class com/embabel/dice/audit/AuditRunRef {
+	public fun <init> (Lcom/embabel/dice/audit/AuditRunKind;Ljava/lang/String;)V
+	public final fun component1 ()Lcom/embabel/dice/audit/AuditRunKind;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Lcom/embabel/dice/audit/AuditRunKind;Ljava/lang/String;)Lcom/embabel/dice/audit/AuditRunRef;
+	public static synthetic fun copy$default (Lcom/embabel/dice/audit/AuditRunRef;Lcom/embabel/dice/audit/AuditRunKind;Ljava/lang/String;ILjava/lang/Object;)Lcom/embabel/dice/audit/AuditRunRef;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getId ()Ljava/lang/String;
+	public final fun getKind ()Lcom/embabel/dice/audit/AuditRunKind;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class com/embabel/dice/audit/AuditSink {
+	public abstract fun append (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
+	public abstract fun duringWrite (Ljava/lang/String;Ljava/util/function/Supplier;)Ljava/lang/Object;
+	public abstract fun eraseContext (Ljava/lang/String;Lcom/embabel/dice/audit/AuditActorRef;)Lcom/embabel/dice/audit/AuditRecord;
+	public abstract fun getTransactionParticipation ()Lcom/embabel/dice/audit/AuditTransactionParticipation;
+	public abstract fun initializeBaseline (Ljava/lang/String;Ljava/time/Instant;Ljava/util/Collection;)V
+	public abstract fun invalidateCoverage (Ljava/lang/String;)V
+}
+
+public final class com/embabel/dice/audit/AuditTransactionParticipation : java/lang/Enum {
+	public static final field BEST_EFFORT Lcom/embabel/dice/audit/AuditTransactionParticipation;
+	public static final field JOINS_HOST_TRANSACTION Lcom/embabel/dice/audit/AuditTransactionParticipation;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/embabel/dice/audit/AuditTransactionParticipation;
+	public static fun values ()[Lcom/embabel/dice/audit/AuditTransactionParticipation;
+}
+
+public final class com/embabel/dice/audit/AuditedProposition {
+	public static final field Companion Lcom/embabel/dice/audit/AuditedProposition$Companion;
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionStatus;DDZLcom/embabel/dice/temporal/TemporalMetadata;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Lcom/embabel/dice/proposition/PropositionStatus;
+	public final fun component5 ()D
+	public final fun component6 ()D
+	public final fun component7 ()Z
+	public final fun component8 ()Lcom/embabel/dice/temporal/TemporalMetadata;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionStatus;DDZLcom/embabel/dice/temporal/TemporalMetadata;)Lcom/embabel/dice/audit/AuditedProposition;
+	public static synthetic fun copy$default (Lcom/embabel/dice/audit/AuditedProposition;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/proposition/PropositionStatus;DDZLcom/embabel/dice/temporal/TemporalMetadata;ILjava/lang/Object;)Lcom/embabel/dice/audit/AuditedProposition;
+	public fun equals (Ljava/lang/Object;)Z
+	public static final fun from (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/audit/AuditedProposition;
+	public final fun getConfidence ()D
+	public final fun getContextId ()Ljava/lang/String;
+	public final fun getId ()Ljava/lang/String;
+	public final fun getImportance ()D
+	public final fun getPinned ()Z
+	public final fun getStatus ()Lcom/embabel/dice/proposition/PropositionStatus;
+	public final fun getTemporal ()Lcom/embabel/dice/temporal/TemporalMetadata;
+	public final fun getText ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/embabel/dice/audit/AuditedProposition$Companion {
+	public final fun from (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/audit/AuditedProposition;
+}
+
+public class com/embabel/dice/audit/AuditingPropositionRepository : com/embabel/dice/proposition/PropositionRepository {
+	public static final field Companion Lcom/embabel/dice/audit/AuditingPropositionRepository$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun addProvenance (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/proposition/Proposition;
+	public fun clearAll ()I
+	public fun clearByContext (Ljava/lang/String;)I
+	public fun clearByContextPrefix (Ljava/lang/String;)I
+	public fun clearProvenance (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
+	public fun count ()I
+	public fun count (Lcom/embabel/dice/proposition/PropositionQuery;)I
+	public fun delete (Ljava/lang/String;)Z
+	public fun findAbstractionsOf (Ljava/lang/String;)Ljava/util/List;
+	public fun findAll ()Ljava/util/List;
+	public fun findAll (Z)Ljava/util/List;
+	public fun findAllOrderedByEffectiveConfidence (D)Ljava/util/List;
+	public fun findByContextId-GRzcY08 (Ljava/lang/String;)Ljava/util/List;
+	public fun findByContextIdValue (Ljava/lang/String;)Ljava/util/List;
+	public fun findByCreatedBetween (Ljava/time/Instant;Ljava/time/Instant;)Ljava/util/List;
+	public fun findByCreatedBetweenOrderedByEffectiveConfidence (Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;D)Ljava/util/List;
+	public fun findByEffectiveConfidenceAbove (DD)Ljava/util/List;
+	public fun findByEntity (Lcom/embabel/agent/rag/service/RetrievableIdentifier;)Ljava/util/List;
+	public fun findByGrounding (Ljava/lang/String;)Ljava/util/List;
+	public fun findById (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
+	public fun findByMinLevel (I)Ljava/util/List;
+	public fun findByRevisedBetween (Ljava/time/Instant;Ljava/time/Instant;)Ljava/util/List;
+	public fun findByStatus (Lcom/embabel/dice/proposition/PropositionStatus;)Ljava/util/List;
+	public fun findClusters (DILcom/embabel/dice/proposition/PropositionQuery;)Ljava/util/List;
+	public fun findPinned-GRzcY08 (Ljava/lang/String;)Ljava/util/List;
+	public fun findSimilar (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;)Ljava/util/List;
+	public fun findSimilarWithScores (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;)Ljava/util/List;
+	public fun findSimilarWithScores (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;Lcom/embabel/dice/proposition/PropositionQuery;)Ljava/util/List;
+	public fun findSources (Lcom/embabel/dice/proposition/Proposition;)Ljava/util/List;
+	public fun getLuceneSyntaxNotes ()Ljava/lang/String;
+	public fun getQueryMode ()Lcom/embabel/agent/rag/service/TextQueryMode;
+	public fun getStoreType ()Lcom/embabel/dice/proposition/PropositionStoreType;
+	public fun getSupportedQueryModes ()Ljava/util/Set;
+	public fun getSupportsVector ()Z
+	public fun keywordOverlap (Lcom/embabel/dice/proposition/PropositionQuery;Ljava/util/List;I)Ljava/util/List;
+	public fun pin (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
+	public fun provenanceOf (Ljava/lang/String;)Ljava/util/List;
+	public fun query (Lcom/embabel/dice/proposition/PropositionQuery;)Ljava/util/List;
+	public fun query (Lcom/embabel/dice/proposition/PropositionQuery;Z)Ljava/util/List;
+	public fun reembedAll ()Lcom/embabel/dice/proposition/PropositionReembedReport;
+	public fun save (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/proposition/Proposition;
+	public fun saveAll (Ljava/util/Collection;)V
+	public fun saveAllReturningCanonical (Ljava/util/Collection;)Lcom/embabel/dice/proposition/PropositionPersistenceResult;
+	public fun setProvenance (Ljava/lang/String;Ljava/util/List;)Lcom/embabel/dice/proposition/Proposition;
+	public fun supportsType (Ljava/lang/String;)Z
+	public fun textSearch (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;Ljava/lang/Class;)Ljava/util/List;
+	public fun touchAccessed (Ljava/util/Collection;)V
+	public fun unpin (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
+	public fun vectorSearch (Lcom/embabel/common/core/types/TextSimilaritySearchRequest;Ljava/lang/Class;)Ljava/util/List;
+	public static final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
+	public static final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
+	public static final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
+}
+
+public final class com/embabel/dice/audit/AuditingPropositionRepository$Companion {
+	public final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
+	public final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
+	public final fun wrapping (Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
+	public static synthetic fun wrapping$default (Lcom/embabel/dice/audit/AuditingPropositionRepository$Companion;Lcom/embabel/dice/proposition/PropositionRepository;Lcom/embabel/dice/audit/AuditSink;Lcom/embabel/dice/audit/AuditContextProvider;Lcom/embabel/dice/audit/AuditFailurePolicy;ILjava/lang/Object;)Lcom/embabel/dice/audit/AuditingPropositionRepository;
+}
+
+public final class com/embabel/dice/audit/InMemoryAuditLog : com/embabel/dice/audit/AbstractAuditLog {
+	public fun <init> ()V
+	public fun <init> (Ljava/time/Clock;)V
+	public synthetic fun <init> (Ljava/time/Clock;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun append (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
+	public fun duringWrite (Ljava/lang/String;Ljava/util/function/Supplier;)Ljava/lang/Object;
+	public fun eraseContext (Ljava/lang/String;Lcom/embabel/dice/audit/AuditActorRef;)Lcom/embabel/dice/audit/AuditRecord;
+	public fun getTransactionParticipation ()Lcom/embabel/dice/audit/AuditTransactionParticipation;
+	public fun history (Ljava/lang/String;Ljava/lang/String;)Ljava/util/List;
+	public fun initializeBaseline (Ljava/lang/String;Ljava/time/Instant;Ljava/util/Collection;)V
+	public fun invalidateCoverage (Ljava/lang/String;)V
+	public fun query (Ljava/lang/String;JI)Ljava/util/List;
+}
+
 public final class com/embabel/dice/common/ExtractionRunTransitioned : com/embabel/dice/common/DiceEvent {
 	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRun;)V
 	public fun <init> (Lcom/embabel/dice/proposition/extraction/ExtractionRun;Ljava/time/Instant;)V
