@@ -97,6 +97,12 @@ class GraphReasoningTests {
                 .withSemanticBetween("Customer", "Account", "has account", "account ownership")
                 .withSemanticBetween("Contact", "Account", "administers", "account administration")
                 .withSemanticBetween("Account", "Plan", "uses", "current subscription");
+        store.save(Proposition.draft("another-account", "Another admin administers Support", 0.95)
+                .withId("foreign_admin")
+                .withMentions(List.of(
+                        new EntityMention("Another admin", "Contact", "another_admin", MentionRole.SUBJECT),
+                        new EntityMention("Support", "Account", "support_account", MentionRole.OBJECT)))
+                .toProposition());
         var recorded = store.query(PropositionQuery.againstContext(CONTEXT));
         var dictionary = DataDictionary.fromClasses("support");
         var projector = RelationBasedGraphProjector.from(relations);
@@ -126,7 +132,7 @@ class GraphReasoningTests {
 
         assertThat(projection.getFacts()).extracting(PrologFact::getPredicate)
                 .containsExactlyInAnyOrder("has_account", "administers", "uses");
-        assertThat(tools.queryProlog("approver(acme, Admin)")).contains("dana");
+        assertThat(tools.queryProlog("approver(acme, Admin)")).contains("dana").doesNotContain("another_admin");
         assertThat(tools.checkFact("approver(acme, dana)")).contains("Yes");
 
         var provider = PrologEvidenceProvider.of(projection, schema)
@@ -135,6 +141,7 @@ class GraphReasoningTests {
 
         var stored = EvidenceConverter.create().fromPropositions(recorded, Searched.of(CONTEXT));
         assertThat(stored).isInstanceOf(Evidence.Recorded.class);
+        assertThat(provider.conclusions(goal)).hasSize(1);
         assertThat(provider.evidence(goal))
                 .isInstanceOfSatisfying(Evidence.Derived.class, conclusion -> {
                     assertThat(conclusion.getConclusion()).isEqualTo("approver(acme, 'dana')");
