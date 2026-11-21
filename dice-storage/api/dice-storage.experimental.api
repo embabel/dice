@@ -1,6 +1,6 @@
-public final class com/embabel/dice/storage/AuditLogSchema : com/embabel/dice/storage/DiceStorageSchema {
+public final class com/embabel/dice/storage/AuditLogSchema {
 	public static final field INSTANCE Lcom/embabel/dice/storage/AuditLogSchema;
-	public fun specs ()Ljava/util/List;
+	public static final fun forRegistration ()Lcom/embabel/dice/storage/DiceStorageSchema;
 }
 
 public final class com/embabel/dice/storage/DiceOwnedSchema {
@@ -29,6 +29,7 @@ public final class com/embabel/dice/storage/DrivineAuditLogStore : com/embabel/d
 	public synthetic fun <init> (Lorg/drivine/manager/PersistenceManager;Lorg/springframework/transaction/PlatformTransactionManager;Ljava/time/Clock;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun append (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
 	public fun appendAfterCommit (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
+	public fun duringPropositionCreation (Ljava/lang/String;Ljava/lang/String;Ljava/util/function/Supplier;)Ljava/lang/Object;
 	public fun duringWrite (Ljava/lang/String;Ljava/util/function/Supplier;)Ljava/lang/Object;
 	public fun eraseContext (Ljava/lang/String;Lcom/embabel/dice/audit/AuditActorRef;)Lcom/embabel/dice/audit/AuditRecord;
 	public fun getTransactionParticipation ()Lcom/embabel/dice/audit/AuditTransactionParticipation;

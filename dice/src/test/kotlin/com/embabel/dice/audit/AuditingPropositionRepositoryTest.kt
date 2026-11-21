@@ -30,11 +30,61 @@ import java.io.IOException
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.function.Supplier
 
 class AuditingPropositionRepositoryTest {
+
+    @Test
+    fun `concurrent first writes cannot claim one globally keyed id in different contexts`() {
+        val log = InMemoryAuditLog()
+        val partitionedSink = object : AuditSink by log {
+            // Each context has exactly one writer in this test, so its own write lock is uncontended.
+            override fun <T> duringWrite(contextId: String, action: Supplier<T>): T = action.get()
+        }
+        val underlying = InMemoryPropositionRepository()
+        val bothRead = CyclicBarrier(2)
+        val firstFinished = CountDownLatch(1)
+        val ordering = ThreadLocal<Boolean>()
+        val delegate = object : PropositionRepository by underlying {
+            override fun findById(id: String): Proposition? {
+                val value = underlying.findById(id)
+                val first = ordering.get() ?: return value
+                ordering.remove()
+                bothRead.await(10, TimeUnit.SECONDS)
+                if (!first) check(firstFinished.await(10, TimeUnit.SECONDS))
+                return value
+            }
+        }
+        val repo = AuditingPropositionRepository.wrapping(delegate, partitionedSink)
+        val claim = Proposition(id = "shared", contextId = ContextId("first"), text = "Original", mentions = emptyList(), confidence = 0.8)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val first = pool.submit(Callable {
+                ordering.set(true)
+                try {
+                    repo.save(claim)
+                } finally {
+                    firstFinished.countDown()
+                }
+            })
+            val second = pool.submit(Callable {
+                ordering.set(false)
+                runCatching { repo.save(claim.copy(contextId = ContextId("second"), text = "Competing")) }
+            })
+            assertEquals(claim.id, first.get(10, TimeUnit.SECONDS).id)
+            assertEquals(true, second.get(10, TimeUnit.SECONDS).exceptionOrNull() is IllegalArgumentException)
+            assertEquals("first", repo.findById(claim.id)?.contextId?.value)
+            assertEquals(1, log.history("first", claim.id).size)
+            assertEquals(emptyList<AuditRecord>(), log.history("second", claim.id))
+        } finally {
+            pool.shutdownNow()
+        }
+    }
 
     @Test
     fun `a checked attribution failure invalidates a best-effort baseline`() {

@@ -78,6 +78,9 @@ class InMemoryAuditLog @JvmOverloads constructor(private val clock: Clock = Cloc
         return action.get()
     }
 
+    override fun <T> duringPropositionCreation(contextId: String, propositionId: String, action: Supplier<T>): T =
+        duringWrite(contextId, action)
+
     @Synchronized
     override fun invalidateCoverage(contextId: String) {
         requireContext(contextId)

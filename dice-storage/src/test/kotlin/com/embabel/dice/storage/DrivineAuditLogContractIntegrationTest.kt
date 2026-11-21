@@ -30,6 +30,7 @@ import com.embabel.dice.audit.AuditedProposition
 import com.embabel.dice.audit.AuditingPropositionRepository
 import com.embabel.dice.conformance.AbstractAuditLogContractTest
 import com.embabel.dice.proposition.Proposition
+import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.extraction.ExtractionRun
 import com.embabel.dice.proposition.extraction.ExtractionRunLineage
 import com.embabel.dice.proposition.extraction.ExtractionRunRef
@@ -37,6 +38,7 @@ import com.embabel.dice.proposition.extraction.ExtractionRunStatus
 import com.embabel.dice.storage.sqlite.SqliteTestStore
 import com.embabel.dice.temporal.TemporalMetadata
 import org.drivine.manager.PersistenceManager
+import org.drivine.schema.SchemaCatalog
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -55,11 +57,16 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.UUID
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 @TestConfiguration(proxyBeanMethods = false)
 class AuditTestConfiguration {
     @Bean
-    fun auditSchema(): DiceStorageSchema = AuditLogSchema
+    fun auditSchema(): DiceStorageSchema = AuditLogSchema.forRegistration()
 }
 
 abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
@@ -72,6 +79,19 @@ abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
 
     @Autowired
     private lateinit var propositions: DrivinePropositionRepository
+
+    @Autowired
+    private lateinit var registeredSchemas: List<DiceStorageSchema>
+
+    @Autowired
+    private lateinit var registeredCatalogs: List<SchemaCatalog>
+
+    @Test
+    fun `explicit registration contributes audit constraints to schema and ownership`() {
+        val auditSpecs = AuditLogSchema.forRegistration().specs()
+        assertEquals(true, registeredSchemas.flatMap { it.specs() }.containsAll(auditSpecs))
+        assertEquals(true, registeredCatalogs.flatMap { it.items }.containsAll(auditSpecs))
+    }
 
     private val recordedAt = Instant.parse("2026-01-02T00:00:00.000000001Z")
     private val auditClock = Clock.fixed(recordedAt, ZoneOffset.UTC)
@@ -234,6 +254,57 @@ abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
 
 @SpringBootTest(classes = [TestApplication::class, AuditTestConfiguration::class])
 class DrivineAuditLogContractIntegrationTest : DrivineAuditLogContractCases() {
+    @Autowired
+    private lateinit var graphPropositions: DrivinePropositionRepository
+
+    @Test
+    fun `two graph writers cannot assign a new proposition id to different contexts`() {
+        val firstContext = UUID.randomUUID().toString()
+        val secondContext = UUID.randomUUID().toString()
+        val claim = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(firstContext),
+            text = "Initial owner", mentions = emptyList(), confidence = 0.8)
+        val bothRead = CyclicBarrier(2)
+        val firstFinished = CountDownLatch(1)
+        val ordering = ThreadLocal<Boolean>()
+        val delegate = object : PropositionRepository by graphPropositions {
+            override fun findById(id: String): Proposition? {
+                val value = graphPropositions.findById(id)
+                val first = ordering.get() ?: return value
+                ordering.remove()
+                bothRead.await(10, TimeUnit.SECONDS)
+                if (!first) check(firstFinished.await(10, TimeUnit.SECONDS))
+                return value
+            }
+        }
+        val firstSink = log()
+        val otherSink = log()
+        fun wrap(sink: DrivineAuditLogStore) = AuditingPropositionRepository.wrapping(
+            delegate, sink, AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE, graphPropositions.auditCanonicalLookup(),
+        )
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val first = pool.submit(Callable {
+                ordering.set(true)
+                try {
+                    wrap(firstSink).save(claim)
+                } finally {
+                    firstFinished.countDown()
+                }
+            })
+            val second = pool.submit(Callable {
+                ordering.set(false)
+                runCatching { wrap(otherSink).save(claim.copy(contextId = ContextId(secondContext), text = "Competing owner")) }
+            })
+            assertEquals(claim.id, first.get(10, TimeUnit.SECONDS).id)
+            assertEquals(true, second.get(10, TimeUnit.SECONDS).exceptionOrNull() is IllegalArgumentException)
+            assertEquals(firstContext, graphPropositions.findById(claim.id)?.contextId?.value)
+            assertEquals(1, firstSink.history(firstContext, claim.id).size)
+            assertEquals(emptyList<Any>(), otherSink.history(secondContext, claim.id))
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
     companion object {
         @JvmStatic
         @DynamicPropertySource

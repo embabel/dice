@@ -20,16 +20,22 @@ import org.drivine.schema.SchemaItemSpec
 import org.drivine.schema.UniquenessConstraintSpec
 import org.jetbrains.annotations.ApiStatus
 
-/** Register as a [DiceStorageSchema] bean only in hosts that opt in to durable audit history. */
+/** Graph schema factory for hosts that opt in to durable audit history. */
 @ApiStatus.Experimental
-object AuditLogSchema : DiceStorageSchema {
+object AuditLogSchema {
     internal const val CONTEXT = "DiceAuditContext"
     internal const val RECORD = "DiceAuditRecord"
+    internal const val IDENTITY_FENCE = "DiceAuditIdentityFence"
 
-    override fun specs(): List<SchemaItemSpec> = listOf(
-        UniquenessConstraintSpec(label = CONTEXT, property = "contextId"),
-        UniquenessConstraintSpec(label = RECORD, properties = listOf("contextId", "sequence")),
-        RangeIndexSpec(RECORD, "contextId"),
-        RangeIndexSpec(RECORD, listOf("contextId", "propositionId")),
-    )
+    /** Register this schema as a bean so the audit labels also contribute to storage ownership. */
+    @JvmStatic
+    fun forRegistration(): DiceStorageSchema = object : DiceStorageSchema {
+        override fun specs(): List<SchemaItemSpec> = listOf(
+            UniquenessConstraintSpec(label = CONTEXT, property = "contextId"),
+            UniquenessConstraintSpec(label = RECORD, properties = listOf("contextId", "sequence")),
+            UniquenessConstraintSpec(label = IDENTITY_FENCE, property = "stripe"),
+            RangeIndexSpec(RECORD, "contextId"),
+            RangeIndexSpec(RECORD, listOf("contextId", "propositionId")),
+        )
+    }
 }

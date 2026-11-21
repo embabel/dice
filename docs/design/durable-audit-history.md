@@ -49,7 +49,7 @@ history in Java as follows.
 ```java
 audit.duringWrite(contextId, () -> {
     var cutover = Instant.now();
-    var snapshot = repository.findByContextIdValue(contextId);
+    var snapshot = repository.query(PropositionQuery.againstContext(contextId));
     audit.initializeBaseline(contextId, cutover, snapshot);
     return null;
 });
@@ -73,8 +73,8 @@ restart. Strict mode surfaces a recording failure. A best-effort sink cannot rol
 repository's live write, so the wrapper invalidates historical coverage when a write may have
 escaped recording.
 
-For Drivine on Neo4j or SQLite, register `AuditLogSchema.INSTANCE` as a `DiceStorageSchema` bean
-and construct `DrivineAuditLogStore` with the proposition repository's persistence manager and
+For Drivine on Neo4j or SQLite, register the result of `AuditLogSchema.forRegistration()` as a
+`DiceStorageSchema` bean and construct `DrivineAuditLogStore` with the proposition repository's persistence manager and
 transaction manager. SQLite uses the same IMMEDIATE transaction mode as the DICE SQLite starter.
 
 ```java
@@ -97,7 +97,9 @@ The sink samples `recordedAt` when assigning the audit position inside the write
 It preserves nondecreasing timestamps within a context when the clock moves backward.
 An outer transaction may commit later than the timestamps attached to its records. Historical
 replay considers committed records and includes positions stamped at or before the requested
-instant. Treat this timestamp as audit write time. Drivine currently reads the retained
+instant. Treat this timestamp as audit write time. The Drivine schema also provides a fixed set
+of lock stripes so two contexts cannot claim the same newly created proposition ID.
+Drivine currently reads the retained
 records for a context under its audit fence when it verifies coverage and replays history.
 
 ## Erasure

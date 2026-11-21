@@ -16,7 +16,9 @@
 package com.embabel.dice.storage.autoconfigure
 
 import com.embabel.dice.storage.CollectorTraceSchema
+import com.embabel.dice.storage.AuditLogSchema
 import com.embabel.dice.storage.DiceStorageSchema
+import com.embabel.dice.storage.DrivineAuditLogStore
 import com.embabel.dice.storage.LineageSchema
 import org.assertj.core.api.Assertions.assertThat
 import org.drivine.manager.StatelessGraphObjectManager
@@ -93,6 +95,20 @@ class DiceStorageSchemaRegistrationTest {
             val registered = ctx.getBeanProvider<DiceStorageSchema>().orderedStream().toList()
 
             assertThat(registered).contains(LineageSchema, CollectorTraceSchema)
+        }
+    }
+
+    @Test
+    fun `the graph backend leaves the audit store and schema unwired by default`() {
+        graphRunner.run { ctx ->
+            val auditSpecs = AuditLogSchema.forRegistration().specs()
+            val registered = ctx.getBeanProvider<DiceStorageSchema>().orderedStream().toList()
+                .flatMap { it.specs() }
+            val ensured = ctx.getBeanProvider<SchemaCatalog>().orderedStream().toList()
+                .flatMap { it.items }
+            assertThat(registered).doesNotContainAnyElementsOf(auditSpecs)
+            assertThat(ensured).doesNotContainAnyElementsOf(auditSpecs)
+            assertThat(ctx).doesNotHaveBean(DrivineAuditLogStore::class.java)
         }
     }
 

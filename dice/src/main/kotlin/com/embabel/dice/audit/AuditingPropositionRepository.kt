@@ -44,24 +44,33 @@ open class AuditingPropositionRepository private constructor(
         val contextId = proposition.contextId.value
         return sink.duringWrite(contextId) {
             val current = delegate.findById(proposition.id)
-            require(current == null || current.contextId.value == contextId) {
-                "An audited proposition cannot move between contexts"
-            }
-            // A backend may deduplicate a new input to an existing canonical proposition. Its
-            // prior image, rather than the new input or a copy read after save, belongs in history.
-            val canonical = if (current == null) {
-                canonicalLookup?.findAuditCanonicalId(proposition)?.let { currentInContext(it, contextId) }
-            } else null
-            val saved = mutate(contextId) { delegate.save(proposition) }
-            trackedWrite(contextId) {
-                check(saved.contextId.value == contextId) { "Audited save returned a different context" }
-                if (current == null && saved.id != proposition.id) {
-                    check(canonical?.id == saved.id) { "Audited save did not capture the canonical preimage" }
+            if (current != null) {
+                saveInContext(contextId, proposition, current)
+            } else {
+                // Check ownership again after a competing context has finished creating this ID.
+                sink.duringPropositionCreation(contextId, proposition.id) {
+                    saveInContext(contextId, proposition, delegate.findById(proposition.id))
                 }
-                recordStored(contextId, current ?: canonical?.takeIf { it.id == saved.id }, saved)
             }
-            saved
         }
+    }
+
+    private fun saveInContext(contextId: String, proposition: Proposition, current: Proposition?): Proposition {
+        require(current == null || current.contextId.value == contextId) {
+            "An audited proposition cannot move between contexts"
+        }
+        // A deduplicating save needs the previous canonical proposition, before the save runs.
+        val canonical = if (current == null) {
+            canonicalLookup?.findAuditCanonicalId(proposition)?.let { currentInContext(it, contextId) }
+        } else null
+        val saved = mutate(contextId) { delegate.save(proposition) }
+        trackedWrite(contextId) {
+            if (current == null && saved.id != proposition.id) {
+                check(canonical?.id == saved.id) { "Audited save did not capture the canonical preimage" }
+            }
+            recordStored(contextId, current ?: canonical?.takeIf { it.id == saved.id }, saved)
+        }
+        return saved
     }
 
     override fun saveAll(propositions: Collection<Proposition>) {

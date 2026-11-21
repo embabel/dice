@@ -126,6 +126,21 @@ class DrivineAuditLogStore @JvmOverloads constructor(
     override fun <T> duringWrite(contextId: String, action: Supplier<T>): T =
         locked(contextId) { action.get() }
 
+    override fun <T> duringPropositionCreation(contextId: String, propositionId: String, action: Supplier<T>): T =
+        locked(contextId) {
+            // First writes of one ID must serialize across contexts. Persist only a fixed numeric
+            // stripe, never the proposition ID. Drivine holds the fence through transaction end.
+            val stripe = Math.floorMod(propositionId.hashCode(), IDENTITY_STRIPES)
+            update(
+                """
+                MERGE (f:${AuditLogSchema.IDENTITY_FENCE} {stripe: ${'$'}stripe})
+                SET f.lockToken = ${'$'}token
+                """.trimIndent(),
+                mapOf("stripe" to stripe, "token" to UUID.randomUUID().toString()),
+            )
+            action.get()
+        }
+
     override fun invalidateCoverage(contextId: String) {
         locked(contextId) {
             update("MATCH (c:$CONTEXT {contextId: ${'$'}contextId}) SET c.invalid = true", bindings(contextId))
@@ -296,6 +311,7 @@ class DrivineAuditLogStore @JvmOverloads constructor(
     private companion object {
         private const val CONTEXT = AuditLogSchema.CONTEXT
         private const val RECORD = AuditLogSchema.RECORD
+        private const val IDENTITY_STRIPES = 256
 
         private const val RECORD_PROJECTION =
             "RETURN {contextId: n.contextId, sequence: n.sequence, recordedAt: n.recordedAt, " +
