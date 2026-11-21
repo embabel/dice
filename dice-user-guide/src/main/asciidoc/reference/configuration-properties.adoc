@@ -45,7 +45,7 @@ Read by `dice-storage-autoconfigure`.
 | `embabel.dice.store.vector-index.enabled`
 | `boolean`
 | `true`
-| Whether the proposition embedding vector index is created. Graph backend only.
+| Whether DICE creates the native proposition vector index on Neo4j. Applies to Neo4j only.
 |===
 
 The vector index's label, property, name and similarity are *not* configurable — they are fixed by

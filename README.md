@@ -2396,10 +2396,9 @@ class DiceApiConfig {
 
 ### Graph-Backed Storage (`dice-storage`)
 
-`InMemoryPropositionRepository` is for tests and demos. For persistence, the **`dice-storage`** module
-provides a graph-backed (Neo4j via [Drivine](https://github.com/drivine/drivine4j))
-`PropositionRepository` — a drop-in for the in-memory one — together with a graph `ChunkHistoryStore`
-and a `DecayManager`.
+Store propositions in Neo4j or a local SQLite file through the same `PropositionRepository` API.
+`dice-storage` uses [Drivine](https://github.com/drivine/drivine4j) and also provides a graph
+`ChunkHistoryStore` and `DecayManager`.
 
 Add `dice-starter-neo4j` (versions from the `dice-dependencies` BOM, see [Installation](#installation))
 and give Drivine one data source. You don't set a DICE property or write any beans:
@@ -2423,11 +2422,24 @@ database:
       database-name: neo4j
 ```
 
+For SQLite, use `dice-starter-sqlite` and set the path to your database file.
+
+```yaml
+database:
+  datasources:
+    local:
+      type: SQLITE
+      database-name: ./dice.db
+```
+
+Drivine opens or creates the file. If startup fails to open it, check that the directory exists
+and the application can write to it.
+
 The starter brings in `dice-storage`, the autoconfiguration and Drivine's Spring Boot starter. Drivine
 builds its factories from the data source, and DICE builds the `PersistenceManager` and
 `StatelessGraphObjectManager` from them. With those in place, the autoconfiguration registers
 `DrivinePropositionRepository` (and the chunk-history store, a scheduled decay sweep and the other
-Drivine stores) and provisions the Neo4j schema (vector + range indexes, uniqueness constraints).
+Drivine stores) and provisions the schema for the chosen backend. Neo4j also gets a native vector index.
 With no data source, DICE uses its in-memory stores. With several data sources, set
 `embabel.dice.store.datasource` to the one DICE should use; otherwise startup stops and lists them.
 Any `PropositionRepository`, `PersistenceManager` or `StatelessGraphObjectManager` bean you define
@@ -2684,7 +2696,7 @@ together, then add one starter. You don't need to define any beans.
 </dependencyManagement>
 
 <dependencies>
-    <!-- In-memory stores. Use dice-starter-neo4j instead for Neo4j. -->
+    <!-- In-memory stores. The Neo4j and SQLite starters support persistent storage. -->
     <dependency>
         <groupId>com.embabel.dice</groupId>
         <artifactId>dice-starter</artifactId>
@@ -2699,8 +2711,7 @@ together, then add one starter. You don't need to define any beans.
 | `dice-starter-sqlite` | DICE with Drivine stores in a local SQLite file, configured under `database.datasources` |
 | `dice-starter-mcp` | DICE's tools over MCP (see [MCP Server](#mcp-server)) |
 
-A SQLite starter will follow in a later release. The proposition store needs an `Ai` bean for
-embeddings, which the agent framework's starter provides.
+The proposition store needs an `Ai` bean for embeddings, which the agent framework's starter provides.
 
 ## Technology Stack
 
