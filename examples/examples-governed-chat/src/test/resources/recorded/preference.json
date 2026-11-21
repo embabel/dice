@@ -1,0 +1,12 @@
+{
+  "propositions": [
+    {
+      "text": "The customer prefers refund updates by email.",
+      "mentions": [],
+      "confidence": 0.9,
+      "decay": 0,
+      "importance": 0.7,
+      "reasoning": "The preference is explicit"
+    }
+  ]
+}

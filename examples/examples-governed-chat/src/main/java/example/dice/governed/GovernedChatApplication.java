@@ -1,0 +1,70 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package example.dice.governed;
+
+import com.embabel.agent.api.common.Ai;
+import com.embabel.agent.core.DataDictionary;
+import com.embabel.agent.rag.service.support.InMemoryNamedEntityDataRepository;
+import com.embabel.common.ai.model.LlmOptions;
+import com.embabel.dice.agent.ContextBudget;
+import com.embabel.dice.agent.Memory;
+import com.embabel.dice.audit.AuditEventListener;
+import com.embabel.dice.audit.AuditingPropositionRepository;
+import com.embabel.dice.audit.InMemoryAuditLog;
+import com.embabel.dice.common.SourceAnalysisContext;
+import com.embabel.dice.common.resolver.EscalatingEntityResolver;
+import com.embabel.dice.pipeline.PropositionPipeline;
+import com.embabel.dice.proposition.PropositionStatus;
+import com.embabel.dice.proposition.extraction.LlmPropositionExtractor;
+import com.embabel.dice.proposition.gate.ConfidenceGate;
+import com.embabel.dice.proposition.gate.ConflictClassificationGate;
+import com.embabel.dice.proposition.gate.ExtractionGatePipeline;
+import com.embabel.dice.proposition.gate.GateApplier;
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+
+import java.time.Instant;
+import java.util.List;
+
+@SpringBootApplication
+class GovernedChatApplication {
+
+    @Bean
+    GovernedChat governedChat(Ai ai) {
+        var schema = DataDictionary.fromClasses("refunds", ApprovalRole.class);
+        var entities = new InMemoryNamedEntityDataRepository(schema);
+        var source = SourceAnalysisContext.withContextId(GovernedChat.CONTEXT)
+                .withEntityResolver(EscalatingEntityResolver.withoutVector(entities))
+                .withSchema(schema)
+                .withMintNewEntities(true);
+        var audit = new InMemoryAuditLog();
+        audit.initializeBaseline(GovernedChat.CONTEXT, Instant.now(), List.of());
+        var facts = AuditingPropositionRepository.wrapping(new InMemoryPropositionRepository(), audit);
+        var extractor = LlmPropositionExtractor.builder(LlmOptions.withDefaultLlm()).withAi(ai);
+        var pipeline = PropositionPipeline.withExtractor(extractor).withRevision(new ApprovalPolicy(), facts);
+        var gates = GateApplier.of(new ExtractionGatePipeline(List.of(
+                        new ConfidenceGate(0.6), new ConflictClassificationGate())))
+                .withListener(new AuditEventListener(audit));
+        var memory = Memory.forContext(GovernedChat.CONTEXT).withRepository(facts)
+                .withEagerQuery(query -> query.withStatuses(PropositionStatus.ACTIVE).withLimit(10))
+                .withContextBudget(ContextBudget.ofTokens(4));
+        return new GovernedChat(pipeline, source, gates, facts, entities, audit, memory);
+    }
+
+    public record ApprovalRole(String name) {
+    }
+}
