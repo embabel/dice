@@ -43,6 +43,8 @@ import org.drivine.connection.JdbcConnectionProvider
 import org.drivine.manager.PersistenceManager
 import org.drivine.mapper.SubtypeRegistry
 import org.drivine.schema.SchemaCatalog
+import org.drivine.transaction.TransactionContextHolder
+import org.drivine.transaction.Transactions
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -87,6 +89,9 @@ abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
 
     @Autowired
     private lateinit var propositions: DrivinePropositionRepository
+
+    @Autowired
+    private lateinit var contextHolder: TransactionContextHolder
 
     @Autowired
     private lateinit var registeredSchemas: List<DiceStorageSchema>
@@ -172,6 +177,49 @@ abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
         assertNull(repo.findById(live.id))
         assertEquals(emptyList<Any>(), store.query(contextId, 0, 10))
         assertNull(store.asOf(contextId, live.id, recordedAt))
+    }
+
+    @Test
+    fun `a native-only caller cannot commit an unaudited claim after catching an audit failure`() {
+        val store = log()
+        val contextId = UUID.randomUUID().toString()
+        val live = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
+            text = "Native transaction audit failure", mentions = emptyList(), confidence = 0.8)
+        val repo = AuditingPropositionRepository.wrapping(propositions, store,
+            AuditContextProvider { error("attribution unavailable") })
+        store.initializeBaseline(contextId, recordedAt, emptyList())
+
+        val failure = Transactions(contextHolder).transaction {
+            assertThrows(IllegalStateException::class.java) { repo.save(live) }
+        }
+
+        assertEquals(emptyList<Any>(), store.query(contextId, 0, 10))
+        assertEquals(emptyList<AuditedProposition>(), store.beliefSetAsOf(contextId, recordedAt))
+        assertNull(repo.findById(live.id))
+        assertEquals("Joining an audit write requires a synchronized Spring-managed transaction", failure.message)
+    }
+
+    @Test
+    fun `a Spring participant cannot commit an unrecorded write on a native owner`() {
+        val store = log()
+        val contextId = UUID.randomUUID().toString()
+        val live = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
+            text = "Participating transaction audit failure", mentions = emptyList(), confidence = 0.8)
+        val repo = AuditingPropositionRepository.wrapping(propositions, store,
+            AuditContextProvider { error("attribution unavailable") })
+        store.initializeBaseline(contextId, recordedAt, emptyList())
+
+        val participant = TransactionTemplate(transactionManager)
+        val failure = Transactions(contextHolder).transaction {
+            val attempt = runCatching {
+                participant.execute { runCatching { repo.save(live) }.exceptionOrNull() }
+            }
+            attempt.exceptionOrNull() ?: attempt.getOrNull()
+        }
+
+        assertTrue(failure is IllegalStateException)
+        assertEquals(emptyList<AuditedProposition>(), store.beliefSetAsOf(contextId, recordedAt))
+        assertNull(repo.findById(live.id))
     }
 
     @Test

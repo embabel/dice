@@ -30,6 +30,7 @@ import com.fasterxml.jackson.annotation.PropertyAccessor
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import org.drivine.connection.DatabaseType
+import org.drivine.manager.DelegatingPersistenceManager
 import org.drivine.manager.PersistenceManager
 import org.jetbrains.annotations.ApiStatus
 import org.springframework.transaction.PlatformTransactionManager
@@ -285,11 +286,14 @@ class DrivineAuditLogStore @JvmOverloads constructor(
         }
     }
 
-    private fun <T> transaction(template: TransactionTemplate = transactions, action: () -> T): T =
-        checkNotNull(template.execute { status ->
+    private fun <T> transaction(template: TransactionTemplate = transactions, action: () -> T): T {
+        // Entering a Spring template can install synchronization on a native Drivine transaction.
+        val synchronizedCaller = TransactionSynchronizationManager.isActualTransactionActive() &&
+            TransactionSynchronizationManager.isSynchronizationActive()
+        return checkNotNull(template.execute { status ->
             val joined = !status.isNewTransaction
-            check(!joined || TransactionSynchronizationManager.isSynchronizationActive()) {
-                "Joining an audit write requires an active Spring transaction synchronization"
+            check(!joined || synchronizedCaller) {
+                "Joining an audit write requires a synchronized Spring-managed transaction"
             }
             try {
                 TransactionResult(action())
@@ -298,10 +302,14 @@ class DrivineAuditLogStore @JvmOverloads constructor(
                 throw failure
             }
         }).value
+    }
 
     private fun rejectCommit() {
-        // Drivine 0.6 does not consult Spring's global rollback-only flag. Throw from Spring's
-        // before-commit phase so it rolls back even when the host catches the original exception.
+        // A native Drivine owner can outlive a participating Spring template's synchronization.
+        // Record the rollback on the transaction itself, which honors rollbackOnCompletion.
+        (persistenceManager as? DelegatingPersistenceManager)?.contextHolder
+            ?.currentTransaction?.rollbackOnCompletion = true
+        // Surface a commit failure to Spring callers that catch the original exception.
         TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
             override fun beforeCommit(readOnly: Boolean) {
                 throw IllegalStateException("A joined DICE audit operation failed")

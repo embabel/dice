@@ -114,13 +114,15 @@ var audited = AuditingPropositionRepository.wrapping(
         repository.auditCanonicalLookup());
 ```
 
-The audit store declares `JOINS_HOST_TRANSACTION`. If a host transaction is already open, the
-live change and record join it and become visible on commit. Otherwise the audited boundary opens
-one for that context write. Use the same transaction manager and datasource for the repository
-and audit sink. A failed joined audit operation refuses the outer commit, including when the host
-catches the original error. A joined write requires Spring transaction synchronization. Terminal
-extraction events are recorded in their own transaction after the run commits. Joined verdict
-writes use strict failure handling. `LOG_AND_CONTINUE` applies to best-effort sinks and
+The audit store declares `JOINS_HOST_TRANSACTION`. Start the outer host transaction with
+Spring's `@Transactional` or `TransactionTemplate` and keep Spring transaction synchronization
+enabled. The live change and audit record then become visible on commit. Without a host
+transaction, the audited boundary opens one for the context write. Use the same transaction
+manager and datasource for the repository and audit sink. A failed joined audit operation refuses
+the outer commit, including when the host catches the original error. A call made directly from a
+native Drivine `Transactions.transaction` block with no Spring synchronization is refused before
+mutation. Terminal extraction events are recorded in their own transaction after the run commits.
+Joined verdict writes use strict failure handling. `LOG_AND_CONTINUE` applies to best-effort sinks and
 post-commit events.
 
 Access timestamp refresh holds the same context fence. It joins a writable host transaction.
