@@ -20,7 +20,7 @@ start. `SupportDesk.chat(chatId, text)` is the only entry point they call.
 
 | Step | Where | What to read |
 |---|---|---|
-| Define a schema | `SupportSchema.supportDictionary` | `Customer`, `Contact` and `Plan` passed to `DataDictionary.fromClasses`. A `Contact` has a name and a role, so Dana the admin is a `Contact` whose role is admin. |
+| Define a schema | `SupportSchema.supportDictionary` | `Customer`, `Contact` and `Plan` passed to `DataDictionary.fromClasses`. The dictionary gives Dana the `Contact` type. The claim and its projected relationship carry the admin role. |
 | Build the pipeline | `SupportMemory.propositionPipeline` | `PropositionPipeline` with an LLM extractor, an event listener, and ungrounded mentions dropped. |
 | Handle pipeline events | `SupportMemory.diceEvents` | DICE events are republished as Spring events, so any bean can handle one with `@EventListener`. |
 | Keep facts and entities | `SupportMemory.propositionRepository`, `SupportMemory.supportEntities` | An in-memory fact store and an in-memory entity store, one of each for the account. |
