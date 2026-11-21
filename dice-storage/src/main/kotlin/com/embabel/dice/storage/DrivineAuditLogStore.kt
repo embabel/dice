@@ -46,7 +46,9 @@ import java.util.function.Supplier
 /**
  * Durable audit for a Drivine proposition repository. Register [AuditLogSchema.forRegistration]
  * for storage ownership and publish a Drivine catalog using [diceStorageCatalog]. Target the
- * catalog at the repository's datasource and share its transaction manager.
+ * catalog at the repository's datasource and share its transaction manager. Pass the direct
+ * [org.drivine.manager.PersistenceManagerFactory] manager for that datasource so audit can
+ * mark its native transaction for rollback.
  *
  * Every mutation locks the context header before reading it. Sequence assignment, baseline
  * installation, and erasure then share that transaction with the proposition write. SQLite
@@ -56,10 +58,14 @@ import java.util.function.Supplier
  */
 @ApiStatus.Experimental
 class DrivineAuditLogStore @JvmOverloads constructor(
-    private val persistenceManager: PersistenceManager,
+    persistenceManager: PersistenceManager,
     transactionManager: PlatformTransactionManager,
     private val clock: Clock = Clock.systemUTC(),
 ) : AbstractAuditLog() {
+
+    private val persistenceManager = requireNotNull(persistenceManager as? DelegatingPersistenceManager) {
+        "Durable audit requires the direct Drivine PersistenceManagerFactory manager"
+    }
 
     override val transactionParticipation = AuditTransactionParticipation.JOINS_HOST_TRANSACTION
     private val transactions = TransactionTemplate(transactionManager)
@@ -307,8 +313,7 @@ class DrivineAuditLogStore @JvmOverloads constructor(
     private fun rejectCommit() {
         // A native Drivine owner can outlive a participating Spring template's synchronization.
         // Record the rollback on the transaction itself, which honors rollbackOnCompletion.
-        (persistenceManager as? DelegatingPersistenceManager)?.contextHolder
-            ?.currentTransaction?.rollbackOnCompletion = true
+        persistenceManager.contextHolder.currentTransaction?.rollbackOnCompletion = true
         // Surface a commit failure to Spring callers that catch the original exception.
         TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
             override fun beforeCommit(readOnly: Boolean) {

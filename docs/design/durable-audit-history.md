@@ -102,13 +102,18 @@ SchemaCatalog auditSchemaCatalog(
 }
 ```
 
-Construct the audit store with the proposition repository's persistence manager and transaction
-manager. SQLite requires `IMMEDIATE` transactions. Drivine's default SQLite datasource configures
-this mode. SQLite updates the audit header as a JSON property document. Lock and counter
-updates can rewrite that document, so a large baseline increases write cost.
+Pass the direct manager returned by `PersistenceManagerFactory.get(datasource)` to the audit
+store. Use the proposition repository's datasource and transaction manager. The audit store checks
+the manager at construction so it can mark the native transaction for rollback. Repository
+decorators can stay in place.
+
+SQLite requires `IMMEDIATE` transactions. Drivine's default SQLite datasource configures this mode.
+SQLite updates the audit header as a JSON property document. Lock and counter updates can rewrite
+that document, so a large baseline increases write cost.
 
 ```java
-var audit = new DrivineAuditLogStore(persistenceManager, transactionManager);
+var audit = new DrivineAuditLogStore(
+        persistenceManagerFactory.get(datasource), transactionManager);
 var audited = AuditingPropositionRepository.wrapping(
         repository, audit, attributionProvider, AuditFailurePolicy.FAIL_WRITE,
         repository.auditCanonicalLookup());

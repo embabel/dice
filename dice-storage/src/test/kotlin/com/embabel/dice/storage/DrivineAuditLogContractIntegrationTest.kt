@@ -200,6 +200,16 @@ abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
     }
 
     @Test
+    fun `durable audit requires the direct factory persistence manager`() {
+        val wrapped = object : PersistenceManager by persistenceManager {}
+
+        val failure = assertThrows(IllegalArgumentException::class.java) {
+            DrivineAuditLogStore(wrapped, transactionManager, auditClock)
+        }
+        assertEquals("Durable audit requires the direct Drivine PersistenceManagerFactory manager", failure.message)
+    }
+
+    @Test
     fun `a Spring participant cannot commit an unrecorded write on a native owner`() {
         val store = log()
         val contextId = UUID.randomUUID().toString()
