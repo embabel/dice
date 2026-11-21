@@ -113,8 +113,9 @@ class CorrectionsMemory {
      * The reviser. It asks the model how a new fact relates to the similar ones already
      * stored.
      *
-     * <p>Every fact it touches is scored for trust by where it came from: billing facts get
-     * 0.9 and chat facts 0.6, through {@link SourceAuthority}. When the model calls two facts
+     * <p>Eligible new and reinforced facts receive a trust score from {@link SourceAuthority}:
+     * 0.9 for billing and 0.6 for chat. A contradiction leaves the new fact unscored and keeps
+     * the original score. When the model calls two facts
      * contradictory, the temporal conflict detector checks whether the fact is one that
      * changes over time, such as a customer's plan, and the newer one simply replaced the
      * older. {@link PredicateStampingReviser} marks plan facts that way first.
