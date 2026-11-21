@@ -62,12 +62,14 @@ class AuditEventListener @JvmOverloads constructor(
     }
 
     private fun append(contextId: String, afterCommit: Boolean = false, entry: () -> AuditEntry) {
-        val policy = if (!afterCommit && sink.transactionParticipation == AuditTransactionParticipation.JOINS_HOST_TRANSACTION) {
-            AuditFailurePolicy.FAIL_WRITE
-        } else failurePolicy
+        val joins = !afterCommit && sink.transactionParticipation == AuditTransactionParticipation.JOINS_HOST_TRANSACTION
+        val policy = if (joins) AuditFailurePolicy.FAIL_WRITE else failurePolicy
         writeAudit(sink, policy, contextId, affectsBeliefSet = false) {
-            val payload = entry()
-            if (afterCommit) sink.appendAfterCommit(contextId, payload) else sink.append(contextId, payload)
+            when {
+                afterCommit -> sink.appendAfterCommit(contextId, entry())
+                joins -> sink.duringWrite(contextId) { sink.append(contextId, entry()) }
+                else -> sink.append(contextId, entry())
+            }
         }
     }
 }

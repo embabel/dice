@@ -56,10 +56,11 @@ interface AuditSink {
     fun <T> duringWrite(contextId: String, action: Supplier<T>): T
 
     /**
-     * Fence first assignment of a globally keyed proposition ID across contexts. Called inside
-     * [duringWrite]. The ID fence must survive until the same write boundary completes.
+     * Fence first assignments of globally keyed proposition IDs across contexts. Called inside
+     * [duringWrite]. Acquire all requested fences in a stable order and hold them until the
+     * same write boundary completes.
      */
-    fun <T> duringPropositionCreation(contextId: String, propositionId: String, action: Supplier<T>): T
+    fun <T> duringPropositionCreations(contextId: String, propositionIds: Collection<String>, action: Supplier<T>): T
 
     /** Records a terminal event published after its original operation committed. */
     fun appendAfterCommit(contextId: String, entry: AuditEntry): AuditRecord = append(contextId, entry)

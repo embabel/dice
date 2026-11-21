@@ -17,8 +17,10 @@ package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.common.ExtractionRunTransitioned
+import com.embabel.dice.common.PropositionRejected
 import com.embabel.dice.audit.AuditCoverageException
 import com.embabel.dice.audit.AuditContextProvider
+import com.embabel.dice.audit.AuditAttribution
 import com.embabel.dice.audit.InMemoryAuditLog
 import com.embabel.dice.audit.AuditEntry
 import com.embabel.dice.audit.AuditEventListener
@@ -40,6 +42,7 @@ import com.embabel.dice.temporal.TemporalMetadata
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.SchemaCatalog
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -120,6 +123,30 @@ abstract class DrivineAuditLogContractCases : AbstractAuditLogContractTest() {
         val event = store.query(contextId, 0, 10).single()
         assertEquals(AuditKind.EXTRACTION_RUN_ENDED, event.kind)
         assertEquals(AuditRunRef(AuditRunKind.EXTRACTION, key.runId), event.attribution.run)
+    }
+
+    @Test
+    fun `a caught strict verdict provider failure prevents a host commit`() {
+        val store = log()
+        val contextId = UUID.randomUUID().toString()
+        val live = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(contextId),
+            text = "Must roll back", mentions = emptyList(), confidence = 0.8)
+        val repo = AuditingPropositionRepository.wrapping(
+            propositions, store, AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE, propositions.auditCanonicalLookup(),
+        )
+        val listener = AuditEventListener(store, AuditContextProvider { error("attribution unavailable") })
+        store.initializeBaseline(contextId, recordedAt, emptyList())
+
+        assertThrows(IllegalStateException::class.java) {
+            TransactionTemplate(transactionManager).executeWithoutResult {
+                repo.save(live)
+                assertThrows(IllegalStateException::class.java) {
+                    listener.onEvent(PropositionRejected(live.copy(id = "rejected"), "evidence_floor"))
+                }
+            }
+        }
+        assertNull(repo.findById(live.id))
+        assertEquals(emptyList<Any>(), store.query(contextId, 0, 10))
     }
 
     @Test
@@ -263,43 +290,87 @@ class DrivineAuditLogContractIntegrationTest : DrivineAuditLogContractCases() {
         val secondContext = UUID.randomUUID().toString()
         val claim = Proposition(id = UUID.randomUUID().toString(), contextId = ContextId(firstContext),
             text = "Initial owner", mentions = emptyList(), confidence = 0.8)
-        val bothRead = CyclicBarrier(2)
-        val firstFinished = CountDownLatch(1)
-        val ordering = ThreadLocal<Boolean>()
+        val firstWritePending = CountDownLatch(1)
+        val allowCommit = CountDownLatch(1)
+        val contenderInitialRead = CountDownLatch(1)
+        val contenderRecheck = CountDownLatch(1)
+        val contenderReads = ThreadLocal<Int>()
         val delegate = object : PropositionRepository by graphPropositions {
             override fun findById(id: String): Proposition? {
                 val value = graphPropositions.findById(id)
-                val first = ordering.get() ?: return value
-                ordering.remove()
-                bothRead.await(10, TimeUnit.SECONDS)
-                if (!first) check(firstFinished.await(10, TimeUnit.SECONDS))
+                val read = contenderReads.get() ?: return value
+                contenderReads.set(read + 1)
+                if (read == 0) {
+                    assertNull(value)
+                    contenderInitialRead.countDown()
+                } else if (read == 1) contenderRecheck.countDown()
                 return value
             }
         }
         val firstSink = log()
         val otherSink = log()
-        fun wrap(sink: DrivineAuditLogStore) = AuditingPropositionRepository.wrapping(
-            delegate, sink, AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE, graphPropositions.auditCanonicalLookup(),
+        val firstRepo = AuditingPropositionRepository.wrapping(
+            delegate, firstSink,
+            AuditContextProvider {
+                firstWritePending.countDown()
+                check(allowCommit.await(10, TimeUnit.SECONDS))
+                AuditAttribution()
+            },
+            AuditFailurePolicy.FAIL_WRITE, graphPropositions.auditCanonicalLookup(),
+        )
+        val otherRepo = AuditingPropositionRepository.wrapping(
+            delegate, otherSink, AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE,
+            graphPropositions.auditCanonicalLookup(),
         )
         val pool = Executors.newFixedThreadPool(2)
         try {
-            val first = pool.submit(Callable {
-                ordering.set(true)
-                try {
-                    wrap(firstSink).save(claim)
-                } finally {
-                    firstFinished.countDown()
-                }
-            })
+            val first = pool.submit(Callable { firstRepo.save(claim) })
+            check(firstWritePending.await(10, TimeUnit.SECONDS))
             val second = pool.submit(Callable {
-                ordering.set(false)
-                runCatching { wrap(otherSink).save(claim.copy(contextId = ContextId(secondContext), text = "Competing owner")) }
+                contenderReads.set(0)
+                runCatching { otherRepo.save(claim.copy(contextId = ContextId(secondContext), text = "Competing owner")) }
             })
+            check(contenderInitialRead.await(10, TimeUnit.SECONDS))
+            assertFalse(contenderRecheck.await(300, TimeUnit.MILLISECONDS))
+            allowCommit.countDown()
+
             assertEquals(claim.id, first.get(10, TimeUnit.SECONDS).id)
             assertEquals(true, second.get(10, TimeUnit.SECONDS).exceptionOrNull() is IllegalArgumentException)
             assertEquals(firstContext, graphPropositions.findById(claim.id)?.contextId?.value)
             assertEquals(1, firstSink.history(firstContext, claim.id).size)
             assertEquals(emptyList<Any>(), otherSink.history(secondContext, claim.id))
+        } finally {
+            allowCommit.countDown()
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `batches with opposite stripe orders both preserve their caller order`() {
+        val firstContext = UUID.randomUUID().toString()
+        val secondContext = UUID.randomUUID().toString()
+        val prefix = UUID.randomUUID().toString()
+        fun claims(contextId: String, ids: List<String>) = ids.map { id ->
+            Proposition(id = prefix + id, contextId = ContextId(contextId),
+                text = "Claim $id", mentions = emptyList(), confidence = 0.8)
+        }
+
+        // Aa hashes as BB and Ab hashes as BC.
+        val first = claims(firstContext, listOf("Aa", "Ab"))
+        val second = claims(secondContext, listOf("BC", "BB"))
+        val barrier = CyclicBarrier(2)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val writes = listOf(first, second).map { batch ->
+                pool.submit(Callable {
+                    val repo = AuditingPropositionRepository.wrapping(graphPropositions, log(),
+                        AuditContextProvider.NONE, AuditFailurePolicy.FAIL_WRITE, graphPropositions.auditCanonicalLookup())
+                    barrier.await(10, TimeUnit.SECONDS)
+                    repo.saveAllReturningCanonical(batch)
+                })
+            }
+            assertEquals(first.map { it.id }, writes[0].get(15, TimeUnit.SECONDS).canonicalPropositions.map { it.id })
+            assertEquals(second.map { it.id }, writes[1].get(15, TimeUnit.SECONDS).canonicalPropositions.map { it.id })
         } finally {
             pool.shutdownNow()
         }

@@ -48,7 +48,7 @@ open class AuditingPropositionRepository private constructor(
                 saveInContext(contextId, proposition, current)
             } else {
                 // Check ownership again after a competing context has finished creating this ID.
-                sink.duringPropositionCreation(contextId, proposition.id) {
+                sink.duringPropositionCreations(contextId, listOf(proposition.id)) {
                     saveInContext(contextId, proposition, delegate.findById(proposition.id))
                 }
             }
@@ -82,7 +82,9 @@ open class AuditingPropositionRepository private constructor(
         val contextId = inputs.firstOrNull()?.contextId?.value
         val persist = { PropositionPersistenceResult.of(inputs, inputs.map(::save)) }
         return if (contextId != null && inputs.all { it.contextId.value == contextId }) {
-            sink.duringWrite(contextId, persist)
+            sink.duringWrite(contextId) {
+                sink.duringPropositionCreations(contextId, inputs.map { it.id }, persist)
+            }
         } else persist()
     }
 

@@ -285,7 +285,7 @@ public final class com/embabel/dice/audit/AuditRunRef {
 public abstract interface class com/embabel/dice/audit/AuditSink {
 	public abstract fun append (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
 	public fun appendAfterCommit (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
-	public abstract fun duringPropositionCreation (Ljava/lang/String;Ljava/lang/String;Ljava/util/function/Supplier;)Ljava/lang/Object;
+	public abstract fun duringPropositionCreations (Ljava/lang/String;Ljava/util/Collection;Ljava/util/function/Supplier;)Ljava/lang/Object;
 	public abstract fun duringWrite (Ljava/lang/String;Ljava/util/function/Supplier;)Ljava/lang/Object;
 	public abstract fun eraseContext (Ljava/lang/String;Lcom/embabel/dice/audit/AuditActorRef;)Lcom/embabel/dice/audit/AuditRecord;
 	public abstract fun getTransactionParticipation ()Lcom/embabel/dice/audit/AuditTransactionParticipation;
@@ -404,7 +404,7 @@ public final class com/embabel/dice/audit/InMemoryAuditLog : com/embabel/dice/au
 	public fun <init> (Ljava/time/Clock;)V
 	public synthetic fun <init> (Ljava/time/Clock;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun append (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)Lcom/embabel/dice/audit/AuditRecord;
-	public fun duringPropositionCreation (Ljava/lang/String;Ljava/lang/String;Ljava/util/function/Supplier;)Ljava/lang/Object;
+	public fun duringPropositionCreations (Ljava/lang/String;Ljava/util/Collection;Ljava/util/function/Supplier;)Ljava/lang/Object;
 	public fun duringWrite (Ljava/lang/String;Ljava/util/function/Supplier;)Ljava/lang/Object;
 	public fun eraseContext (Ljava/lang/String;Lcom/embabel/dice/audit/AuditActorRef;)Lcom/embabel/dice/audit/AuditRecord;
 	public fun getTransactionParticipation ()Lcom/embabel/dice/audit/AuditTransactionParticipation;
