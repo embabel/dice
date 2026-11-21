@@ -16,7 +16,9 @@
 package com.embabel.dice.audit
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.common.PropositionPersisted
 import com.embabel.dice.common.PropositionRejected
+import com.embabel.dice.proposition.EventEmittingPropositionRepository
 import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionRepository
@@ -38,6 +40,32 @@ import java.util.concurrent.TimeUnit
 import java.util.function.Supplier
 
 class AuditingPropositionRepositoryTest {
+
+    @Test
+    fun `audit rejects an inner synchronous repository emitter`() {
+        val emitter = EventEmittingPropositionRepository.wrapping(InMemoryPropositionRepository())
+
+        assertThrows(IllegalArgumentException::class.java) {
+            AuditingPropositionRepository.wrapping(emitter, InMemoryAuditLog())
+        }
+    }
+
+    @Test
+    fun `an outer repository emitter allows a save listener to pin in audit order`() {
+        val now = Instant.parse("2026-01-02T00:00:00Z")
+        val log = InMemoryAuditLog(Clock.fixed(now, ZoneOffset.UTC))
+        val audited = AuditingPropositionRepository.wrapping(InMemoryPropositionRepository(), log)
+        val repo = EventEmittingPropositionRepository.wrapping(audited) { event ->
+            if (event is PropositionPersisted) audited.pin(event.proposition.id)
+        }
+        val claim = Proposition(id = "first", contextId = ContextId("scope"), text = "First", mentions = emptyList(), confidence = 0.8)
+        log.initializeBaseline("scope", now, emptyList())
+
+        repo.save(claim)
+
+        assertEquals(listOf(AuditKind.CREATED, AuditKind.PINNED), log.history("scope", claim.id).map { it.kind })
+        assertEquals(true, log.asOf("scope", claim.id, now)?.pinned)
+    }
 
     @Test
     fun `concurrent first writes cannot claim one globally keyed id in different contexts`() {

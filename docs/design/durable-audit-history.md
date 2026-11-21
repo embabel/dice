@@ -27,6 +27,9 @@ non-active states. Transaction timestamps place decisions on the audit timeline.
    A context identifier selects the data. The application decides who can access it.
 2. Instantiate an audit sink and wrap the repository with
    `AuditingPropositionRepository.wrapping(repository, sink, attributionProvider)`.
+   If the repository emits lifecycle events, use
+   `EventEmittingPropositionRepository.wrapping(audited, listener)`.
+   Run other synchronous callbacks that write propositions after the audited operation returns.
    Register `AuditEventListener` on the host's gate and extraction event paths for verdicts and run
    outcomes. Continue routing lifecycle writes, including decay, collection, and quarantine,
    through the wrapped repository. Configure the attribution provider with opaque identifiers and

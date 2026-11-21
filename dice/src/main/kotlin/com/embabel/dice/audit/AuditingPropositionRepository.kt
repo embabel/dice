@@ -16,6 +16,7 @@
 package com.embabel.dice.audit
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.proposition.EventEmittingPropositionRepository
 import com.embabel.dice.proposition.GraphQueryCapable
 import com.embabel.dice.proposition.PropositionReembedReport
 import com.embabel.dice.provenance.ProvenanceEntry
@@ -30,6 +31,8 @@ import org.jetbrains.annotations.ApiStatus
  * Opt-in audited mutation boundary. Route every tracked write for a covered context through a
  * wrapper with the same audit sink, including application maintenance tasks. Writes made directly
  * to the underlying repository or a backend-specific maintenance API are outside audit coverage.
+ * Put [EventEmittingPropositionRepository] around the audited repository. Run synchronous
+ * callbacks that write propositions after the audited operation returns.
  */
 @ApiStatus.Experimental
 open class AuditingPropositionRepository private constructor(
@@ -39,6 +42,12 @@ open class AuditingPropositionRepository private constructor(
     private val failurePolicy: AuditFailurePolicy,
     private val canonicalLookup: AuditCanonicalLookup?,
 ) : PropositionRepository by delegate {
+
+    init {
+        require(delegate !is EventEmittingPropositionRepository<*>) {
+            "Wrap the audited repository with EventEmittingPropositionRepository so events follow audit recording"
+        }
+    }
 
     override fun save(proposition: Proposition): Proposition {
         val contextId = proposition.contextId.value
