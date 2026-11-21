@@ -28,6 +28,8 @@ import com.embabel.dice.proposition.PropositionStatus
 import com.embabel.dice.proposition.PropositionStoreType
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.embabel.dice.store.ScopedReads
+import org.jetbrains.annotations.ApiStatus
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
@@ -101,6 +103,19 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
             failures.size, loaded.size, path, notAttempted, failures.map { it.first }, failures.first().second.message,
         )
     }
+
+    /**
+     * Opens an opt-in read-only view. Each call through it requires a host-supplied spec and budget.
+     * The view also implements scoped vector search when this repository has an embedder.
+     */
+    @ApiStatus.Experimental
+    fun scopedReads(): ScopedReads = embeddingService?.let { embedder ->
+        LocalScopedReads.withVectors(::scopedSnapshot, embedder::embed, writeLock, embeddings::get)
+    } ?: LocalScopedReads(::scopedSnapshot)
+
+    /** Waits for the pending disk write to commit or roll back before taking the scoped snapshot. */
+    private fun scopedSnapshot(): Collection<Proposition> =
+        synchronized(writeLock) { propositions.values.toList() }
 
     override val luceneSyntaxNotes: String
         get() = "no lucene support"

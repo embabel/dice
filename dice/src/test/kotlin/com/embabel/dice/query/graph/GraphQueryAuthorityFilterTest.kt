@@ -131,6 +131,47 @@ class GraphQueryAuthorityFilterTest {
         assertFalse(result.neighbours.any { it.entityId == "NATIVE" })
     }
 
+    @Test
+    fun `a scoped neighbourhood keeps both the context and authority filters`() {
+        val query = GraphQuery.of(storeWithSeparateNativeFilters(), contextId.value)
+
+        val result = query.neighborhood("A", minAuthority = AuthorityTier.SECONDARY)
+
+        assertEquals(listOf("B"), result.neighbours.map { it.entityId })
+    }
+
+    @Test
+    fun `a scoped path keeps both the context and authority filters`() {
+        val query = GraphQuery.of(storeWithSeparateNativeFilters(), contextId.value)
+
+        assertEquals(listOf("A", "B"), query.pathBetween("A", "B", AuthorityTier.SECONDARY).single().entityIds)
+        assertTrue(query.pathBetween("A", "C", AuthorityTier.SECONDARY).isEmpty())
+        assertTrue(query.pathBetween("A", "D", AuthorityTier.SECONDARY).isEmpty())
+    }
+
+    // The native overloads apply the filter they receive. Only the portable facade can apply both.
+    private fun storeWithSeparateNativeFilters(): PropositionStore {
+        val backing = store()
+        backing.save(edge("ad", "A", "D", ConnectorRef("gmail", "msg-2")).copy(contextId = ContextId("other")))
+
+        return object : PropositionStore by backing, GraphQueryCapable {
+            override val honorsContextFilter = true
+            override val honorsAuthorityFilter = true
+
+            override fun neighborhood(entityId: String, depth: Int, contextId: ContextId?): GraphNeighborhood =
+                GraphQuery(backing, contextId).neighborhood(entityId, depth)
+
+            override fun neighborhood(entityId: String, depth: Int, minAuthority: AuthorityTier?): GraphNeighborhood =
+                GraphQuery(backing).neighborhood(entityId, depth, minAuthority)
+
+            override fun pathBetween(entityIdA: String, entityIdB: String, contextId: ContextId?): List<GraphPath> =
+                GraphQuery(backing, contextId).pathBetween(entityIdA, entityIdB)
+
+            override fun pathBetween(entityIdA: String, entityIdB: String, minAuthority: AuthorityTier?): List<GraphPath> =
+                GraphQuery(backing).pathBetween(entityIdA, entityIdB, minAuthority)
+        }
+    }
+
     /** A native store that filters by authority itself, recording the floor it was handed. */
     private class HonoringNativeStore(
         delegate: InMemoryPropositionRepository,

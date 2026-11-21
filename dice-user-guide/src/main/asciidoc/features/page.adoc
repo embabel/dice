@@ -36,7 +36,7 @@ never have to guess whether a feature is active.
 | A `PrologProjector` bean. Experimental.
 
 | <<features-scoped-reads>>
-| A store that lists `StoreCapability.SCOPED_READS`. Experimental.
+| An opt-in `scopedReads()` view or a store that reports the capability. Experimental.
 |===
 
 include::graph-storage.adoc[]

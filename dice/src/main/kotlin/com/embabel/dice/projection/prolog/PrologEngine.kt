@@ -15,6 +15,8 @@
  */
 package com.embabel.dice.projection.prolog
 
+import it.unibo.tuprolog.core.Indicator
+import it.unibo.tuprolog.core.Rule
 import it.unibo.tuprolog.core.Struct
 import it.unibo.tuprolog.core.Substitution
 import it.unibo.tuprolog.core.Term
@@ -50,23 +52,20 @@ data class QueryResult(
  * This class is immutable - asserting facts returns a new instance.
  */
 class PrologEngine private constructor(
-    private val theoryString: String,
+    private val parsedTheory: Lazy<Theory>,
 ) {
-    private val logger = LoggerFactory.getLogger(PrologEngine::class.java)
+    private constructor(theoryString: String) : this(lazy { loadTheory(theoryString) })
 
     private val solver: Solver by lazy {
-        val theory = if (theoryString.isNotBlank()) {
-            try {
-                Theory.parse(theoryString)
-            } catch (e: ParseException) {
-                logger.error("Failed to parse Prolog theory: {}", e.message)
-                Theory.empty()
-            }
-        } else {
-            Theory.empty()
-        }
-        ClassicSolverFactory.solverWithDefaultBuiltins(staticKb = theory)
+        ClassicSolverFactory.solverWithDefaultBuiltins(staticKb = parsedTheory.value)
     }
+
+    // Each evidence request gets its own solver state over the same parsed rules.
+    @JvmSynthetic
+    internal fun fresh(): PrologEngine = PrologEngine(parsedTheory)
+
+    @JvmSynthetic
+    internal fun rulesFor(indicator: Indicator): Sequence<Rule> = parsedTheory.value[indicator]
 
     /**
      * Execute a query and return whether it succeeds.
@@ -154,6 +153,28 @@ class PrologEngine private constructor(
             .mapNotNull { it.bindings[variableName] }
     }
 
+    /**
+     * Solves a goal that is already a parsed term and returns every answer's bindings as terms, keyed by the
+     * goal's own variables, so callers can fill in the goal without going through text. Every answer is worked
+     * out before this returns. Empty when nothing is found or the solve fails.
+     *
+     * The engine leaves anonymous `_` variables out of the bindings, so give them names first if their values
+     * are wanted.
+     *
+     * @param goal the parsed goal
+     * @return one set of bindings per answer, in the order Prolog finds them
+     */
+    internal fun solveTerm(goal: Struct): List<Substitution.Unifier> =
+        try {
+            solver.solve(goal)
+                .filterIsInstance<Solution.Yes>()
+                .map { it.substitution }
+                .toList()
+        } catch (e: Exception) {
+            logger.error("Error executing query: {}", goal, e)
+            emptyList()
+        }
+
     private fun extractBindings(substitution: Substitution): Map<String, String> {
         if (substitution is Substitution.Unifier) {
             return substitution.entries
@@ -175,6 +196,16 @@ class PrologEngine private constructor(
     }
 
     companion object {
+        private val logger = LoggerFactory.getLogger(PrologEngine::class.java)
+
+        private fun loadTheory(source: String): Theory =
+            if (source.isBlank()) Theory.empty() else try {
+                Theory.parse(source)
+            } catch (e: ParseException) {
+                logger.error("Failed to parse Prolog theory: {}", e.message)
+                Theory.empty()
+            }
+
         /**
          * Create an engine from a PrologProjectionResult.
          * Loads the complete theory including facts, confidence, and grounding.

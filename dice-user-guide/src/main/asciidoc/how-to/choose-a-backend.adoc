@@ -2,20 +2,19 @@
 === Choose a storage backend
 
 *Prerequisites*: a DICE starter on the classpath. `dice-starter` gives you the in-memory stores and
-`dice-starter-neo4j` gives you the Drivine stores on Neo4j. Both bring in `dice-storage-autoconfigure`.
+`dice-starter-neo4j` and `dice-starter-sqlite` enable the Drivine stores. All three bring
+in `dice-storage-autoconfigure`.
 
-The starter you add is what decides. With `dice-starter-neo4j` on the classpath, DICE looks at what
-your application sets up: when Drivine is configured, it uses its Drivine stores, and when it isn't,
-it uses its in-memory stores. You don't set a property for that. The code you write against
-`PropositionRepository` is the same either way.
+With either Drivine starter, DICE uses its Drivine stores when the application configures
+Drivine. Otherwise it uses its in-memory stores. The application uses the same
+`PropositionRepository` API in both cases.
 
-Drivine counts as configured when your application has a Drivine `PersistenceManager` bean. With
-`dice-starter-neo4j` you don't write that bean yourself: once Drivine has a data source, DICE builds
-it for you. Which database it talks to is decided by Drivine's own configuration, not by DICE.
+Drivine counts as configured when the application has a Drivine `PersistenceManager` bean.
+Once you give either starter a data source, DICE builds that bean for you. The data source's
+Drivine configuration selects the database.
 
-Without `dice-starter-neo4j`, DICE keeps its in-memory stores, just as it always has, even if your
-application uses Drivine for its own data. It builds no Drivine managers for you and writes no schema
-to your database. Without the starter, DICE wires its Drivine stores only when you set the
+Without either Drivine starter, DICE keeps its in-memory stores even if your application uses
+Drivine for its own data. Without the starter, DICE wires its Drivine stores only when you set the
 deprecated `embabel.dice.store.type=graph`, and then they run on the `PersistenceManager` and
 `StatelessGraphObjectManager` your application defines.
 
@@ -24,7 +23,7 @@ deprecated `embabel.dice.store.type=graph`, and then they run on the `Persistenc
 | Backend | How you get it | Choose it when
 
 | In-memory
-| The default. Add `dice-starter`, or add `dice-starter-neo4j` and give Drivine no data source.
+| The default. Add `dice-starter`, or omit the data source with either Drivine starter.
 | Development, tests, single-process applications, and anything where losing the store on restart is
   acceptable. Needs an `Ai` bean for embeddings.
 
@@ -36,15 +35,17 @@ deprecated `embabel.dice.store.type=graph`, and then they run on the `Persistenc
 | Add `dice-starter-neo4j` and one entry under `database.datasources`.
 | Production. Durable, concurrent, with native graph traversal, a vector index, and decay applied in
   the database.
-|===
 
-SQLite will get a starter of its own in a later release.
+| Graph (Drivine/SQLite)
+| Add `dice-starter-sqlite` and a `SQLITE` entry under `database.datasources`.
+| Durable storage in a local file. SQLite serializes writes and works without a database server.
+|===
 
 ==== Switching to the graph backend
 
 First, import the `dice-dependencies` BOM so every DICE module and Drivine stay on versions that
-work together, then swap `dice-starter` for `dice-starter-neo4j`. The BOM supplies the versions, so
-the starter needs none:
+work together. The BOM supplies the version for whichever starter you choose. For Neo4j,
+swap `dice-starter` for `dice-starter-neo4j`.
 
 [source,xml]
 ----
@@ -108,14 +109,32 @@ embabel:
 With several data sources and none named, or with a name Drivine doesn't have, startup stops and
 lists the data sources that are configured. With only one, you can leave the property out.
 
-If your configuration still sets `embabel.dice.store.type`, you can remove it once
-`dice-starter-neo4j` is on the classpath. It is deprecated, and <<reference-configuration-properties>>
+If your configuration still sets `embabel.dice.store.type`, you can remove it once a Drivine
+starter is on the classpath. It is deprecated, and <<reference-configuration-properties>>
 lists what each value still does. Don't remove `graph` without adding the starter, though: without
 it, DICE would go back to its in-memory stores.
 
 See <<features-graph-storage>> for the full activation detail.
 
-==== What changes when you switch
+==== Using a SQLite file
+
+Choose `dice-starter-sqlite` in the same dependency declaration. It includes the SQLite JDBC
+driver. Set the data source's type to `SQLITE` and use the database name for the file path.
+
+[source,yaml]
+----
+database:
+  datasources:
+    local:
+      type: SQLITE
+      database-name: ./dice.db
+----
+
+Drivine opens or creates the file and DICE builds the stores and applies their schema. SQLite
+runs similarity searches over stored embeddings. The native Neo4j vector index described below is
+specific to Neo4j.
+
+==== What changes when you switch to Neo4j
 
 [cols="1,1,1", options="header"]
 |===
@@ -148,7 +167,7 @@ See <<features-graph-storage>> for the full activation detail.
 
 ==== Using your own Drivine beans
 
-This is for apps with `dice-starter-neo4j`. You only need it when DICE's choice of Drivine beans
+This applies to both Drivine starters. You only need it when DICE's choice of Drivine beans
 doesn't suit you, for example when the `PersistenceManager` should come from somewhere other than one
 of Drivine's factories. Define both
 beans yourself, on the same database, and DICE uses them instead of building its own. Define only one

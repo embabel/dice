@@ -1,11 +1,12 @@
 [[features-vector-index]]
 === Vector index on Neo4j
 
-*Activation*: `embabel.dice.store.vector-index.enabled=true` — on by default, and only takes effect
-with `embabel.dice.store.type=graph` and an `Ai` bean present.
+*Activation*: DICE creates the native vector index by default when its Drivine stores use Neo4j
+and an embedding model is available. `embabel.dice.store.vector-index.enabled=false` disables
+index creation.
 
-*Availability*: `dice-storage-autoconfigure`. No extra infrastructure beyond the Neo4j you already
-need for the graph backend.
+*Availability*: `dice-storage-autoconfigure` with Neo4j. SQLite searches stored embeddings without
+a native vector index.
 
 ==== When to use it
 
@@ -27,12 +28,14 @@ something you want to schedule yourself.
 
 ==== How to enable
 
+Configure a Neo4j data source as described in <<how-to-choose-a-backend>>. The index defaults to
+enabled.
+
 [source,yaml]
 ----
 embabel:
   dice:
     store:
-      type: graph
       vector-index:
         enabled: true    # the default
 ----
@@ -70,8 +73,8 @@ returns `false` if no usable model is available yet. DICE does not detect provid
 this method on behalf of the host. `ensure()` does not reshape an index built for an earlier model.
 
 When changing a model for a store that already has propositions, call
-`PropositionRepository.reembedAll()` after selecting the new embedding service. The graph backend
-rewrites proposition vectors and, if the dimension changed, drops and recreates its vector index.
+`PropositionRepository.reembedAll()` after selecting the new embedding service. It rewrites
+proposition vectors. On Neo4j, it also recreates the vector index if the dimension changed.
 The method returns `PropositionReembedReport`, with the number of propositions re-embedded and an
 `indexRecreated` flag. A successful call leaves the vectors and index at the new dimension. In
 0.3.0, a failed re-embed can leave the index absent; rerun it after correcting the failure before

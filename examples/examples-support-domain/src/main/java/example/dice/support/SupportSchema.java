@@ -1,0 +1,71 @@
+/*
+ * Copyright 2024-2026 Embabel Pty Ltd.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package example.dice.support;
+
+import com.embabel.agent.core.DataDictionary;
+import com.embabel.agent.rag.model.NamedEntity;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+/**
+ * The kinds of thing a support chat can mention, and the schema DICE extracts with.
+ */
+@Configuration(proxyBeanMethods = false)
+public class SupportSchema {
+
+    /**
+     * A company with a support account.
+     *
+     * <p>A type in the extraction schema. The model tags a mention of one as {@code Customer}.
+     */
+    public interface Customer extends NamedEntity {
+    }
+
+    /**
+     * A person who talks to support for a customer, such as Dana, the account's admin.
+     *
+     * <p>A type in the extraction schema. The model tags a mention of one as {@code Contact}.
+     */
+    public interface Contact extends NamedEntity {
+
+        /**
+         * @return what the person does for the customer, for example {@code admin}
+         */
+        String getRole();
+    }
+
+    /**
+     * A subscription plan a customer can be on.
+     *
+     * <p>A type in the extraction schema. The model tags a mention of one as {@code Plan}.
+     */
+    public interface Plan extends NamedEntity {
+    }
+
+    /**
+     * The schema lists the kinds of thing a chat can mention. DICE shows it to the model, and
+     * mentions come back tagged Customer, Contact or Plan.
+     *
+     * <p>The agent platform has a {@code DataDictionary} bean too, so whoever needs this one
+     * asks for it by name with {@code @Qualifier("supportDictionary")}.
+     *
+     * @return the support desk's schema
+     */
+    @Bean
+    DataDictionary supportDictionary() {
+        return DataDictionary.fromClasses("support", Customer.class, Contact.class, Plan.class);
+    }
+}
