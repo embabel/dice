@@ -45,7 +45,8 @@ Pass an empty snapshot only after verifying that the context contains no proposi
 ==== Read recorded and historical state
 
 Use `history(contextId, propositionId)` for the records of one proposition. Use
-`beliefSetAsOf(contextId, instant)` to reconstruct the context at an audit write time.
+`beliefSetAsOf(contextId, instant)` to reconstruct the context at any covered instant in
+transaction time.
 Call historical queries outside any host transaction for a committed view.
 
 Replay covers text, lifecycle status, raw confidence, importance, pinning and temporal metadata.
