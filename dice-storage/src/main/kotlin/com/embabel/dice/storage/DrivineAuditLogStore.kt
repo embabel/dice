@@ -43,13 +43,14 @@ import java.util.function.Supplier
 
 /**
  * Durable audit for a Drivine proposition repository. Register [AuditLogSchema.forRegistration]
- * for storage ownership and publish a Drivine catalog using [diceStorageCatalog]. Share the
- * repository's datasource and transaction manager.
+ * for storage ownership and publish a Drivine catalog using [diceStorageCatalog]. Target the
+ * catalog at the repository's datasource and share its transaction manager.
  *
  * Every mutation locks the context header before reading it. Sequence assignment, baseline
- * installation, and erasure then share that transaction with the proposition write. On SQLite the
- * host configures the usual IMMEDIATE transaction mode. Replay takes the same fence on an
- * existing header to keep the baseline and records consistent with concurrent erasure.
+ * installation, and erasure then share that transaction with the proposition write. SQLite
+ * requires IMMEDIATE transactions. Drivine's default SQLite datasource configures this mode.
+ * Replay takes the same fence on an existing header to keep the baseline and records consistent
+ * with concurrent erasure.
  */
 @ApiStatus.Experimental
 class DrivineAuditLogStore @JvmOverloads constructor(

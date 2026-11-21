@@ -30,6 +30,7 @@ import org.drivine.schema.SchemaItemSpec
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.beans.factory.getBeanProvider
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
@@ -116,15 +117,17 @@ class DiceStorageSchemaRegistrationTest {
 
     @Test
     fun `opting into durable audit registers both ownership and database constraints`() {
-        graphRunner.withUserConfiguration(AuditSchemaConfig::class.java).run { ctx ->
-            val auditSpecs = AuditLogSchema.forRegistration().specs()
-            val registered = ctx.getBeanProvider<DiceStorageSchema>().orderedStream().toList()
-                .flatMap { it.specs() }
-            val ensured = ctx.getBeanProvider<SchemaCatalog>().orderedStream().toList()
-                .flatMap { it.items }
-            assertThat(registered).containsAll(auditSpecs)
-            assertThat(ensured).containsAll(auditSpecs)
-        }
+        graphRunner.withUserConfiguration(AuditSchemaConfig::class.java)
+            .withPropertyValues("host.audit.datasource=neo")
+            .run { ctx ->
+                val auditSpecs = AuditLogSchema.forRegistration().specs()
+                val registered = ctx.getBeanProvider<DiceStorageSchema>().orderedStream().toList()
+                    .flatMap { it.specs() }
+                val ensured = ctx.getBeanProvider<SchemaCatalog>().orderedStream().toList()
+                    .flatMap { it.items }
+                assertThat(registered).containsAll(auditSpecs)
+                assertThat(ensured).containsAll(auditSpecs)
+            }
     }
 
     @Test
@@ -168,8 +171,10 @@ class DiceStorageSchemaRegistrationTest {
         fun auditStorageSchema(): DiceStorageSchema = AuditLogSchema.forRegistration()
 
         @Bean
-        fun auditSchemaCatalog(@Qualifier("auditStorageSchema") schema: DiceStorageSchema): SchemaCatalog =
-            diceStorageCatalog(listOf(schema))
+        fun auditSchemaCatalog(
+            @Qualifier("auditStorageSchema") schema: DiceStorageSchema,
+            @Value("\${host.audit.datasource}") datasource: String,
+        ): SchemaCatalog = diceStorageCatalog(listOf(schema)).forDatabase(datasource)
     }
 
     /** Every `DiceStorageSchema` singleton on this module's classpath. */

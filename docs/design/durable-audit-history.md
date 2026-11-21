@@ -75,9 +75,11 @@ rollback also rolls back the audit record. Strict mode surfaces a recording fail
 invalidates historical coverage when a write may have escaped a best-effort sink.
 
 For Drivine on Neo4j or SQLite, opt in by registering a `DiceStorageSchema` bean for graph
-ownership and a Drivine `SchemaCatalog` bean for its constraints and indexes. If the application
-already aggregates its schemas into a catalog, include the audit schema there. For a Spring app
-that uses separate catalogs, add these methods to its configuration.
+ownership and a Drivine `SchemaCatalog` bean for its constraints and indexes. The host targets
+that catalog at the datasource used by the proposition repository. Set the example app property
+`host.audit.datasource` to its registered Drivine key, such as `audit-data` from
+`database.datasources.audit-data`. If the application already aggregates schemas for that
+datasource, include the audit schema in its targeted catalog.
 
 ```java
 @Bean
@@ -86,14 +88,16 @@ DiceStorageSchema auditStorageSchema() {
 }
 
 @Bean
-SchemaCatalog auditSchemaCatalog(@Qualifier("auditStorageSchema") DiceStorageSchema schema) {
-    return DiceStorageSchemaKt.diceStorageCatalog(List.of(schema));
+SchemaCatalog auditSchemaCatalog(
+        @Qualifier("auditStorageSchema") DiceStorageSchema schema,
+        @Value("${host.audit.datasource}") String datasource) {
+    return DiceStorageSchemaKt.diceStorageCatalog(List.of(schema)).forDatabase(datasource);
 }
 ```
 
 Construct the audit store with the proposition repository's persistence manager and transaction
-manager. Use SQLite's `IMMEDIATE` transaction mode, which Drivine's default SQLite datasource
-configures. SQLite updates the audit header as a JSON property document. Lock and counter
+manager. SQLite requires `IMMEDIATE` transactions. Drivine's default SQLite datasource configures
+this mode. SQLite updates the audit header as a JSON property document. Lock and counter
 updates can rewrite that document, so a large baseline increases write cost.
 
 ```java

@@ -27,7 +27,7 @@ object AuditLogSchema {
     internal const val RECORD = "DiceAuditRecord"
     internal const val IDENTITY_FENCE = "DiceAuditIdentityFence"
 
-    /** Register this schema for storage ownership and use [diceStorageCatalog] to publish its DDL. */
+    /** Register this schema for ownership and publish its DDL in a [diceStorageCatalog] targeted at the repository's datasource. */
     @JvmStatic
     fun forRegistration(): DiceStorageSchema = object : DiceStorageSchema {
         override fun specs(): List<SchemaItemSpec> = listOf(
