@@ -21,9 +21,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * A small memory desk that stores facts about the companies it deals with.
  *
  * <p>The only storage code is {@link MemoryDesk}, which talks to DICE's
- * {@code PropositionRepository}. Which store sits behind it is chosen by the property
- * {@code embabel.dice.store.type}: {@code in-memory} (the default here) or {@code graph} for
- * Neo4j. {@link GraphStoreConfiguration} adds the Neo4j connection when the graph store is on.
+ * {@code PropositionRepository}. The example defaults to the in-memory store.
+ * {@link GraphStoreConfiguration} supplies the connection for the explicit Neo4j setup.
+ * The SQLite setup clears the example's store override and lets the starter use the configured
+ * SQLite datasource.
  */
 @SpringBootApplication
 class BackendSwapApplication {
