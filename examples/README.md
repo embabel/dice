@@ -20,6 +20,7 @@ needs no API key and no running service.
 | [`examples-governed-chat`](examples-governed-chat) | Showcase: admission, pinned policy, a prompt budget, and an audit trail for chat memory. |
 | [`examples-common`](examples-common) | Test support the examples share: the scripted model and its recorded replies. |
 | [`examples-graph-reasoning`](examples-graph-reasoning) | Graph traversal and a Prolog approval rule that cites recorded claims. |
+| [`examples-multi-context-memory`](examples-multi-context-memory) | Recall across a support session and handbook under a scope and budget set by the host. |
 
 Each module has its own README. The tests are the examples.
 

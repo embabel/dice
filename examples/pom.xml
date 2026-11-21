@@ -37,6 +37,7 @@
         <module>examples-backend-swap</module>
         <module>examples-governed-chat</module>
         <module>examples-graph-reasoning</module>
+        <module>examples-multi-context-memory</module>
     </modules>
 
     <properties>
