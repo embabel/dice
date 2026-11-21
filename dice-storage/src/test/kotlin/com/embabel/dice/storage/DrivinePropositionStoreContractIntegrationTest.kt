@@ -16,6 +16,7 @@
 package com.embabel.dice.storage
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.agent.ScopedMemory
 import com.embabel.dice.conformance.AbstractPropositionStoreContractTest
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
@@ -114,6 +115,41 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
         }
         assertEquals(StoreCapability.SCOPED_READS, denied.capability)
         assertTrue(denied.message!!.contains("MIN_EFFECTIVE_CONFIDENCE"))
+    }
+
+    @Test
+    fun `unsupported scoped prompt reads report the refusal without dropping the host filter`() {
+        repository.save(Proposition.draft("team", "team policy", 0.9).toProposition())
+        repository.save(Proposition.draft("other", "private policy", 0.9).toProposition())
+        val reads = repository.scopedReads()
+        val scope = ScopedReadSpec.of(ContextReadScope.ofValues("team"))
+        val memory = ScopedMemory.forReads(reads, scope, ReadBudget.ofRows(2))
+        val eagerOrder = ReadQuery.of(ReadCriteria.empty()).orderedByEffectiveConfidence()
+
+        val eagerRefusal = memory.withEagerQuery(eagerOrder).contribution()
+        assertTrue("1 memories available" in eagerRefusal)
+        assertTrue("Key memories unavailable" in eagerRefusal)
+        assertTrue("EFFECTIVE_CONFIDENCE_DESC" in eagerRefusal)
+        assertFalse("team policy" in eagerRefusal)
+        assertFalse("private policy" in eagerRefusal)
+
+        val filterRefusal = memory.narrowedBy { it.withMinEffectiveConfidence(0.8) }
+            .withEagerQuery(ReadQuery.of(ReadCriteria.empty()).withLimit(1)).contribution()
+        assertTrue("Memory count unavailable" in filterRefusal)
+        assertTrue("MIN_EFFECTIVE_CONFIDENCE" in filterRefusal)
+        assertFalse("team policy" in filterRefusal)
+        assertFalse("private policy" in filterRefusal)
+    }
+
+    @Test
+    fun `scoped keyword matching lowercases non ASCII text inside the database`() {
+        repository.save(Proposition.draft("team", "ÉCOLE handbook", 0.9).withId("allowed").toProposition())
+        repository.save(Proposition.draft("other", "ÉCOLE confidential", 0.9).withId("other").toProposition())
+        val reads = repository.scopedReads()
+        val scope = ScopedReadSpec.of(ContextReadScope.ofValues("team"))
+
+        val matches = reads.matchKeywords(scope, ReadKeywordQuery.forTokens("école"), ReadBudget.ofRows(1))
+        assertEquals(listOf("allowed"), matches.map { it.id })
     }
 
     @Test

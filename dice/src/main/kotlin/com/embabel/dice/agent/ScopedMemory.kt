@@ -25,6 +25,7 @@ import com.embabel.dice.store.ReadCriteria
 import com.embabel.dice.store.ReadKeywordQuery
 import com.embabel.dice.store.ReadOrder
 import com.embabel.dice.store.ReadQuery
+import com.embabel.dice.store.ReadRefusedException
 import com.embabel.dice.store.ReadVectorSearchRequest
 import com.embabel.dice.store.ScopedReadSpec
 import com.embabel.dice.store.ScopedReads
@@ -69,19 +70,32 @@ class ScopedMemory private constructor(
     fun narrowedBy(narrowing: UnaryOperator<ReadCriteria>): ScopedMemory =
         ScopedMemory(reads, spec.narrow(narrowing), budget, vectorSearch, eagerQuery)
 
-    /** Preloads facts from the same scope. A query without a limit is subject to the row cap. */
+    /**
+     * Preloads facts from the same scope. A refused query leaves its facts out of the prompt
+     * and reports the refusal. A query without a limit is subject to the row cap.
+     */
     fun withEagerQuery(query: ReadQuery): ScopedMemory =
         ScopedMemory(reads, spec, budget, vectorSearch, query)
 
     override fun contribution(): String = buildString {
         val count = try {
-            reads.count(spec, ReadCriteria.empty(), budget).toString()
-        } catch (failure: ReadBudgetExceededException) {
-            "more than ${budget.maxRows}"
+            "${reads.count(spec, ReadCriteria.empty(), budget)} memories available."
+        } catch (_: ReadBudgetExceededException) {
+            "more than ${budget.maxRows} memories available."
+        } catch (failure: UnsupportedCapabilityException) {
+            "Memory count unavailable. ${failure.message}"
         }
         appendLine("Reference: $name")
-        appendLine("Description: $description. $count memories available.")
-        val eager = eagerQuery?.let { reads.query(spec, it, budget) }.orEmpty().distinctBy { it.id }
+        appendLine("Description: $description. $count")
+        val eager = try {
+            eagerQuery?.let { reads.query(spec, it, budget) }.orEmpty().distinctBy { it.id }
+        } catch (failure: ReadRefusedException) {
+            appendLine("Key memories unavailable. ${failure.message}")
+            emptyList()
+        } catch (failure: UnsupportedCapabilityException) {
+            appendLine("Key memories unavailable. ${failure.message}")
+            emptyList()
+        }
         if (eager.isNotEmpty()) {
             appendLine()
             appendLine("Key memories:")

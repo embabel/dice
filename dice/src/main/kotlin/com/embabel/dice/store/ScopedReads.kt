@@ -24,13 +24,14 @@ import org.jetbrains.annotations.ApiStatus
  * against this interface.
  *
  * ```java
- * ScopedReads reads = StoreCapabilities.find(store, ScopedReads.class);
- * if (reads != null) {
- *     ReadCriteria aboutAlice = ReadCriteria.empty().withEntityId("alice");
- *     List<Proposition> recent = reads.query(spec, ReadQuery.of(aboutAlice).orderedByCreated().withLimit(20), budget);
- *     int total = reads.count(spec, aboutAlice, budget);
- * }
+ * ScopedReads reads = inMemoryRepository.scopedReads();
+ * ReadCriteria aboutAlice = ReadCriteria.empty().withEntityId("alice");
+ * List<Proposition> recent = reads.query(spec, ReadQuery.of(aboutAlice).orderedByCreated().withLimit(20), budget);
+ * int total = reads.count(spec, aboutAlice, budget);
  * ```
+ *
+ * A store that reports the capability on the repository itself can expose it through
+ * [StoreCapabilities.find].
  *
  * The candidates of a call are the propositions whose context is one that
  * [ScopedReadSpec.scope] names and that meet every filter of the spec and the criteria of the

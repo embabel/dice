@@ -171,7 +171,10 @@ class DrivinePropositionRepository(
      */
     private val dedupLocks: Array<Any> = Array(DEDUP_STRIPES) { Any() }
 
-    /** Opens a read-only view with database-side scoped selection, ranking, and budget checks. */
+    /**
+     * Opens a read-only view. Each read runs as one database statement, with scoped selection,
+     * ranking and budget checks. Opening the view requires no transaction of its own.
+     */
     @ApiStatus.Experimental
     @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
     fun scopedReads(): ScopedReads = DrivineScopedReads(persistenceManager)

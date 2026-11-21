@@ -46,12 +46,11 @@ import java.util.function.UnaryOperator
  * filter. Code that knows a context id can build a scope over it. The filters therefore bind
  * only code that passes the spec on unchanged or narrowed.
  *
- * Who is trusted. The host decides which contexts and which filters a caller gets. It builds the
- * scope, the first spec and the [ReadBudget]. Code that is handed a spec is trusted to pass that
- * spec, or one narrowed from it, to every read it makes. A store applies the spec it is given
- * and does not decide access. The host resolves `ScopedReads` and `ScopedVectorSearch` with
- * `StoreCapabilities.find` and hands over only that handle. The handle is the store object, so
- * code that casts it to `PropositionStore` can read outside any spec.
+ * The host decides the granted contexts and filters. It builds the scope, the first spec and
+ * the [ReadBudget]. The host opens a scoped repository view or finds a capability on a store
+ * that reports it via [StoreCapabilities.find]. Code that receives a spec passes it, or a
+ * narrower spec, to every read. To expose recall to a model, keep the view, spec and budget in
+ * the host and give the model a tool bound to them.
  *
  * EXPERIMENTAL. This API may change before 1.0.
  *

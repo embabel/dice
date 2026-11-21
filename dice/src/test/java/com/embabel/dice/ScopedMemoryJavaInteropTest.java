@@ -89,6 +89,23 @@ class ScopedMemoryJavaInteropTest {
     }
 
     @Test
+    void eagerReadOverTheBudgetLeavesThePromptUsableAndDoesNotReturnPartialFacts() {
+        var store = new InMemoryPropositionRepository();
+        write(store, "session", "1", SHARED);
+        write(store, "handbook", "2", SHARED);
+        write(store, "different-tenant", "3", "Confidential invoice");
+        var memory = ScopedMemory.forReads(store.scopedReads(), ALLOWED, ReadBudget.ofRows(1))
+                .withEagerQuery(ReadQuery.of(ReadCriteria.empty()));
+
+        String prompt = memory.contribution();
+        assertTrue(prompt.contains("more than 1"));
+        assertTrue(prompt.contains("Key memories unavailable"));
+        assertFalse(prompt.contains(SHARED));
+        assertFalse(prompt.contains("Confidential"));
+        assertTrue(text(memory.call("{\"query\":\"invoice\"}")).contains(SHARED));
+    }
+
+    @Test
     void invalidModelInputReturnsAToolErrorWithoutListingMemories() {
         var store = new InMemoryPropositionRepository();
         write(store, "session", "1", SHARED);
