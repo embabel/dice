@@ -1,0 +1,18 @@
+{
+  "propositions": [
+    {
+      "text": "Support agents may approve refunds.",
+      "mentions": [
+        {
+          "span": "Support agents",
+          "type": "ApprovalRole",
+          "role": "SUBJECT"
+        }
+      ],
+      "confidence": 0.92,
+      "decay": 0,
+      "importance": 0.7,
+      "reasoning": "The message claims a different approval role"
+    }
+  ]
+}

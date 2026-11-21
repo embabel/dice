@@ -16,6 +16,9 @@
 package com.embabel.dice.projection.memory
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.audit.AuditRunContext
+import com.embabel.dice.audit.AuditRunKind
+import com.embabel.dice.audit.AuditRunRef
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionStatusChanged
 import com.embabel.dice.projection.lineage.CollectorOutcome
@@ -109,6 +112,13 @@ class DefaultCollectorRunner(
     override fun run(contextId: ContextId, dryRun: Boolean): CollectorRunResult {
         val startedAt = Instant.now()
         val runId = newRunId()
+        if (dryRun) return runCollector(contextId, true, runId, startedAt)
+        return AuditRunContext.withRun(contextId.value, AuditRunRef(AuditRunKind.COLLECTOR, runId)) {
+            runCollector(contextId, false, runId, startedAt)
+        }
+    }
+
+    private fun runCollector(contextId: ContextId, dryRun: Boolean, runId: String, startedAt: Instant): CollectorRunResult {
         val ctx = CollectorRunContext(runId = runId, contextId = contextId, dryRun = dryRun)
         val (candidatesById, marks) = markPhase(ctx)
         logger.info(

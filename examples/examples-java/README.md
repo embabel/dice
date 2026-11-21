@@ -2,7 +2,9 @@
 
 A support desk that remembers what its tickets say. Filing a ticket publishes an event. A
 listener extracts facts from the ticket with DICE and stores them under the ticket's account.
-`CustomerMemory` reads them back one account at a time.
+`CustomerMemory` reads them back one account at a time. `TicketTriage` hands a ticket and what
+is remembered about its customer to an Embabel decision, which says how urgent it is, which team
+gets it and how frustrated the customer sounds.
 
 ## Run
 
@@ -13,6 +15,8 @@ listener extracts facts from the ticket with DICE and stores them under the tick
 The example runs as tests. `StarterApplication` is the Spring Boot configuration they start. The
 tests add `ScriptedModel`, which registers a model that replays recorded replies and makes it the
 default. `TicketMemoryTests` files four tickets for two accounts and asserts what is remembered.
+`TriageTests` files the same four and triages three of them. The test properties send the
+`support-triage` decision role to the same scripted model, so no test calls a real model.
 
 ## Modules
 
@@ -25,6 +29,9 @@ flowchart LR
     memory -- listens for TicketFiled --> tickets
     memory --> customers
     tickets --> customers
+    triage --> memory
+    triage --> tickets
+    triage --> customers
 ```
 
 | Package | Public types | Package-private |
@@ -32,10 +39,12 @@ flowchart LR
 | `customers` | `AccountId`, and the schema types `Customer`, `Contact`, `Plan` | |
 | `tickets` | `Ticket`, `Ticket.TicketId`, `Ticket.TicketFiled`, `Tickets` | |
 | `memory` | `CustomerMemory` | `AccountStores`, `MemoryConfiguration`, `TicketExtraction`, `UngroundedMentionLog` |
+| `triage` | `TicketTriage`, `Triage` | |
 
 A `Ticket` carries a revision number: 1 when it is filed, and one more for each edit.
 
 `tickets` does not depend on `memory`. It publishes `TicketFiled`, and `memory` listens.
+Triage is a call the application makes, not a `TicketFiled` listener.
 
 ## DICE usage
 
@@ -50,6 +59,7 @@ A `Ticket` carries a revision number: 1 when it is filed, and one more for each 
 | Replace an edited ticket's facts | `TicketExtraction.on`, `TicketExtraction.takeTicketOff` | The ticket is the `SourceLocator` and its revision number is the `SourceRevisionRef`. A fact only this ticket supports is stored as `SUPERSEDED` in the same unit as the new facts. A fact another ticket also supports then loses this ticket's evidence and grounding through `subtractFoldedEvidence` and stays current. |
 | Check the fact store | `TicketExtraction` constructor | The checks are made on the store the writer saves to. It has to report `supportsSourceRevisionQueries` and `supportsProvenanceSubtraction`, or extraction refuses to start. |
 | Query | `CustomerMemory` | `PropositionQuery` scoped to one context, filtered by status, with confidence judged at a given time. |
+| Feed memory to a decision | `TicketTriage.triage` | The ticket text and one line per fact `CustomerMemory.currentFacts` returns for its account go to `ai.decisions().byRole("support-triage")` as one input, with three questions in one `DecisionSpec`. An answer that is missing leaves its field null and sets `needsHuman`. |
 
 [`TicketExtraction`](src/main/java/example/dice/starter/memory/TicketExtraction.java) has the
 whole listener.
@@ -113,3 +123,8 @@ propositions.query(
 | `TicketExtractionTests.refusesAFactStoreThatCannotTakeEvidenceOffAFact` | Extraction does not start on a fact store that cannot subtract provenance. |
 | `TicketExtractionTests.refusesAFactStoreThatReportsItCannotTakeEvidenceOffAFact` | Nor on one whose `supportsProvenanceSubtraction` is false. |
 | `TicketsTests.aTicketStartsAtRevisionOne` | A ticket with revision 0 is rejected. |
+| `TriageTests.anAcmeFollowUpAboutAnAuditIsUrgentAndGoesToTheAccountTeam` | Ticket 1057 is triaged as urgent, for the account team, with a calm customer. |
+| `TriageTests.theDecisionSeesWhatIsRememberedAboutTheCustomerAndNothingAboutAnyOther` | The decision input for 1057, and the prompt the model gets, hold Acme's stored facts, such as the December audit, and nothing about Globex. |
+| `TriageTests.aRequestForAnInvoiceCopyIsNotUrgentAndGoesToBilling` | Ticket 2210 is triaged as not urgent, for billing, with a calm customer, from Globex's facts only. |
+| `TriageTests.aReplyThatCannotBeReadLeavesEveryAnswerEmptyAndAsksForAPerson` | The recorded reply for 2231 is not JSON. All three answers are null, `needsHuman` is true, and one model call is made, with no retry. |
+| `TriageTests.aReplyThatCannotBeReadComesBackAsAFailedAnswerToEveryQuestion` | The same reply gives `Failure(INVALID_RESPONSE)` for each question rather than an exception. |

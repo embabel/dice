@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.proposition.gate
 
+import com.embabel.dice.audit.withExtractionAuditRun
 import com.embabel.dice.common.DiceEventListener
 import com.embabel.dice.common.PropositionDemoted
 import com.embabel.dice.common.PropositionProjectionSkipped
@@ -66,29 +67,31 @@ class ObservableGate(
     ): GateEvaluation {
         val evaluation = delegate.evaluate(proposition, context)
 
-        when (val decision = evaluation.decision) {
-            is GateDecision.Reject -> {
-                logger.debug("Emitting PropositionRejected for {}: {}", proposition.id.take(8), decision.reason)
-                listener.onEvent(PropositionRejected(proposition, decision.reason))
-            }
+        withExtractionAuditRun(context.sourceContext) {
+            when (val decision = evaluation.decision) {
+                is GateDecision.Reject -> {
+                    logger.debug("Emitting PropositionRejected for {}: {}", proposition.id.take(8), decision.reason)
+                    listener.onEvent(PropositionRejected(proposition, decision.reason))
+                }
 
-            is GateDecision.RouteToReview -> {
-                logger.debug("Emitting PropositionRoutedToReview for {}: {}", proposition.id.take(8), decision.reason)
-                listener.onEvent(PropositionRoutedToReview(proposition, decision.reason))
-            }
+                is GateDecision.RouteToReview -> {
+                    logger.debug("Emitting PropositionRoutedToReview for {}: {}", proposition.id.take(8), decision.reason)
+                    listener.onEvent(PropositionRoutedToReview(proposition, decision.reason))
+                }
 
-            is GateDecision.SkipProjection -> {
-                logger.debug("Emitting PropositionProjectionSkipped for {}: {}", proposition.id.take(8), decision.reason)
-                listener.onEvent(PropositionProjectionSkipped(proposition, decision.reason))
-            }
+                is GateDecision.SkipProjection -> {
+                    logger.debug("Emitting PropositionProjectionSkipped for {}: {}", proposition.id.take(8), decision.reason)
+                    listener.onEvent(PropositionProjectionSkipped(proposition, decision.reason))
+                }
 
-            is GateDecision.Demote -> {
-                logger.debug("Emitting PropositionDemoted for {}: demote to '{}', reason: {}", proposition.id.take(8), decision.toRelation, decision.reason)
-                listener.onEvent(PropositionDemoted(proposition, decision.toRelation, decision.reason))
-            }
+                is GateDecision.Demote -> {
+                    logger.debug("Emitting PropositionDemoted for {}: demote to '{}', reason: {}", proposition.id.take(8), decision.toRelation, decision.reason)
+                    listener.onEvent(PropositionDemoted(proposition, decision.toRelation, decision.reason))
+                }
 
-            // The durable persist signal fires at the save boundary; emitting here would double-emit it.
-            is GateDecision.Persist -> Unit
+                // The durable persist signal fires at the save boundary; emitting here would double-emit it.
+                is GateDecision.Persist -> Unit
+            }
         }
 
         return evaluation

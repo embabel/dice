@@ -1,17 +1,12 @@
 # Backend swap
 
 A memory desk that stores facts about the companies Acme deals with. The same code runs on
-DICE's in-memory store and on Neo4j. One property picks the store:
-
-```properties
-embabel.dice.store.type=in-memory
-```
-
-Set it to `graph` and the facts go to Neo4j instead.
+DICE's in-memory store, Neo4j, and SQLite. The application starts on the in-memory store.
 
 ## Run
 
 ```bash
+./mvnw -B install -DskipTests
 ./mvnw -B -f examples/pom.xml -pl examples-backend-swap -am verify
 ```
 
@@ -19,15 +14,14 @@ The example runs as tests. `BackendSwapApplication` is the Spring Boot configura
 start. The tests add `ScriptedModel`, a placeholder model with no replies: Embabel Agent will not
 start without a default model, and nothing here calls one, so no API key is needed.
 
-`SameCodeEveryBackend` holds the assertions. `InMemoryBackendTests` runs them on the in-memory
-store and `Neo4jBackendTests` runs them on Neo4j. Each subclass only adds a check that it got
-the store it asked for. `StartupTests` starts the application as configured, on the
-in-memory store.
+`SameCodeEveryBackend` holds the shared assertions. `InMemoryBackendTests`, `Neo4jBackendTests`,
+and `SqliteBackendTests` each run them and verify that Spring selected the expected backend.
+`StartupTests` checks that the application defaults to in-memory even with a separate Drivine
+datasource configured.
 
-- **With Docker running**, both classes run. `Neo4jBackendTests` starts
+- **With Docker running**, all three backend test classes run. `Neo4jBackendTests` starts
   `neo4j:2026.05-community` with Testcontainers, once for the whole test run.
-- **Without Docker**, `Neo4jBackendTests` is skipped, not failed, and the in-memory tests still
-  run.
+- **Without Docker**, the in-memory and SQLite tests run. Testcontainers skips `Neo4jBackendTests`.
 
 ### Pointing at a real Neo4j
 
@@ -44,12 +38,21 @@ database.datasources.neo.password=<your password>
 database.datasources.neo.database-name=neo4j
 ```
 
-`MemoryDesk` does not change.
-
 ### SQLite
 
-DICE does not ship a SQLite store yet. When it does, it becomes a third value of
-`embabel.dice.store.type` and a third subclass of `SameCodeEveryBackend`.
+The example includes `dice-starter-sqlite`. In `application.properties`, replace the existing
+`embabel.dice.store.type=in-memory` line with these settings.
+
+```properties
+embabel.dice.store.type=
+database.datasources.local.type=SQLITE
+database.datasources.local.database-name=./dice.db
+```
+
+The blank value lets the starter select the Drivine store. You can also pass
+`--embabel.dice.store.type=` and the two datasource settings as command-line arguments.
+Drivine opens or creates the SQLite file. If startup fails, check that the directory exists and
+the application has write access. The test uses a fresh file in a temporary directory.
 
 ## Modules
 
@@ -64,10 +67,10 @@ to verify the module structure.
 
 | Step | Where | What to read |
 |---|---|---|
-| Pick the store | `application.properties` | `embabel.dice.store.type` is `in-memory` or `graph`. `dice-storage-autoconfigure` builds the matching `PropositionRepository`. |
+| Pick the store | Spring Boot configuration | The example sets `in-memory` by default. For SQLite, clear the override and configure a `SQLITE` datasource. The Neo4j setup selects `graph` explicitly. |
 | Store and query facts | `MemoryDesk` | Takes a `PropositionRepository` and nothing else. `remember` saves a fact in context `acme` with a resolved entity mention, `about` queries the active facts that mention an entity, `correct` marks a fact `CONTRADICTED`, and `get` finds one by id. |
-| Embed offline | `WordEmbedder` | Both stores need an embedding service to start. This one hashes words into 16 dimensions and stands in for a real model. |
-| Connect Neo4j | `GraphStoreConfiguration` | The one piece the graph store adds. It loads only when the type is `graph`. |
+| Embed offline | `WordEmbedder` | DICE needs an embedding service to start. This one hashes words into 16 dimensions and stands in for a real model. |
+| Connect Neo4j | `GraphStoreConfiguration` | Supplies the `neo` managers when the application explicitly sets the store type to `graph`. |
 
 `MemoryDesk` imports no store class. Swapping the store changes no Java code.
 
@@ -78,13 +81,11 @@ propositions.query(
                 .withEntityId(entityId));
 ```
 
-### The graph store
+### The Neo4j configuration
 
-DICE builds the Neo4j store itself, but it needs two Drivine beans that the application
-supplies, not the autoconfiguration: a `PersistenceManager` and a `StatelessGraphObjectManager`,
-both for the datasource `neo`. `GraphStoreConfiguration` declares them and switches Drivine on
-with `@EnableDrivine`. It is conditional on `embabel.dice.store.type=graph`, because on the
-in-memory store Drivine is not set up and the beans cannot be built.
+The Neo4j path in this example supplies a `PersistenceManager` and `StatelessGraphObjectManager`
+for the datasource `neo`. `GraphStoreConfiguration` declares them and enables Drivine when
+`embabel.dice.store.type=graph`. The SQLite setup uses the starter to create its managers.
 
 The connection is configured under `database.datasources.neo`: `host`, `port`, `username`,
 `password`, `type=NEO4J` and `database-name`.
@@ -95,9 +96,6 @@ DICE uses the application's `EmbeddingService` bean when it is the only one, and
 platform's default embedding model. A real provider key registers more embedding services, so
 `WordEmbedder` is marked `@Primary` to stay the one DICE picks.
 
-The property switches the stores `dice-storage-autoconfigure` builds, the proposition store
-among them. A store the application builds itself does not follow it.
-
 ## Behaviour the tests assert
 
 | Test | Behaviour |
@@ -105,6 +103,6 @@ among them. A store the application builds itself does not follow it.
 | `about` | Three facts about Acme and one about Globex are remembered. `about("acme")` returns exactly the three Acme facts, and `about("globex")` the Globex one. |
 | `get` | Returns a fact with its text, confidence and entity mention as they were remembered. |
 | `correct` | The fact drops out of `about("acme")`, but `get` still returns it, now `CONTRADICTED`. |
-| The store in use | `InMemoryBackendTests` gets `InMemoryPropositionRepository`, `Neo4jBackendTests` gets `DrivinePropositionRepository`. |
+| The store in use | The in-memory tests get `InMemoryPropositionRepository`. Neo4j and SQLite get `DrivinePropositionRepository`. The SQLite test also checks the manager's database type and that it created the file. |
 
-The first three rows are the same test code on both stores, and pass on both.
+The first three rows run the same test code on all three stores.

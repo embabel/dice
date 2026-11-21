@@ -1,0 +1,15 @@
+{
+  "propositions": [
+    {
+      "text": "Acme moved to the Basic plan",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" },
+        { "span": "Basic plan", "type": "Plan", "role": "OBJECT" }
+      ],
+      "confidence": 0.95,
+      "decay": 0.01,
+      "importance": 0.8,
+      "reasoning": "The billing system shows a plan change"
+    }
+  ]
+}

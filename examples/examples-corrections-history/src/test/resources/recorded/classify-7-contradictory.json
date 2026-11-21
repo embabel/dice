@@ -1,0 +1,5 @@
+{
+  "classifications": [
+    { "propositionId": "0", "relation": "CONTRADICTORY", "similarity": 0.85, "reasoning": "Acme cannot be on the Pro plan and the Basic plan at once" }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "propositions": [
+    {
+      "text": "Acme pays for the Pro plan",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" },
+        { "span": "Pro plan", "type": "Plan", "role": "OBJECT" }
+      ],
+      "confidence": 0.95,
+      "decay": 0.01,
+      "importance": 0.8,
+      "reasoning": "The billing system charges Acme for the Pro plan"
+    }
+  ]
+}

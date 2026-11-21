@@ -5295,6 +5295,7 @@ public final class com/embabel/dice/proposition/store/InMemoryPropositionReposit
 	public fun getLuceneSyntaxNotes ()Ljava/lang/String;
 	public fun getSupportsVector ()Z
 	public fun save (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/proposition/Proposition;
+	public final fun scopedReads ()Lcom/embabel/dice/store/ScopedReads;
 	public fun subtractFoldedEvidence (Ljava/lang/String;Ljava/util/List;Ljava/util/Collection;Ljava/util/Collection;)Lcom/embabel/dice/proposition/Proposition;
 }
 
@@ -5316,6 +5317,7 @@ public final class com/embabel/dice/proposition/store/JsonFilePropositionReposit
 	public fun getStoreType ()Lcom/embabel/dice/proposition/PropositionStoreType;
 	public fun getSupportsVector ()Z
 	public fun save (Lcom/embabel/dice/proposition/Proposition;)Lcom/embabel/dice/proposition/Proposition;
+	public final fun scopedReads ()Lcom/embabel/dice/store/ScopedReads;
 }
 
 public final class com/embabel/dice/proposition/store/Neo4jRagPropositionRepository : com/embabel/dice/proposition/store/RagAdapterPropositionRepository {
@@ -5761,15 +5763,25 @@ public final class com/embabel/dice/query/graph/GraphPath$Companion {
 }
 
 public final class com/embabel/dice/query/graph/GraphQuery {
+	public static final field Companion Lcom/embabel/dice/query/graph/GraphQuery$Companion;
 	public synthetic fun <init> (Lcom/embabel/dice/proposition/PropositionStore;Ljava/lang/String;ILcom/embabel/dice/spi/AuthorityResolver;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Lcom/embabel/dice/proposition/PropositionStore;Ljava/lang/String;ILcom/embabel/dice/spi/AuthorityResolver;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getSupportsNativeGraph ()Z
 	public final fun neighborhood (Ljava/lang/String;ILcom/embabel/dice/spi/AuthorityTier;)Lcom/embabel/dice/query/graph/GraphNeighborhood;
 	public static synthetic fun neighborhood$default (Lcom/embabel/dice/query/graph/GraphQuery;Ljava/lang/String;ILcom/embabel/dice/spi/AuthorityTier;ILjava/lang/Object;)Lcom/embabel/dice/query/graph/GraphNeighborhood;
+	public static final fun of (Lcom/embabel/dice/proposition/PropositionStore;)Lcom/embabel/dice/query/graph/GraphQuery;
+	public static final fun of (Lcom/embabel/dice/proposition/PropositionStore;Ljava/lang/String;)Lcom/embabel/dice/query/graph/GraphQuery;
+	public static final fun of (Lcom/embabel/dice/proposition/PropositionStore;Ljava/lang/String;I)Lcom/embabel/dice/query/graph/GraphQuery;
 	public final fun pathBetween (Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/spi/AuthorityTier;)Ljava/util/List;
 	public static synthetic fun pathBetween$default (Lcom/embabel/dice/query/graph/GraphQuery;Ljava/lang/String;Ljava/lang/String;Lcom/embabel/dice/spi/AuthorityTier;ILjava/lang/Object;)Ljava/util/List;
 	public final fun whyExplain (Ljava/lang/String;)Lcom/embabel/dice/query/graph/PropositionLineage;
 	public final fun withAuthorityResolver (Lcom/embabel/dice/spi/AuthorityResolver;)Lcom/embabel/dice/query/graph/GraphQuery;
+}
+
+public final class com/embabel/dice/query/graph/GraphQuery$Companion {
+	public final fun of (Lcom/embabel/dice/proposition/PropositionStore;)Lcom/embabel/dice/query/graph/GraphQuery;
+	public final fun of (Lcom/embabel/dice/proposition/PropositionStore;Ljava/lang/String;)Lcom/embabel/dice/query/graph/GraphQuery;
+	public final fun of (Lcom/embabel/dice/proposition/PropositionStore;Ljava/lang/String;I)Lcom/embabel/dice/query/graph/GraphQuery;
 }
 
 public final class com/embabel/dice/query/graph/PropositionLineage {

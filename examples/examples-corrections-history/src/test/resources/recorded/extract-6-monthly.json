@@ -1,0 +1,14 @@
+{
+  "propositions": [
+    {
+      "text": "Acme's invoices are paid monthly",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" }
+      ],
+      "confidence": 0.75,
+      "decay": 0.02,
+      "importance": 0.8,
+      "reasoning": "Said in chat"
+    }
+  ]
+}

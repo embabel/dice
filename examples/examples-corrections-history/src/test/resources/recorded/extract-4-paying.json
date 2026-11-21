@@ -1,0 +1,14 @@
+{
+  "propositions": [
+    {
+      "text": "Acme is a paying customer",
+      "mentions": [
+        { "span": "Acme", "type": "Customer", "role": "SUBJECT" }
+      ],
+      "confidence": 0.95,
+      "decay": 0.01,
+      "importance": 0.8,
+      "reasoning": "The billing system holds a paid account for Acme"
+    }
+  ]
+}
