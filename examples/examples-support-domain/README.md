@@ -9,6 +9,8 @@ The desk serves one account, Acme, so every fact is stored under the context `ac
 
 ## Run
 
+[Install DICE](../README.md#build), then run the example from the repository root.
+
 ```bash
 ./mvnw -B -f examples/pom.xml -pl examples-support-domain -am verify
 ```

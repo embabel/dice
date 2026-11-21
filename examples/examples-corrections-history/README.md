@@ -7,6 +7,8 @@ which, and the trust it gives each fact depends on where the fact came from.
 
 ## Run
 
+[Install DICE](../README.md#build), then run the example from the repository root.
+
 ```bash
 ./mvnw -B -f examples/pom.xml -pl examples-corrections-history -am verify
 ```
