@@ -38,6 +38,8 @@ you need.
 
 - [proposition-lifecycle.md](proposition-lifecycle.md) — how a proposition earns or loses trust,
   what happens on conflict, supersession, and decay over its life.
+- [durable-audit-history.md](durable-audit-history.md) explains opt-in audit wiring, the
+  complete-baseline cutover, transaction-time replay, and context erasure.
 - [grounding-and-conflicts.md](grounding-and-conflicts.md) — how propositions stay anchored to
   source material (grounding) and how the conflict/policy SPI resolves disagreements between
   propositions.

@@ -51,21 +51,27 @@ public abstract class com/embabel/dice/audit/AbstractAuditLog : com/embabel/dice
 	protected final fun requireAppend (Ljava/lang/String;Lcom/embabel/dice/audit/AuditEntry;)V
 	protected final fun requireContext (Ljava/lang/String;)V
 	protected final fun requirePage (Ljava/lang/String;JI)V
-	protected abstract fun timeline (Ljava/lang/String;Ljava/time/Instant;)Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;
+	protected abstract fun timeline (Ljava/lang/String;)Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;
 }
 
 protected final class com/embabel/dice/audit/AbstractAuditLog$AuditTimeline {
-	public fun <init> (Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/util/List;)V
+	public fun <init> (Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;JJLjava/util/List;Ljava/util/List;)V
 	public final fun component1 ()Ljava/time/Instant;
 	public final fun component2 ()Ljava/time/Instant;
-	public final fun component3 ()Ljava/util/List;
-	public final fun component4 ()Ljava/util/List;
-	public final fun copy (Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/util/List;)Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;
-	public static synthetic fun copy$default (Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;Ljava/time/Instant;Ljava/time/Instant;Ljava/util/List;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;
+	public final fun component3 ()Ljava/time/Instant;
+	public final fun component4 ()J
+	public final fun component5 ()J
+	public final fun component6 ()Ljava/util/List;
+	public final fun component7 ()Ljava/util/List;
+	public final fun copy (Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;JJLjava/util/List;Ljava/util/List;)Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;
+	public static synthetic fun copy$default (Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;Ljava/time/Instant;Ljava/time/Instant;Ljava/time/Instant;JJLjava/util/List;Ljava/util/List;ILjava/lang/Object;)Lcom/embabel/dice/audit/AbstractAuditLog$AuditTimeline;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getBaseline ()Ljava/util/List;
+	public final fun getBaselineSequence ()J
 	public final fun getCutover ()Ljava/time/Instant;
 	public final fun getInvalidFrom ()Ljava/time/Instant;
+	public final fun getLatestSequence ()J
+	public final fun getObservedThrough ()Ljava/time/Instant;
 	public final fun getRecords ()Ljava/util/List;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -243,6 +249,11 @@ public final class com/embabel/dice/audit/AuditRecord {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class com/embabel/dice/audit/AuditRunContext {
+	public static final field INSTANCE Lcom/embabel/dice/audit/AuditRunContext;
+	public static final fun withRun (Ljava/lang/String;Lcom/embabel/dice/audit/AuditRunRef;Ljava/util/function/Supplier;)Ljava/lang/Object;
+}
+
 public final class com/embabel/dice/audit/AuditRunKind : java/lang/Enum {
 	public static final field COLLECTOR Lcom/embabel/dice/audit/AuditRunKind;
 	public static final field DECAY Lcom/embabel/dice/audit/AuditRunKind;
@@ -273,6 +284,7 @@ public abstract interface class com/embabel/dice/audit/AuditSink {
 	public abstract fun getTransactionParticipation ()Lcom/embabel/dice/audit/AuditTransactionParticipation;
 	public abstract fun initializeBaseline (Ljava/lang/String;Ljava/time/Instant;Ljava/util/Collection;)V
 	public abstract fun invalidateCoverage (Ljava/lang/String;)V
+	public fun priorCanonicalId (Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
 }
 
 public final class com/embabel/dice/audit/AuditTransactionParticipation : java/lang/Enum {
@@ -2127,6 +2139,7 @@ public final class com/embabel/dice/spi/PropositionStoreDriftSweep : com/embabel
 	public fun applyQuarantine (Lcom/embabel/dice/spi/QuarantineDecision$Quarantined;)Lcom/embabel/dice/proposition/Proposition;
 	public fun quarantineCandidates-g40hbQQ (Ljava/lang/String;Ljava/util/Set;ILjava/lang/String;)Ljava/util/List;
 	public fun releaseFromQuarantine (Ljava/lang/String;)Lcom/embabel/dice/proposition/Proposition;
+	public fun sweep-T8IscxI (Lcom/embabel/dice/metamodel/MetamodelDiff;Lcom/embabel/dice/spi/DriftQuarantinePolicy;Ljava/lang/String;I)Lcom/embabel/dice/spi/QuarantineResult;
 }
 
 public abstract interface class com/embabel/dice/store/CapabilityReporting {

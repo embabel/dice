@@ -96,11 +96,11 @@ class InMemoryAuditLog @JvmOverloads constructor(private val clock: Clock = Cloc
     }
 
     @Synchronized
-    override fun timeline(contextId: String, at: Instant): AuditTimeline {
-        val context = contexts[contextId] ?: return AuditTimeline(null, null, emptyList(), emptyList())
+    override fun timeline(contextId: String): AuditTimeline {
+        val context = contexts[contextId] ?: return AuditTimeline(null, null, clock.instant(), 0, 0, emptyList(), emptyList())
         return AuditTimeline(
-            context.cutover, context.invalidFrom, context.baseline,
-            context.records.filter { it.sequence > context.baselineSequence && it.recordedAt <= at },
+            context.cutover, context.invalidFrom, context.nextRecordedAt(), context.baselineSequence,
+            context.sequence, context.baseline, context.records.filter { it.sequence > context.baselineSequence },
         )
     }
 

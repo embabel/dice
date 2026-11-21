@@ -45,28 +45,33 @@ open class AuditingPropositionRepository private constructor(
             }
             // A backend may deduplicate a new input to an existing canonical proposition. Its
             // prior image, rather than the new input or a copy read after save, belongs in history.
-            val candidates = if (current == null) {
-                delegate.findByContextIdValue(contextId).associateBy { it.id }
-            } else {
-                emptyMap()
-            }
+            val canonical = if (current == null && proposition.text.isNotBlank()) {
+                sink.priorCanonicalId(contextId, proposition.text)?.let { currentInContext(it, contextId) }
+            } else null
             val saved = mutate(contextId) { delegate.save(proposition) }
             trackedWrite(contextId) {
                 check(saved.contextId.value == contextId) { "Audited save returned a different context" }
                 check(current == null || current.id == saved.id) { "Audited update changed identity" }
-                record(contextId, current ?: candidates[saved.id], saved)
+                if (saved.id != proposition.id) {
+                    check(canonical?.id == saved.id) { "Audited save did not capture the canonical preimage" }
+                }
+                record(contextId, current ?: canonical?.takeIf { it.id == saved.id }, saved)
             }
             saved
         }
     }
 
     override fun saveAll(propositions: Collection<Proposition>) {
-        propositions.forEach(::save)
+        saveAllReturningCanonical(propositions)
     }
 
     override fun saveAllReturningCanonical(propositions: Collection<Proposition>): PropositionPersistenceResult {
         val inputs = propositions.toList()
-        return PropositionPersistenceResult.of(inputs, inputs.map(::save))
+        val contextId = inputs.firstOrNull()?.contextId?.value
+        val persist = { PropositionPersistenceResult.of(inputs, inputs.map(::save)) }
+        return if (contextId != null && inputs.all { it.contextId.value == contextId }) {
+            sink.duringWrite(contextId, persist)
+        } else persist()
     }
 
     override fun pin(id: String): Proposition? = changeExisting(id, delegate::pin)
@@ -99,7 +104,7 @@ open class AuditingPropositionRepository private constructor(
 
     /** Erase both the context's live propositions and its historical content. */
     override fun clearByContext(contextId: String): Int = sink.duringWrite(contextId) {
-        val actor = contextProvider.attributionFor(contextId).actor
+        val actor = contextProvider.resolveAttribution(contextId).actor
         val count = mutate(contextId) { delegate.clearByContext(contextId) }
         writeAudit(sink, AuditFailurePolicy.FAIL_WRITE, contextId, affectsBeliefSet = true) {
             sink.eraseContext(contextId, actor)
@@ -136,7 +141,7 @@ open class AuditingPropositionRepository private constructor(
         }
         sink.append(contextId, AuditEntry(
             kind, (after ?: checkNotNull(before)).id, before, after,
-            contextProvider.attributionFor(contextId),
+            contextProvider.resolveAttribution(contextId),
         ))
     }
 

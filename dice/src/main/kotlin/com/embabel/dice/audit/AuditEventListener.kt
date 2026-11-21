@@ -43,7 +43,7 @@ class AuditEventListener @JvmOverloads constructor(
                 val run = event.run
                 val contextId = run.contextId.value
                 append(contextId) {
-                    val host = contextProvider.attributionFor(contextId)
+                    val host = contextProvider.resolveAttribution(contextId)
                     AuditEntry(AuditKind.EXTRACTION_RUN_ENDED, attribution = AuditAttribution(
                         host.actor ?: run.subjectRefs.actor?.let { AuditActorRef(it.token) },
                         AuditRunRef(AuditRunKind.EXTRACTION, run.ref.runId),
@@ -57,7 +57,7 @@ class AuditEventListener @JvmOverloads constructor(
     private fun gate(kind: AuditKind, proposition: Proposition, reason: String) {
         val contextId = proposition.contextId.value
         append(contextId) {
-            AuditEntry(kind, proposition.id, attribution = contextProvider.attributionFor(contextId).copy(reason = reason))
+            AuditEntry(kind, proposition.id, attribution = contextProvider.resolveAttribution(contextId).copy(reason = reason))
         }
     }
 

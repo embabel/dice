@@ -19,6 +19,7 @@ import com.embabel.agent.core.DataDictionary
 import com.embabel.agent.rag.model.NamedEntity
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.chat.Message
+import com.embabel.dice.audit.withExtractionAuditRun
 import com.embabel.dice.common.NameNormalizer
 import com.embabel.dice.common.EntityResolver
 import com.embabel.dice.common.KnownEntity
@@ -1140,17 +1141,19 @@ open class IncrementalPropositionExtraction @JvmOverloads constructor(
             logger.info("Updated entity: name='{}', labels={}", entity.name, entity.labels())
         }
 
-        val outcome = if (boundWriter == null) {
-            // Built per call, because withRunLineage can bind the run link store after construction.
-            // The lineage lines are logged between the run link and the structural relationships, so
-            // an Error from the relationships cannot lose them.
-            SequentialPersistUnitWriter(propositionRepository, entityRepository, propositionRunLinkStore) { key, runLinks, lineageFailure ->
-                logRunLineage(key.runRef.runId, runLinks, lineageFailure)
-            }.write(unit)
-        } else {
-            val written = boundWriter.write(unit)
-            if (currentRun != null) logRunLineage(currentRun.runId, written.runLinks, written.lineageFailure)
-            written
+        val outcome = withExtractionAuditRun(context) {
+            if (boundWriter == null) {
+                // Built per call, because withRunLineage can bind the run link store after construction.
+                // The lineage lines are logged between the run link and the structural relationships, so
+                // an Error from the relationships cannot lose them.
+                SequentialPersistUnitWriter(propositionRepository, entityRepository, propositionRunLinkStore) { key, runLinks, lineageFailure ->
+                    logRunLineage(key.runRef.runId, runLinks, lineageFailure)
+                }.write(unit)
+            } else {
+                val written = boundWriter.write(unit)
+                if (currentRun != null) logRunLineage(currentRun.runId, written.runLinks, written.lineageFailure)
+                written
+            }
         }
         if (outcome is PersistOutcome.Failed) return outcome
 

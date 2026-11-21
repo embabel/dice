@@ -1,3 +1,12 @@
+public abstract class com/embabel/dice/conformance/AbstractAuditLogContractTest {
+	public fun <init> ()V
+	public final fun complete baselines reject foreign and duplicate rows without leaving partial coverage ()V
+	public final fun concurrent appends allocate one position per record even at the same instant ()V
+	public final fun known gaps and inconsistent before images fail closed ()V
+	protected abstract fun log ()Lcom/embabel/dice/audit/AbstractAuditLog;
+	public final fun updates and deletions replay while erasure removes content and keeps a single scoped tombstone ()V
+}
+
 public abstract class com/embabel/dice/conformance/AbstractChunkHistoryStoreContractTest {
 	public fun <init> ()V
 	public fun aBookmarkIsTrackedPerContext ()V
@@ -264,4 +273,3 @@ public final class com/embabel/dice/conformance/RedirectableEventListener : com/
 	public fun onEvent (Lcom/embabel/dice/common/DiceEvent;)V
 	public final fun redirectTo (Lcom/embabel/dice/common/DiceEventListener;)V
 }
-

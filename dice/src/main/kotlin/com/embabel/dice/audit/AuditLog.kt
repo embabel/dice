@@ -54,6 +54,9 @@ interface AuditSink {
      */
     fun <T> duringWrite(contextId: String, action: Supplier<T>): T
 
+    /** Exact-text deduplication preimage lookup for a new proposition, under the write fence. */
+    fun priorCanonicalId(contextId: String, exactText: String): String? = null
+
     /** Fail historical reconstruction when a repository write may have escaped recording. */
     fun invalidateCoverage(contextId: String)
 }
@@ -76,8 +79,8 @@ interface AuditLogQuery {
 /** Common validation and replay for the supplied backends. */
 @ApiStatus.Experimental
 abstract class AbstractAuditLog : AuditSink, AuditLogQuery {
-    /** Returns one coherent view of the baseline and all records between the baseline and [at]. */
-    protected abstract fun timeline(contextId: String, at: Instant): AuditTimeline
+    /** The baseline, retained records, and their high watermark must come from one coherent view. */
+    protected abstract fun timeline(contextId: String): AuditTimeline
 
     final override fun asOf(contextId: String, propositionId: String, at: Instant): AuditedProposition? {
         require(propositionId.isNotBlank())
@@ -86,8 +89,8 @@ abstract class AbstractAuditLog : AuditSink, AuditLogQuery {
 
     final override fun beliefSetAsOf(contextId: String, at: Instant): List<AuditedProposition> {
         requireContext(contextId)
-        val timeline = timeline(contextId, at)
-        if (timeline.cutover == null || at < timeline.cutover ||
+        val timeline = timeline(contextId)
+        if (timeline.cutover == null || at < timeline.cutover || at > timeline.observedThrough ||
             (timeline.invalidFrom != null && at >= timeline.invalidFrom)
         ) {
             throw AuditCoverageException()
@@ -97,12 +100,15 @@ abstract class AbstractAuditLog : AuditSink, AuditLogQuery {
             it.id
         }
         check(claims.size == timeline.baseline.size) { "Duplicate audit baseline identifiers" }
-        var lastSequence = 0L
+        var lastSequence = timeline.baselineSequence
+        var lastRecordedAt = timeline.cutover
         for (record in timeline.records) {
-            check(record.contextId == contextId && record.sequence > lastSequence &&
-                record.recordedAt >= timeline.cutover && record.recordedAt <= at)
+            if (record.contextId != contextId || record.sequence != lastSequence + 1 ||
+                record.recordedAt < lastRecordedAt || record.recordedAt > timeline.observedThrough
+            ) throw AuditCoverageException()
             lastSequence = record.sequence
-            if (record.before == null && record.after == null) continue
+            lastRecordedAt = record.recordedAt
+            if (record.recordedAt > at || (record.before == null && record.after == null)) continue
             val id = checkNotNull(record.propositionId)
             if (claims[id] != record.before) throw AuditCoverageException()
             val next = record.after
@@ -111,6 +117,7 @@ abstract class AbstractAuditLog : AuditSink, AuditLogQuery {
                 claims[id] = next
             }
         }
+        if (lastSequence != timeline.latestSequence) throw AuditCoverageException()
         return claims.values.sortedBy { it.id }
     }
 
@@ -144,6 +151,9 @@ abstract class AbstractAuditLog : AuditSink, AuditLogQuery {
     protected data class AuditTimeline(
         val cutover: Instant?,
         val invalidFrom: Instant?,
+        val observedThrough: Instant,
+        val baselineSequence: Long,
+        val latestSequence: Long,
         val baseline: List<AuditedProposition>,
         val records: List<AuditRecord>,
     )

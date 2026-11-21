@@ -31,6 +31,25 @@ import java.time.ZoneOffset
 class AuditingPropositionRepositoryTest {
 
     @Test
+    fun `a run is scoped to its context and restored after failure`() {
+        val log = InMemoryAuditLog()
+        val repo = AuditingPropositionRepository.wrapping(InMemoryPropositionRepository(), log)
+        val claim = Proposition(id = "first", contextId = ContextId("scope"), text = "First", mentions = emptyList(), confidence = 0.8)
+        val run = AuditRunRef(AuditRunKind.EXTRACTION, "opaque-run")
+        assertThrows(IllegalStateException::class.java) {
+            AuditRunContext.withRun("scope", run) {
+                repo.save(claim)
+                repo.save(claim.copy(id = "foreign", contextId = ContextId("other")))
+                throw IllegalStateException("run ended")
+            }
+        }
+        repo.save(claim.copy(id = "standalone"))
+        assertEquals(run, log.history("scope", "first").single().attribution.run)
+        assertNull(log.history("other", "foreign").single().attribution.run)
+        assertNull(log.history("scope", "standalone").single().attribution.run)
+    }
+
+    @Test
     fun `writes are sequenced with their saved values and gate decisions do not change the belief set`() {
         val cutover = Instant.parse("2026-01-02T00:00:00Z")
         val recordedAt = cutover.plusSeconds(1)
