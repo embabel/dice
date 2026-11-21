@@ -36,6 +36,7 @@
         <module>examples-decision-revision</module>
         <module>examples-backend-swap</module>
         <module>examples-governed-chat</module>
+        <module>examples-graph-reasoning</module>
     </modules>
 
     <properties>
