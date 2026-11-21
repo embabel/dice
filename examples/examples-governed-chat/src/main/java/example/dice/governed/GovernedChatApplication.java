@@ -68,7 +68,8 @@ class GovernedChatApplication {
                 .withSchema(schema)
                 .withMintNewEntities(true);
         var extractor = LlmPropositionExtractor.builder(LlmOptions.withDefaultLlm()).withAi(ai);
-        var pipeline = PropositionPipeline.withExtractor(extractor).withRevision(new ApprovalPolicy(), facts);
+        var approvalPolicy = new ApprovalPolicy();
+        var pipeline = PropositionPipeline.withExtractor(extractor).withRevision(approvalPolicy, facts);
         var auditEvents = new AuditEventListener(audit);
         var gates = GateApplier.of(new ExtractionGatePipeline(List.of(
                         new ConfidenceGate(0.6), new ConflictClassificationGate())))
@@ -76,7 +77,7 @@ class GovernedChatApplication {
         var memory = Memory.forContext(GovernedChat.CONTEXT).withRepository(facts)
                 .withEagerQuery(query -> query.withStatuses(PropositionStatus.ACTIVE).withMinConfidence(0.0))
                 .withContextBudget(ContextBudget.ofTokens(4));
-        return new GovernedChat(pipeline, source, gates, facts, entities, audit, memory);
+        return new GovernedChat(pipeline, source, gates, approvalPolicy, facts, entities, audit, memory);
     }
 
     private static void recordIncomingDisposition(AuditEventListener listener, DiceEvent event) {

@@ -1,7 +1,7 @@
 # DICE Examples
 
-Focused examples of the DICE API. Each one shows a single way of using the library and runs on
-the in-memory stores. They are not full applications, and they are never published.
+Focused examples of the DICE API. Each module shows how to use part of the library.
+The module table and individual READMEs say which stores each example uses.
 
 Examples are written in Java. A Kotlin example appears where Kotlin has its own entry point, such
 as a typed `ContextId` or a builder block.

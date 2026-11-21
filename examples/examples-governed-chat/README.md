@@ -34,13 +34,14 @@ messages and checks the resulting memory, admission decisions and history.
 
 Keep the gate and pin policy in the application. Resolve the context from the authenticated
 request before exposing the chat. Check that a claim belongs to that context before pinning it
-or returning its grounding. Return a review result to the application for routing.
+or returning its grounding. Return a review result to the application for routing. Pinning checks the same
+approval policy, so a second role cannot be pinned while it conflicts with the approved rule.
 
 | Condition | Application behavior |
 |---|---|
 | A claim conflicts with the pinned policy | Return the proposed claim for review. Keep the approved rule available to the prompt. |
 | The pinned facts exceed the prompt budget | Use the selection's `isOverBudget()` flag to handle the overflow before sending the prompt. The selection keeps every pinned candidate. |
-| A request predates audit coverage | Return an unavailable-history response. Use the baseline cutover time to tell the caller what history is covered. |
+| A request predates audit coverage | Return an unavailable-history response. Use the cutover time the host recorded when it initialized the baseline. |
 
 This small example queries every active claim before applying the prompt budget. For a larger
 context, query the pinned claims separately, add a bounded set of ordinary candidates and call

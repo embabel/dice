@@ -28,6 +28,7 @@ import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionRepository;
 import com.embabel.dice.proposition.gate.GateApplier;
 import com.embabel.dice.proposition.gate.ResultVerdict;
+import com.embabel.dice.proposition.revision.RevisionResult;
 import com.embabel.dice.provenance.ConnectorRef;
 
 import java.time.Instant;
@@ -40,16 +41,18 @@ public class GovernedChat {
     private final PropositionPipeline pipeline;
     private final SourceAnalysisContext source;
     private final GateApplier gates;
+    private final ApprovalPolicy approvalPolicy;
     private final PropositionRepository facts;
     private final NamedEntityDataRepository entities;
     private final AuditLogQuery audit;
     private final Memory memory;
 
     GovernedChat(PropositionPipeline pipeline, SourceAnalysisContext source, GateApplier gates,
-                 PropositionRepository facts, NamedEntityDataRepository entities, AuditLogQuery audit, Memory memory) {
+                 ApprovalPolicy approvalPolicy, PropositionRepository facts, NamedEntityDataRepository entities, AuditLogQuery audit, Memory memory) {
         this.pipeline = pipeline;
         this.source = source;
         this.gates = gates;
+        this.approvalPolicy = approvalPolicy;
         this.facts = facts;
         this.entities = entities;
         this.audit = audit;
@@ -72,7 +75,14 @@ public class GovernedChat {
 
     /** Protects an admitted rule from ordinary conflict handling and prompt trimming. */
     public synchronized void pin(String propositionId) {
-        if (inContext(propositionId) == null || facts.pin(propositionId) == null) {
+        var claim = inContext(propositionId);
+        if (claim == null) {
+            throw new IllegalArgumentException("Unknown support proposition: " + propositionId);
+        }
+        if (approvalPolicy.revise(claim, facts) instanceof RevisionResult.Contradicted) {
+            throw new IllegalStateException("Resolve the conflict with the pinned approval rule before pinning this claim");
+        }
+        if (facts.pin(propositionId) == null) {
             throw new IllegalArgumentException("Unknown support proposition: " + propositionId);
         }
     }

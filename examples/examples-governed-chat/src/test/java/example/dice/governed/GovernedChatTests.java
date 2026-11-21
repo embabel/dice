@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.annotation.DirtiesContext;
 
 import java.time.Instant;
 import java.util.List;
@@ -34,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Import(ScriptedModel.class)
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class GovernedChatTests {
 
     @Autowired
@@ -51,6 +53,18 @@ class GovernedChatTests {
         assertThat(facts.findById(other.getId()).getPinned()).isFalse();
         assertThat(chat.explain(other.getId()).groundingIds()).isEmpty();
         assertThat(chat.explain(other.getId()).history()).isEmpty();
+    }
+
+    @Test
+    void aSecondApprovalRoleCannotBePinnedOverAnExistingRule() {
+        var supervisor = chat.tell("approval-1", "Only supervisors may approve refunds.").admitted().getFirst();
+        var support = chat.tell("approval-2", "Support agents may approve refunds.").admitted().getFirst();
+        chat.pin(supervisor.getId());
+
+        assertThatThrownBy(() -> chat.pin(support.getId()))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("approval rule");
+        assertThat(facts.findById(supervisor.getId()).getPinned()).isTrue();
+        assertThat(facts.findById(support.getId()).getPinned()).isFalse();
     }
 
     @Test
