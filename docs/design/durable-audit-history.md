@@ -69,9 +69,10 @@ Use `query(contextId, afterSequence, limit)` to page the recorded operations dur
 ## Transaction participation
 
 `InMemoryAuditLog` uses a process-local fence and declares `BEST_EFFORT`. The history is lost on
-restart. Strict mode surfaces a recording failure. A best-effort sink cannot roll back a different
-repository's live write, so the wrapper invalidates historical coverage when a write may have
-escaped recording.
+restart. Use it with a repository whose writes take effect before they return, such as the
+in-memory repository. When a host controls a separate transaction, use a joining sink so a
+rollback also rolls back the audit record. Strict mode surfaces a recording failure. The wrapper
+invalidates historical coverage when a write may have escaped a best-effort sink.
 
 For Drivine on Neo4j or SQLite, register the result of `AuditLogSchema.forRegistration()` as a
 `DiceStorageSchema` bean and construct `DrivineAuditLogStore` with the proposition repository's persistence manager and
@@ -99,8 +100,9 @@ An outer transaction may commit later than the timestamps attached to its record
 replay considers committed records and includes positions stamped at or before the requested
 instant. Treat this timestamp as audit write time. The Drivine schema also provides a fixed set
 of lock stripes so two contexts cannot claim the same newly created proposition ID.
-Drivine currently reads the retained
-records for a context under its audit fence when it verifies coverage and replays history.
+Drivine reads the retained records for a context under its audit fence when it verifies coverage
+and replays history. Invoke `asOf` and `beliefSetAsOf` with a write-capable transaction manager,
+outside a host read-only transaction. Record pages and per-proposition history use scoped reads.
 
 ## Erasure
 
