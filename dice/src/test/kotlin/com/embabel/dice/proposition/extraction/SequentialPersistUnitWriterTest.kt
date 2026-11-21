@@ -21,6 +21,11 @@ import com.embabel.agent.rag.model.SimpleNamedEntityData
 import com.embabel.agent.rag.service.NamedEntityDataRepository
 import com.embabel.agent.rag.service.RelationshipData
 import com.embabel.agent.rag.service.RetrievableIdentifier
+import com.embabel.dice.audit.AuditRunKind
+import com.embabel.dice.audit.AuditRunRef
+import com.embabel.dice.audit.AuditingPropositionRepository
+import com.embabel.dice.audit.InMemoryAuditLog
+import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.MentionRole
 import com.embabel.dice.proposition.Proposition
@@ -39,6 +44,18 @@ class SequentialPersistUnitWriterTest {
     private val tenant = ContextId("unit-tenant")
 
     private val key = ExtractionRunKey.of("unit-tenant", "run-1")
+
+    @Test
+    fun `persisting a unit supplies the extraction run to opted-in audit history`() {
+        val log = InMemoryAuditLog()
+        val audited = AuditingPropositionRepository.wrapping(InMemoryPropositionRepository(), log)
+        val writer = PersistUnitWriter.sequential(audited, entityRepository, RecordingLinkStore { 1 })
+
+        assertThat(writer.write(unitWithEntity().withRun(key))).isInstanceOf(PersistOutcome.Stored::class.java)
+
+        assertEquals(AuditRunRef(AuditRunKind.EXTRACTION, key.runRef.runId),
+            log.history(tenant.value, p.id).single().attribution.run)
+    }
 
     /** Every repository and store call, in the order the writer made them. */
     private val calls = mutableListOf<String>()

@@ -16,6 +16,9 @@
 package com.embabel.dice.spi
 
 import com.embabel.agent.core.ContextId
+import com.embabel.dice.audit.AuditRunContext
+import com.embabel.dice.audit.AuditRunKind
+import com.embabel.dice.audit.AuditRunRef
 import com.embabel.dice.projection.lineage.CollectorOutcome
 import com.embabel.dice.projection.lineage.CollectorRecord
 import com.embabel.dice.projection.lineage.CollectorRecordStore
@@ -27,6 +30,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonProperty
 import org.slf4j.LoggerFactory
 import java.time.Instant
+import java.util.UUID
 
 /** Why an undo declined to act — the decision is silent otherwise, since it returns null. */
 private val undoLogger = LoggerFactory.getLogger("com.embabel.dice.spi.CollapseUndo")
@@ -507,12 +511,17 @@ fun undoSingleCollapse(
     if (!retirement.isCurrentlyRetired(retiredProposition)) return null
     val authorization = records.authorize(decision.runId, survivorId, retiredId, retiredProposition)
     if (authorization is UndoAuthorization.Refuse) return null
+    fun restore(): Proposition = AuditRunContext.withRun(
+        command.contextIdValue, AuditRunRef(AuditRunKind.COLLECTOR_UNDO, UUID.randomUUID().toString()),
+    ) {
+        propositions.save(retiredProposition.withStatus(retirement.priorStatus))
+    }
 
     // Resuming an undo that was interrupted between its stamp and its restore: the evidence is
     // already off, and re-deriving it here would subtract against a survivor that no longer holds
     // it. Only the restore is outstanding.
     if (authorization is UndoAuthorization.ResumeRestore) {
-        val resumed = propositions.save(retiredProposition.withStatus(retirement.priorStatus))
+        val resumed = restore()
         return CollapseUndoResult(survivor = survivor, restored = resumed)
     }
     val undoMarker = (authorization as UndoAuthorization.Proceed).marker
@@ -565,7 +574,7 @@ fun undoSingleCollapse(
     // member would already be back at its prior status.
     records.record(undoMarker.copy(undoneAt = Instant.now()))
 
-    val restored = propositions.save(retiredProposition.withStatus(retirement.priorStatus))
+    val restored = restore()
 
     return CollapseUndoResult(survivor = updatedSurvivor, restored = restored)
 }
