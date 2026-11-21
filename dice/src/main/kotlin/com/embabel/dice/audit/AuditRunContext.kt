@@ -16,6 +16,10 @@
 package com.embabel.dice.audit
 
 import com.embabel.dice.common.SourceAnalysisContext
+import com.embabel.dice.proposition.extraction.ExtractionRunKey
+import com.embabel.dice.proposition.extraction.PersistOutcome
+import com.embabel.dice.proposition.extraction.PersistUnit
+import com.embabel.dice.proposition.extraction.PersistUnitWriter
 import org.jetbrains.annotations.ApiStatus
 import java.util.function.Supplier
 
@@ -47,6 +51,14 @@ internal fun <T> withExtractionAuditRun(context: SourceAnalysisContext?, action:
     val run = context?.currentRun ?: return action()
     return AuditRunContext.withRun(context.contextId.value, AuditRunRef(AuditRunKind.EXTRACTION, run.runId), action)
 }
+
+internal fun <T> withExtractionAuditRun(key: ExtractionRunKey?, action: () -> T): T {
+    if (key == null) return action()
+    return AuditRunContext.withRun(key.contextId.value, AuditRunRef(AuditRunKind.EXTRACTION, key.runRef.runId), action)
+}
+
+internal fun PersistUnitWriter.writeWithAuditAttribution(unit: PersistUnit): PersistOutcome =
+    withExtractionAuditRun(unit.run) { write(unit) }
 
 internal fun AuditContextProvider.resolveAttribution(contextId: String): AuditAttribution {
     val attribution = attributionFor(contextId)

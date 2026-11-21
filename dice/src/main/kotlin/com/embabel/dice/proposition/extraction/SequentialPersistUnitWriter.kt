@@ -16,6 +16,7 @@
 package com.embabel.dice.proposition.extraction
 
 import com.embabel.agent.rag.service.NamedEntityDataRepository
+import com.embabel.dice.audit.withExtractionAuditRun
 import com.embabel.dice.pipeline.PersistablePropositions
 import com.embabel.dice.proposition.PropositionPersistenceResult
 import com.embabel.dice.proposition.PropositionRepository
@@ -55,7 +56,9 @@ internal class SequentialPersistUnitWriter(
 
         val afterPropositions = afterEntities + PersistStep.PROPOSITIONS
         val persisted = try {
-            propositionRepository.saveAllReturningCanonical(unit.propositions)
+            withExtractionAuditRun(unit.run) {
+                propositionRepository.saveAllReturningCanonical(unit.propositions)
+            }
         } catch (e: Exception) {
             return PersistOutcome.failed(PersistStep.PROPOSITIONS, e, afterPropositions)
         }
