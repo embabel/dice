@@ -42,8 +42,8 @@ import java.util.function.UnaryOperator
 
 /**
  * A memory tool and prompt reference over a host-supplied spec and budget. Each returned
- * proposition is labelled with its owning context. The host creates the spec after authorizing
- * the contexts. Read operations through this tool leave access timestamps alone.
+ * proposition is one JSON line with `contextId` and `text` fields. The host creates the spec
+ * after authorizing the contexts. Read operations through this tool leave access timestamps alone.
  *
  * @see Memory for single-context memory.
  */
@@ -100,7 +100,7 @@ class ScopedMemory private constructor(
         if (eager.isNotEmpty()) {
             appendLine()
             appendLine("Key memories:")
-            eager.forEach { appendLine("- [${it.contextIdValue}] ${it.text}") }
+            eager.forEach { appendLine(renderFact(it)) }
         }
         append(notes())
     }
@@ -153,9 +153,16 @@ class ScopedMemory private constructor(
         }
         return Tool.Result.text(
             if (propositions.isEmpty()) "No memories matched."
-            else propositions.joinToString("\n") { "[${it.contextIdValue}] ${it.text}" }
+            else propositions.joinToString("\n", transform = ::renderFact)
         )
     }
+
+    /** Keeps every fact on one line, including text containing Unicode line separators. */
+    private fun renderFact(proposition: Proposition): String =
+        factWriter.writeValueAsString(mapOf("contextId" to proposition.contextIdValue, "text" to proposition.text))
+            .replace("\u0085", "\\u0085")
+            .replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029")
 
     private fun search(query: String, limit: Int): List<Proposition> {
         val vectors = vectorSearch?.findNearest(
@@ -176,8 +183,9 @@ class ScopedMemory private constructor(
     }
 
     companion object {
-        private val inputReader = jacksonObjectMapper().reader()
-            .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+        private val json = jacksonObjectMapper()
+        private val inputReader = json.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+        private val factWriter = json.writer()
         private val tokenSeparator = Regex("""[^\p{L}\p{N}]+""")
 
         /**

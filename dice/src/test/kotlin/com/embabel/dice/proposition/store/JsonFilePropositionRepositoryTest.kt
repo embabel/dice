@@ -21,12 +21,22 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.provenance.ProvenanceEntry
 import com.embabel.dice.provenance.SourceRevisionRef
 import com.embabel.dice.provenance.UriLocator
+import com.embabel.dice.store.ContextReadScope
+import com.embabel.dice.store.ReadBudget
+import com.embabel.dice.store.ReadCriteria
+import com.embabel.dice.store.ScopedReadSpec
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 class JsonFilePropositionRepositoryTest {
 
@@ -45,6 +55,50 @@ class JsonFilePropositionRepositoryTest {
             confidence = 0.9,
             provenanceEntries = provenanceEntries,
         )
+
+    @Test
+    fun `scoped reads wait for a JSON save to commit or roll back`(@TempDir tempDir: Path) {
+        val repository = JsonFilePropositionRepository(tempDir.resolve("propositions.json"))
+        val reads = repository.scopedReads()
+        val spec = ScopedReadSpec.of(ContextReadScope.ofValues(contextA.value))
+        val serializing = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val reading = CountDownLatch(1)
+        val rejected = proposition(contextA, "temporary uncommitted fact").withMetadataValue(
+            "failingValue", FailingJsonValue(serializing, release),
+        )
+
+        Executors.newFixedThreadPool(2).use { executor ->
+            val write = executor.submit<Proposition> { repository.save(rejected) }
+            try {
+                assertTrue(serializing.await(5, TimeUnit.SECONDS))
+                val read = executor.submit<Int> {
+                    reading.countDown()
+                    reads.count(spec, ReadCriteria.empty(), ReadBudget.ofRows(1))
+                }
+                assertTrue(reading.await(5, TimeUnit.SECONDS))
+                assertThrows<TimeoutException> { read.get(200, TimeUnit.MILLISECONDS) }
+                release.countDown()
+                assertThrows<ExecutionException> { write.get(5, TimeUnit.SECONDS) }
+                assertEquals(0, read.get(5, TimeUnit.SECONDS))
+            } finally {
+                release.countDown()
+            }
+        }
+    }
+
+    private class FailingJsonValue(
+        private val serializing: CountDownLatch,
+        private val release: CountDownLatch,
+    ) {
+        @Suppress("unused") // Jackson reads this property when writing the pending file.
+        val value: Int
+            get() {
+                serializing.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+                error("Fail after the store has published its pending state")
+            }
+    }
 
     @Test
     fun `propositions saved by one instance are recovered by a fresh instance over the same file`(

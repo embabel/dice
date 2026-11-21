@@ -118,6 +118,30 @@ abstract class DrivinePropositionStoreContractCases : AbstractPropositionStoreCo
     }
 
     @Test
+    fun `scoped limits apply to propositions with multiple mentions`() {
+        fun save(id: String, entities: List<String>) {
+            val mentions = entities.map { entity ->
+                EntityMention(span = entity, type = "Person", role = MentionRole.SUBJECT, resolvedId = entity)
+            }
+            repository.save(Proposition.draft("team", "policy $id", 0.9).withId(id).withMentions(mentions).toProposition())
+        }
+
+        save("1", listOf("alice", "beth"))
+        save("2", listOf("charlie"))
+        val reads = repository.scopedReads()
+        val scope = ScopedReadSpec.of(ContextReadScope.ofValues("team"))
+        val two = ReadBudget.ofRows(2)
+
+        val rows = reads.query(scope, ReadQuery.of(ReadCriteria.empty()).withLimit(2), two)
+        assertEquals(listOf("1", "2"), rows.map { it.id })
+        assertEquals(setOf("alice", "beth"), rows.first().mentions.map { it.resolvedId }.toSet())
+        val strongest = reads.matchKeywords(scope, ReadKeywordQuery.forTokens("policy").withLimit(1), two).single()
+        assertEquals("1", strongest.id)
+        assertEquals(2, strongest.mentions.size)
+        assertEquals(2, reads.count(scope, ReadCriteria.empty(), two))
+    }
+
+    @Test
     fun `unsupported scoped prompt reads report the refusal without dropping the host filter`() {
         repository.save(Proposition.draft("team", "team policy", 0.9).toProposition())
         repository.save(Proposition.draft("other", "private policy", 0.9).toProposition())

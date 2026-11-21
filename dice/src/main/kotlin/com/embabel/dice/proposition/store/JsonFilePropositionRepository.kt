@@ -110,8 +110,12 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
      */
     @ApiStatus.Experimental
     fun scopedReads(): ScopedReads = embeddingService?.let { embedder ->
-        LocalScopedReads.withVectors({ propositions.values }, embedder::embed, writeLock, embeddings::get)
-    } ?: LocalScopedReads { propositions.values }
+        LocalScopedReads.withVectors(::scopedSnapshot, embedder::embed, writeLock, embeddings::get)
+    } ?: LocalScopedReads(::scopedSnapshot)
+
+    /** Waits for the pending disk write to commit or roll back before taking the scoped snapshot. */
+    private fun scopedSnapshot(): Collection<Proposition> =
+        synchronized(writeLock) { propositions.values.toList() }
 
     override val luceneSyntaxNotes: String
         get() = "no lucene support"
