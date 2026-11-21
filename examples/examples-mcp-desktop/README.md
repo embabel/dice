@@ -65,12 +65,14 @@ client's own.
 
 | Tool | Arguments | Returns | Access |
 |---|---|---|---|
-| `dice_recall` | `contextId`, optional `query`, optional `limit` (default 10, at most 100) | The facts in the context that match the query, by semantic and keyword search. Without a query, every fact ordered by confidence. | Read-only |
+| `dice_recall` | `contextId`, optional `query`, optional `limit` (default 10, at most 100) | Active facts in the context that match the query. The example uses keyword search. Without a query, results are ordered by effective confidence. | Read-only |
 | `dice_list` | `contextId`, optional `limit` (default 10, at most 100) | `Found N memories in context '...':` and one line per fact with its id and confidence, or `No memories in context '...'.` | Read-only |
 | `dice_get` | `contextId`, `propositionId` | One fact with its id, status and text. An id that is missing and an id from another context get the same answer. | Read-only |
 | `dice_store` | `contextId`, `text`, optional `confidence` (default 0.8) | `Stored proposition <id>: <text>`. The fact is stored as given, with no extraction. | Opt-in, with `embabel.dice.mcp.writes-enabled=true` |
 
-By default recall and list leave out facts below confidence 0.5.
+Recall and list return at most the requested limit and leave out facts below an effective
+confidence of 0.5 by default. For semantic recall, configure a repository with an embedding
+service. This example runs with its in-memory repository and no embedding service.
 
 ## Keep it on this machine
 
