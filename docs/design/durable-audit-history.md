@@ -114,9 +114,11 @@ new audit data returns the same tombstone. Deleting an individual proposition re
 history. The wrapper requires exact contexts for erasure. For broad erasure, call
 `clearByContext` for each authorized context and handle other data stores and backups separately.
 
-Single-context batches acquire identity fences in a fixed order before saving. Writes and
-canonical results still follow caller order. Mixed-context batches write one proposition at a
-time unless the host opens an outer transaction. For whole-store re-embedding, pause audited
-writers and run the repository's maintenance operation while the store is quiescent.
+Each single-context batch acquires its identity fences in a fixed order before saving. Writes
+and canonical results follow caller order. Mixed-context batches write one proposition at a time
+unless the host opens an outer transaction. A host that makes multiple audited calls in one
+transaction must handle aborts caused by overlapping locks and retry the entire transaction.
+For whole-store re-embedding, pause audited writers and run the repository's maintenance
+operation while the store is quiescent.
 
 Applications that leave audit unwired keep their existing repositories, schema and event paths.

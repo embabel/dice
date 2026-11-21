@@ -172,7 +172,7 @@ class DrivineAuditLogStore @JvmOverloads constructor(
     }
 
     override fun timeline(contextId: String): AuditTimeline = transaction {
-        val state = lock(contextId, create = false)
+        val state = lock(contextId, create = false, includeBaseline = true)
         if (state == null || state.cutover == null) {
             return@transaction AuditTimeline(null, null, clock.instant(), 0, 0, emptyList(), emptyList())
         }
@@ -240,18 +240,20 @@ class DrivineAuditLogStore @JvmOverloads constructor(
         return transaction { action(checkNotNull(lock(contextId, create = true))) }
     }
 
-    private fun lock(contextId: String, create: Boolean): ContextState? {
+    private fun lock(contextId: String, create: Boolean, includeBaseline: Boolean = false): ContextState? {
         val pattern = "(c:$CONTEXT {contextId: ${'$'}contextId})"
         val match = if (create) {
             "MERGE $pattern ON CREATE SET c.sequence = 0, c.baselineSequence = 0, c.baselineSize = 0, c.lastErasure = 0"
         } else "MATCH $pattern"
+        // Only replay needs the snapshot payload. Read it under the same context fence.
+        val baselineProjection = if (includeBaseline) ", baseline: c.baseline" else ""
         return rows(
             """
             $match
             SET c.lockToken = ${'$'}lockToken
-            RETURN {sequence: c.sequence, cutover: c.cutover, baseline: c.baseline, baselineSize: c.baselineSize,
+            RETURN {sequence: c.sequence, cutover: c.cutover, baselineSize: c.baselineSize,
                 baselineSequence: c.baselineSequence, lastErasure: c.lastErasure, invalid: c.invalid,
-                lastRecordedAt: c.lastRecordedAt}
+                lastRecordedAt: c.lastRecordedAt$baselineProjection}
             """.trimIndent(),
             bindings(contextId) + ("lockToken" to UUID.randomUUID().toString()),
         ).singleOrNull()?.let { row ->
