@@ -16,7 +16,7 @@ needs no API key and no running service.
 | [`examples-java`](examples-java) | DICE wired with Spring Boot: a schema, extraction on an event, storage and scoped queries. Start here. |
 | [`examples-kotlin`](examples-kotlin) | The parts of the same API that read differently from Kotlin. |
 | [`examples-decision-revision`](examples-decision-revision) | Showcase: an Embabel decision chooses how a new fact revises stored ones. |
-| [`examples-backend-swap`](examples-backend-swap) | Showcase: the same code on the in-memory store and on Neo4j, switched by one property. |
+| [`examples-backend-swap`](examples-backend-swap) | The same memory desk on the in-memory store, Neo4j, and SQLite. |
 | [`examples-governed-chat`](examples-governed-chat) | Showcase: admission, pinned policy, a prompt budget, and an audit trail for chat memory. |
 | [`examples-common`](examples-common) | Test support the examples share: the scripted model and its recorded replies. |
 
