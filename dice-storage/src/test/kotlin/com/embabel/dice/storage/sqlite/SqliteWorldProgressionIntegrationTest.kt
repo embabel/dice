@@ -25,7 +25,9 @@ import com.embabel.dice.storage.DrivineAuditLogStore
 import com.embabel.dice.storage.DrivinePropositionRepository
 import com.embabel.dice.storage.SqliteWorldProgression
 import com.embabel.dice.storage.TestApplication
+import com.embabel.dice.storage.WORLD_PROGRESSION_OCCURRENCE
 import com.embabel.dice.storage.diceStorageCatalog
+import com.embabel.dice.storage.cypherQuery
 import com.embabel.dice.store.ContextReadScope
 import com.embabel.dice.store.ReadBudget
 import com.embabel.dice.store.ReadCriteria
@@ -35,7 +37,6 @@ import com.embabel.dice.temporal.TemporalMetadata
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.drivine.manager.PersistenceManager
-import com.embabel.dice.storage.cypherQuery
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.boot.WebApplicationType
@@ -61,8 +62,11 @@ class SqliteWorldProgressionIntegrationTest {
         val clock = advancingClock()
         val firstId = start().use { app ->
             val (repository, audit) = stores(app, clock)
-            val progression = SqliteWorldProgression.enable(repository, audit)
             val first = repository.save(plan("Pro").withTemporal(TemporalMetadata(validFrom = startedAt)))
+            val plainSave = plan("Pro")
+            val withOccurrenceMetadata = plainSave.withMetadataValue(WORLD_PROGRESSION_OCCURRENCE, plainSave.id)
+            assertThat(repository.save(withOccurrenceMetadata).id).isEqualTo(first.id)
+            val progression = SqliteWorldProgression.enable(repository, audit)
             assertThatThrownBy { audit.beliefSetAsOf(contextId, recordedAt) }
                 .isInstanceOf(AuditCoverageException::class.java)
             audit.initializeBaseline(contextId, startedAt, listOf(first))
@@ -87,11 +91,17 @@ class SqliteWorldProgressionIntegrationTest {
             val (repository, audit) = stores(app, clock)
             val progression = SqliteWorldProgression.enable(repository, audit)
             val basic = scopedHistory(repository).single { it.status == PropositionStatus.ACTIVE }
+            assertThatThrownBy { progression.record("billing-event-1", basic, plan("Pro"), returnedAt) }
+                .hasMessageContaining("Transition ID already identifies a different occurrence")
             val proAgain = progression.record("billing-event-2", basic, plan("Pro"), returnedAt)
             assertThat(proAgain.id).isNotEqualTo(firstId)
             assertThat(progression.record("billing-event-2", basic, plan("Pro"), returnedAt).id)
                 .isEqualTo(proAgain.id)
-            assertThat(repository.save(plan("Pro")).id).isEqualTo(proAgain.id)
+            val plainSave = plan("Pro")
+            assertThat(repository.save(plainSave.withMetadataValue(WORLD_PROGRESSION_OCCURRENCE, plainSave.id)).id)
+                .isEqualTo(proAgain.id)
+            assertThat(progression.record("billing-event-1", requireNotNull(repository.findById(firstId)), plan("Basic"), movedAt).id)
+                .isEqualTo(basic.id)
 
             val periods = scopedHistory(repository)
             assertThat(periods).hasSize(3)
@@ -129,6 +139,34 @@ class SqliteWorldProgressionIntegrationTest {
             assertThatThrownBy { progression.record("billing-event-1", first, plan("Basic"), movedAt) }
                 .hasMessageContaining("different active occurrence")
             assertThat(scopedHistory(repository).map { it.status }).containsOnly(PropositionStatus.ACTIVE)
+            assertThat(audit.history(contextId, first.id)).isEmpty()
+        }
+    }
+
+    @Test
+    fun `a pinned stale or cross-context predecessor cannot be replaced`() {
+        start().use { app ->
+            val (repository, audit) = stores(app, advancingClock())
+            val progression = SqliteWorldProgression.enable(repository, audit)
+            val other = repository.save(
+                Proposition.draft("another-account", "Acme is on the Pro plan", 0.9).toProposition(),
+            )
+            val first = repository.save(plan("Pro"))
+            audit.initializeBaseline(contextId, startedAt, listOf(first))
+            val crossContext = plan("Pro").toDraft().withId(other.id).toProposition()
+
+            assertThatThrownBy { progression.record("wrong-account", crossContext, plan("Basic"), movedAt) }
+                .hasMessageContaining("Previous occurrence was not found in this context")
+            val pinned = requireNotNull(repository.pin(first.id))
+            assertThatThrownBy { progression.record("pinned", pinned, plan("Basic"), movedAt) }
+                .hasMessageContaining("active unpinned claim")
+            repository.unpin(first.id)
+            assertThatThrownBy { progression.record("stale", first, plan("Basic"), movedAt) }
+                .hasMessageContaining("active unpinned claim")
+            assertThatThrownBy { progression.record("future", first, plan("Basic"), recordedAt.plusSeconds(3600)) }
+                .hasMessageContaining("cannot take effect in the future")
+
+            assertThat(scopedHistory(repository).single().id).isEqualTo(first.id)
             assertThat(audit.history(contextId, first.id)).isEmpty()
         }
     }

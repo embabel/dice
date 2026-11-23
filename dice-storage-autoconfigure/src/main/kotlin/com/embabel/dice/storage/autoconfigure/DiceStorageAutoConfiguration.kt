@@ -297,23 +297,24 @@ class DiceStorageAutoConfiguration {
     @ConditionalOnDrivineStores
     fun lineageRecordSchema(): SchemaCatalog = diceStorageCatalog(listOf(LineageSchema))
 
-    @Bean
-    @ConditionalOnBean(Ai::class)
-    @ConditionalOnDrivineStores
-    @ConditionalOnProperty(
-        prefix = "embabel.dice.store.world-progression", name = ["enabled"], havingValue = "false", matchIfMissing = true,
-    )
     fun propositionConstraintSchema(): SchemaCatalog = propositionSchema(includeExactTextConstraint = true)
 
-    @Bean
+    @Bean(name = ["propositionConstraintSchema"])
     @ConditionalOnBean(Ai::class)
     @ConditionalOnDrivineStores
-    @ConditionalOnProperty(
-        prefix = "embabel.dice.store.world-progression", name = ["enabled"], havingValue = "true",
-    )
-    fun worldProgressionPropositionConstraintSchema(persistenceManager: PersistenceManager): SchemaCatalog {
-        require(persistenceManager.type == DatabaseType.SQLITE) { "World progression requires SQLite" }
-        return propositionSchema(includeExactTextConstraint = false)
+    internal fun configuredPropositionConstraintSchema(
+        environment: Environment,
+        persistenceManager: ObjectProvider<PersistenceManager>,
+    ): SchemaCatalog {
+        val enabled = environment.getProperty(
+            "embabel.dice.store.world-progression.enabled",
+            Boolean::class.java,
+            false,
+        )
+        require(!enabled || persistenceManager.getObject().type == DatabaseType.SQLITE) {
+            "World progression requires SQLite"
+        }
+        return if (enabled) propositionSchema(includeExactTextConstraint = false) else propositionConstraintSchema()
     }
 
     private fun propositionSchema(includeExactTextConstraint: Boolean): SchemaCatalog = SchemaCatalog.of(listOfNotNull(

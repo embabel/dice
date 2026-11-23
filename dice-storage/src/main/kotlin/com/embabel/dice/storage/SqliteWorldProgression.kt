@@ -66,7 +66,7 @@ class SqliteWorldProgression private constructor(
             "Successor must be a new occurrence with a valid end"
         }
         return audit.duringWorldProgression(contextId) {
-            val existing = repository.findById(id)
+            val existing = repository.findWorldOccurrence(contextId, id)
             if (existing != null) {
                 require(
                     existing.contextId == successor.contextId && existing.text == successor.text &&
@@ -76,9 +76,11 @@ class SqliteWorldProgression private constructor(
                 return@duringWorldProgression existing
             }
 
-            val current = requireNotNull(repository.findById(previous.id)) { "Previous occurrence was not found" }
+            val current = requireNotNull(repository.findWorldOccurrence(contextId, previous.id)) {
+                "Previous occurrence was not found in this context"
+            }
             require(
-                current.contextId == previous.contextId && current.text == previous.text &&
+                current.text == previous.text &&
                     current.status == PropositionStatus.ACTIVE && !current.pinned &&
                     current.contentRevised == previous.contentRevised && current.metadataRevised == previous.metadataRevised,
             ) { "Previous occurrence is no longer the active unpinned claim supplied by the caller" }
@@ -97,7 +99,9 @@ class SqliteWorldProgression private constructor(
                 .withTemporal(next.copy(validFrom = effectiveAt, supersedes = listOf(current.id)))
                 .toProposition().withMetadataValue(WORLD_PROGRESSION_OCCURRENCE, id)
             check(audited.save(retired).id == current.id)
-            audited.save(replacement).also { check(it.id == id) { "Store did not preserve the new occurrence ID" } }
+            repository.withNewWorldOccurrence(id) {
+                audited.save(replacement).also { check(it.id == id) { "Store did not preserve the new occurrence ID" } }
+            }
         }
     }
 

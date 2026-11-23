@@ -116,6 +116,13 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- The SQLite configuration tests start a real embedded datasource. -->
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- ApplicationContextRunner wiring tests -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -68,6 +68,7 @@ database with the DICE starter. With custom schema catalogs, omit the unique con
 `(contextId, text)` and keep the unique proposition ID. After schema enforcement, call
 `enable` before accepting work. The first call removes the legacy text constraint from an
 existing database. Schedule that step while writes are stopped and keep a database backup.
+Initialize the writer on each instance so ordinary saves resolve returning claims to the active occurrence.
 
 [source,java]
 ----
