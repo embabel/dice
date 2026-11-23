@@ -129,6 +129,7 @@ public class com/embabel/dice/storage/autoconfigure/DiceStorageAutoConfiguration
 	public fun propositionConstraintSchema ()Lorg/drivine/schema/SchemaCatalog;
 	public fun propositionVectorIndexConvergence (Lorg/drivine/manager/PersistenceManager;Lcom/embabel/agent/api/common/Ai;Lorg/springframework/beans/factory/ObjectProvider;)Lcom/embabel/dice/storage/autoconfigure/PropositionVectorIndexConvergence;
 	public fun propositionVectorIndexSchema (Lcom/embabel/agent/api/common/Ai;Lorg/springframework/beans/factory/ObjectProvider;)Lorg/drivine/schema/SchemaCatalog;
+	public fun worldProgressionPropositionConstraintSchema (Lorg/drivine/manager/PersistenceManager;)Lorg/drivine/schema/SchemaCatalog;
 }
 
 public final class com/embabel/dice/storage/autoconfigure/DiceStoreProperties {

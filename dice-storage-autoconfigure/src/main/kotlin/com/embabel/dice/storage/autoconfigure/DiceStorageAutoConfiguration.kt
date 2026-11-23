@@ -46,6 +46,7 @@ import com.embabel.dice.storage.LineageSchema
 import com.embabel.dice.storage.diceStorageCatalog
 import org.drivine.autoconfigure.DrivineAutoConfiguration
 import org.drivine.manager.StatelessGraphObjectManager
+import org.drivine.connection.DatabaseType
 import org.drivine.manager.PersistenceManager
 import org.drivine.schema.RangeIndexSpec
 import org.drivine.schema.SchemaCatalog
@@ -299,14 +300,31 @@ class DiceStorageAutoConfiguration {
     @Bean
     @ConditionalOnBean(Ai::class)
     @ConditionalOnDrivineStores
-    fun propositionConstraintSchema(): SchemaCatalog = SchemaCatalog.of(
+    @ConditionalOnProperty(
+        prefix = "embabel.dice.store.world-progression", name = ["enabled"], havingValue = "false", matchIfMissing = true,
+    )
+    fun propositionConstraintSchema(): SchemaCatalog = propositionSchema(includeExactTextConstraint = true)
+
+    @Bean
+    @ConditionalOnBean(Ai::class)
+    @ConditionalOnDrivineStores
+    @ConditionalOnProperty(
+        prefix = "embabel.dice.store.world-progression", name = ["enabled"], havingValue = "true",
+    )
+    fun worldProgressionPropositionConstraintSchema(persistenceManager: PersistenceManager): SchemaCatalog {
+        require(persistenceManager.type == DatabaseType.SQLITE) { "World progression requires SQLite" }
+        return propositionSchema(includeExactTextConstraint = false)
+    }
+
+    private fun propositionSchema(includeExactTextConstraint: Boolean): SchemaCatalog = SchemaCatalog.of(listOfNotNull(
         UniquenessConstraintSpec(label = "Proposition", property = "id"),
         UniquenessConstraintSpec(label = "Mention", property = "id"),
         UniquenessConstraintSpec(label = "ProcessedChunk", property = "id"),
         UniquenessConstraintSpec(label = "Source", property = "key"),
         // Cross-instance dedup backstop: the same fact minted by parallel writers as distinct ids
         // collapses to one node; save() catches the violation and reuses the existing node.
-        UniquenessConstraintSpec(label = "Proposition", properties = listOf("contextId", "text")),
+        UniquenessConstraintSpec(label = "Proposition", properties = listOf("contextId", "text"))
+            .takeIf { includeExactTextConstraint },
         RangeIndexSpec("Proposition", "contextId"),
         RangeIndexSpec("Proposition", "status"),
         RangeIndexSpec("Proposition", "level"),
@@ -314,7 +332,7 @@ class DiceStorageAutoConfiguration {
         RangeIndexSpec("Mention", "resolvedId"),
         RangeIndexSpec("ProcessedChunk", "sourceId"),
         RangeIndexSpec("Source", "kind"),
-    )
+    ))
 
     @Bean
     @ConditionalOnBean(Ai::class)

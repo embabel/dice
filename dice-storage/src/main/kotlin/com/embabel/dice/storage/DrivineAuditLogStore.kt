@@ -68,11 +68,27 @@ class DrivineAuditLogStore @JvmOverloads constructor(
     }
 
     override val transactionParticipation = AuditTransactionParticipation.JOINS_HOST_TRANSACTION
+    private val progressionTime = Any()
     private val transactions = TransactionTemplate(transactionManager)
     private val independentWrites = TransactionTemplate(transactionManager).apply {
         propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
     }
     private val sqliteReadOnlyAccess = TransactionTemplate(transactionManager).apply { isReadOnly = true }
+
+    internal fun uses(manager: PersistenceManager, transactionManager: PlatformTransactionManager?): Boolean =
+        persistenceManager === manager && transactions.transactionManager === transactionManager
+
+    internal fun now(): Instant = clock.instant()
+
+    internal fun <T> duringWorldProgression(contextId: String, action: () -> T): T = locked(contextId) { state ->
+        // A transaction-time read must see both sides of the handoff at the same instant.
+        TransactionSynchronizationManager.bindResource(progressionTime, recordedAt(state))
+        try {
+            action()
+        } finally {
+            TransactionSynchronizationManager.unbindResource(progressionTime)
+        }
+    }
 
     override fun initializeBaseline(contextId: String, cutover: Instant, completeSnapshot: Collection<Proposition>) {
         val claims = baselineOf(contextId, completeSnapshot)
@@ -228,7 +244,11 @@ class DrivineAuditLogStore @JvmOverloads constructor(
     }
 
     private fun recordedAt(state: ContextState): Instant =
-        maxOf(clock.instant(), state.cutover ?: Instant.MIN, state.lastRecordedAt ?: Instant.MIN)
+        maxOf(
+            TransactionSynchronizationManager.getResource(progressionTime) as? Instant ?: clock.instant(),
+            state.cutover ?: Instant.MIN,
+            state.lastRecordedAt ?: Instant.MIN,
+        )
 
     private fun records(contextId: String, after: Long, limit: Int?): List<AuditRecord> {
         val query = """
