@@ -54,6 +54,45 @@ The blank value lets the starter select the Drivine store. You can also pass
 Drivine opens or creates the SQLite file. If startup fails, check that the directory exists and
 the application has write access. The test uses a fresh file in a temporary directory.
 
+### Record an accepted plan change
+
+[WorldProgressionTests](src/test/java/example/dice/backends/WorldProgressionTests.java) runs a
+billing event against a fresh SQLite file. Billing accepts Acme's move from Pro to Basic and
+supplies the event ID and effective instant. DICE stores both plan periods. The previous
+period ends at the same instant the new one begins.
+
+| Read | Result |
+|---|---|
+| Effective time just before the change | Pro |
+| Effective time at the change | Basic |
+| Stored history | Pro is `SUPERSEDED`. Basic is `ACTIVE` and links back to Pro. |
+| Repeat delivery | The same Basic occurrence is returned. |
+
+The test opts in with `embabel.dice.store.world-progression.enabled=true`, registers the
+audit schema for the SQLite datasource, and enables the writer after schema startup.
+
+```java
+var audit = new DrivineAuditLogStore(persistenceManager, transactionManager);
+var progression = SqliteWorldProgression.enable(repository, audit);
+var basic = progression.record("subscription-42", pro, nextPlan, changedAt);
+```
+
+Open a scoped repository view for the account and check validity intervals to answer which
+plan was in effect. Use a complete audit baseline and the audit timestamp to answer what the
+application had recorded. The test uses a March effective date and records it during the run
+so the two reads exercise different clocks.
+
+Run just this scenario without Docker or an API key.
+
+```bash
+./mvnw -B -f examples/pom.xml -pl examples-backend-swap -am \
+  -Dtest=WorldProgressionTests -Dsurefire.failIfNoSpecifiedTests=false test
+```
+
+Use the [audit history guide](../../dice-user-guide/src/main/asciidoc/features/audit-history.adoc#features-world-progression)
+for setup and migration. See [Corrections and History](../examples-corrections-history/README.md)
+for how the ordinary revision pipeline handles a source disagreement.
+
 ## Modules
 
 The application is one package, `example.dice.backends`. `ModularityTests` uses Spring Modulith

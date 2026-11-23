@@ -5,6 +5,9 @@ built-in LLM reviser, decides what each new fact means for the facts already sto
 `DecisionReviser` is a plain Java `PropositionReviser`. DICE needs no hook for it:
 `PropositionPipeline.withRevision` takes any reviser.
 
+For an effective-dated change the application has already accepted, use
+[the SQLite world progression example](../examples-backend-swap/README.md#record-an-accepted-plan-change).
+
 ## Run
 
 ```bash
