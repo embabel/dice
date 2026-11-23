@@ -16,6 +16,7 @@
 
 package example.dice.backends;
 
+import com.embabel.dice.audit.AuditCoverageException;
 import com.embabel.dice.proposition.Proposition;
 import com.embabel.dice.proposition.PropositionQuery;
 import com.embabel.dice.proposition.PropositionStatus;
@@ -52,6 +53,8 @@ import java.util.List;
 
 import static com.embabel.dice.storage.DiceStorageSchemaKt.diceStorageCatalog;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.groups.Tuple.tuple;
 
 @SpringBootTest(properties = {
         "embabel.dice.store.type=",
@@ -88,18 +91,18 @@ class WorldProgressionTests {
 
         var signedUpAt = Instant.parse("2025-02-01T00:00:00Z");
         var changedAt = Instant.parse("2025-03-01T00:00:00Z");
-        var pro = repository.save(plan("Pro", "signup-17").withTemporal(new TemporalMetadata(null, signedUpAt)));
         var audit = new DrivineAuditLogStore(persistenceManager, transactionManager);
         var progression = SqliteWorldProgression.enable(repository, audit);
+        var pro = repository.save(plan("Pro", "signup-17").withTemporal(new TemporalMetadata(null, signedUpAt)));
 
         audit.duringWrite(ACCOUNT, () -> {
             audit.initializeBaseline(ACCOUNT, Instant.now(), repository.query(PropositionQuery.againstContext(ACCOUNT)));
             return null;
         });
 
-        // Billing supplies the event ID and the effective date after accepting the change.
-        var nextPlan = plan("Basic", "subscription-42");
-        var basic = progression.record("subscription-42", pro, nextPlan, changedAt);
+        var eventId = "plan-change-881";
+        var nextPlan = plan("Basic", eventId);
+        var basic = progression.record(eventId, pro, nextPlan, changedAt);
         var historyScope = ScopedReadSpec.of(ContextReadScope.ofValues(ACCOUNT));
         var historicalStatuses = ReadCriteria.empty().withStatuses(PropositionStatus.ACTIVE, PropositionStatus.SUPERSEDED);
         var plans = repository.scopedReads().query(historyScope, ReadQuery.of(historicalStatuses), ReadBudget.ofRows(10));
@@ -114,11 +117,15 @@ class WorldProgressionTests {
                     assertThat(previous.getTemporal().getValidTo()).isEqualTo(changedAt);
                 });
         assertThat(basic.getTemporal().getSupersedes()).containsExactly(pro.getId());
-        assertThat(progression.record("subscription-42", pro, nextPlan, changedAt).getId()).isEqualTo(basic.getId());
+        assertThat(progression.record(eventId, pro, nextPlan, changedAt).getId()).isEqualTo(basic.getId());
 
         var recordedAt = audit.history(ACCOUNT, basic.getId()).getFirst().getRecordedAt();
+        assertThat(recordedAt).isAfter(changedAt);
+        assertThatThrownBy(() -> audit.beliefSetAsOf(ACCOUNT, changedAt)).isInstanceOf(AuditCoverageException.class);
         assertThat(audit.beliefSetAsOf(ACCOUNT, recordedAt))
-                .extracting(claim -> claim.getId()).containsExactlyInAnyOrder(pro.getId(), basic.getId());
+                .extracting(claim -> claim.getId(), claim -> claim.getStatus())
+                .containsExactlyInAnyOrder(tuple(pro.getId(), PropositionStatus.SUPERSEDED),
+                        tuple(basic.getId(), PropositionStatus.ACTIVE));
     }
 
     private static Proposition plan(String plan, String billingRecord) {

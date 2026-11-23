@@ -57,7 +57,7 @@ to keep any package added under it free of dependency cycles.
 | `RevisionStoryTests.storesABroaderClaimAsAGeneralizationOfTheStoredOne` | Turn 4, billing says Acme is a paying customer. The fact is stored as a generalization of the Pro plan fact. |
 | `RevisionStoryTests.storesAClaimOnAnotherTopicAsNew` | Turn 5, chat says invoices are paid annually. It is on another topic, so it is new. |
 | `RevisionStoryTests.callsAConflictOnAFactThatDoesNotChangeAContradiction` | Turn 6 marks the annual billing claim `CONTRADICTED`. The evidence converter reports the annual and monthly claims as `Evidence.Conflicting`. |
-| `RevisionStoryTests.callsANewerConflictOnTheCustomersPlanTheWorldMovingOn` | Turn 7 goes through automatic revision and stores the Pro claim as `CONTRADICTED`. The evidence converter presents Basic as current and Pro as superseded. |
+| `RevisionStoryTests.callsANewerConflictOnTheCustomersPlanTheWorldMovingOn` | Turn 7 classifies Pro to Basic as `WorldProgression` during automatic revision. The store records Pro as `CONTRADICTED` and the evidence converter presents it as superseded. |
 | `RevisionStoryTests.keepsTheCorrectedClaimsMarkedContradictedRatherThanDeletingThem` | After the story the store holds all five facts. The Pro plan and annual facts are `CONTRADICTED` and kept, not deleted. |
 | `HistoryAndTrustTests.defaultRecallLeavesOutTheContradictedClaims` | DICE's `Memory` returns the monthly, Basic plan, and paying customer facts. The test sets the confidence floor to zero to verify the default status filter. |
 | `HistoryAndTrustTests.anAccountWithNoClaimsProducesMissingEvidence` | An empty lookup in another account becomes `Evidence.Missing`, with that account named as the search scope. |

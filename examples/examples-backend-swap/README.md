@@ -70,17 +70,27 @@ period ends at the same instant the new one begins.
 
 The test opts in with `embabel.dice.store.world-progression.enabled=true`, registers the
 audit schema for the SQLite datasource, and enables the writer after schema startup.
+Call `enable` once on each instance before accepting writes. For an existing database, configure
+every instance, back up the file, and stop writers before migration. The migration removes the
+legacy exact-text constraint. Restore the backup to roll back to an older release.
 
 ```java
 var audit = new DrivineAuditLogStore(persistenceManager, transactionManager);
 var progression = SqliteWorldProgression.enable(repository, audit);
-var basic = progression.record("subscription-42", pro, nextPlan, changedAt);
+```
+
+When billing confirms the change, pass the ID of that event. Multiple changes on the same
+subscription each have their own event ID.
+
+```java
+var basic = progression.record("plan-change-881", pro, nextPlan, changedAt);
 ```
 
 Open a scoped repository view for the account and check validity intervals to answer which
 plan was in effect. Use a complete audit baseline and the audit timestamp to answer what the
-application had recorded. The test uses a March effective date and records it during the run
-so the two reads exercise different clocks.
+application had recorded. In the test, Basic is in effect on March 1. An audit read for March 1
+refuses the request because it predates the baseline. A read at the event's recorded time
+returns both stored occurrences.
 
 Run just this scenario without Docker or an API key.
 
