@@ -21,9 +21,10 @@ and `SqliteBackendTests` each run them and verify that Spring selected the expec
   `neo4j:2026.05-community` with Testcontainers, once for the whole test run.
 - **Without Docker**, the in-memory and SQLite tests run. Testcontainers skips `Neo4jBackendTests`.
 
-### Pointing at a real Neo4j
+### Neo4j in your app
 
-Configure a Neo4j datasource in `application.properties`.
+Add these settings to your application's `application.properties`. The tests configure
+their own datasource.
 
 ```properties
 database.datasources.neo.type=NEO4J
@@ -34,9 +35,9 @@ database.datasources.neo.password=<your password>
 database.datasources.neo.database-name=neo4j
 ```
 
-### SQLite
+### SQLite in your app
 
-Configure a SQLite datasource in `application.properties`.
+Add these settings to your application's `application.properties`.
 
 ```properties
 database.datasources.local.type=SQLITE
