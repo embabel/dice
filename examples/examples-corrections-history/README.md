@@ -17,6 +17,12 @@ The example runs as tests. `CorrectionsApplication` is the Spring Boot configura
 `CorrectionsDesk.tell(source, messageId, text)` runs one message through the pipeline, stores
 the outcome and returns what revision decided for each fact.
 
+An annual invoice claim and a monthly invoice claim are a source disagreement. The revision
+pipeline keeps the earlier claim as `CONTRADICTED`. When billing confirms a plan change with
+an effective date, the application can record a dated replacement using
+[the SQLite world progression example](../examples-backend-swap/README.md#record-an-accepted-plan-change).
+The SQLite writer keeps the old period as `SUPERSEDED` and links it to the new one.
+
 ## Modules
 
 The example is one package, `example.dice.corrections`. `ModularityTests` uses Spring Modulith
@@ -51,7 +57,7 @@ to keep any package added under it free of dependency cycles.
 | `RevisionStoryTests.storesABroaderClaimAsAGeneralizationOfTheStoredOne` | Turn 4, billing says Acme is a paying customer. The fact is stored as a generalization of the Pro plan fact. |
 | `RevisionStoryTests.storesAClaimOnAnotherTopicAsNew` | Turn 5, chat says invoices are paid annually. It is on another topic, so it is new. |
 | `RevisionStoryTests.callsAConflictOnAFactThatDoesNotChangeAContradiction` | Turn 6 marks the annual billing claim `CONTRADICTED`. The evidence converter reports the annual and monthly claims as `Evidence.Conflicting`. |
-| `RevisionStoryTests.callsANewerConflictOnTheCustomersPlanTheWorldMovingOn` | Turn 7 marks the stored Pro plan claim `CONTRADICTED`. The evidence converter reports `Evidence.Superseded` with Basic as current and Pro as `SUPERSEDED` in the evidence. |
+| `RevisionStoryTests.callsANewerConflictOnTheCustomersPlanTheWorldMovingOn` | Turn 7 classifies Pro to Basic as `WorldProgression` during automatic revision. The store records Pro as `CONTRADICTED` and the evidence converter presents it as superseded. |
 | `RevisionStoryTests.keepsTheCorrectedClaimsMarkedContradictedRatherThanDeletingThem` | After the story the store holds all five facts. The Pro plan and annual facts are `CONTRADICTED` and kept, not deleted. |
 | `HistoryAndTrustTests.defaultRecallLeavesOutTheContradictedClaims` | DICE's `Memory` returns the monthly, Basic plan, and paying customer facts. The test sets the confidence floor to zero to verify the default status filter. |
 | `HistoryAndTrustTests.anAccountWithNoClaimsProducesMissingEvidence` | An empty lookup in another account becomes `Evidence.Missing`, with that account named as the search scope. |

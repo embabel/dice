@@ -54,6 +54,55 @@ The blank value lets the starter select the Drivine store. You can also pass
 Drivine opens or creates the SQLite file. If startup fails, check that the directory exists and
 the application has write access. The test uses a fresh file in a temporary directory.
 
+### Record an accepted plan change
+
+[WorldProgressionTests](src/test/java/example/dice/backends/WorldProgressionTests.java) runs a
+billing event against a fresh SQLite file. Billing accepts Acme's move from Pro to Basic and
+supplies the event ID and effective instant. DICE stores both plan periods. The previous
+period ends at the same instant the new one begins.
+
+| Read | Result |
+|---|---|
+| Effective time just before the change | Pro |
+| Effective time at the change | Basic |
+| Stored history | Pro is `SUPERSEDED`. Basic is `ACTIVE` and links back to Pro. |
+| Repeat delivery | The same Basic occurrence is returned. |
+
+The test opts in with `embabel.dice.store.world-progression.enabled=true`, registers the
+audit schema for the SQLite datasource, and enables the writer after schema startup.
+Call `enable` once on each instance before accepting writes. For an existing database, configure
+every instance, back up the file, and stop writers before migration. The migration removes the
+legacy exact-text constraint. Restore the backup to roll back to an older release.
+
+```java
+var audit = new DrivineAuditLogStore(persistenceManager, transactionManager);
+var progression = SqliteWorldProgression.enable(repository, audit);
+```
+
+When billing confirms the change, pass the ID of that event. Multiple changes on the same
+subscription each have their own event ID.
+
+```java
+var basic = progression.record("plan-change-881", pro, nextPlan, changedAt);
+```
+
+Open a scoped repository view for the account and check validity intervals to answer which
+plan was in effect. Use a complete audit baseline and the audit timestamp to answer what the
+application had recorded. In the test, Basic is in effect on March 1. An audit read for March 1
+refuses the request because it predates the baseline. A read at the event's recorded time
+returns both stored occurrences.
+
+Run just this scenario without Docker or an API key.
+
+```bash
+./mvnw -B -f examples/pom.xml -pl examples-backend-swap -am \
+  -Dtest=WorldProgressionTests -Dsurefire.failIfNoSpecifiedTests=false test
+```
+
+Use the [audit history guide](../../dice-user-guide/src/main/asciidoc/features/audit-history.adoc#features-world-progression)
+for setup and migration. See [Corrections and History](../examples-corrections-history/README.md)
+for how the ordinary revision pipeline handles a source disagreement.
+
 ## Modules
 
 The application is one package, `example.dice.backends`. `ModularityTests` uses Spring Modulith
