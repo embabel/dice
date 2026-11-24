@@ -55,3 +55,44 @@ proposition. For a covered instant, `asOf(contextId, propositionId, instant)` re
 the proposition was absent.
 Historical queries throw `AuditCoverageException` when the requested instant predates the
 baseline, exceeds the observed horizon or lacks a complete audit trail.
+
+[[features-world-progression]]
+==== Record a confirmed world change on SQLite
+
+Use `SqliteWorldProgression` when the application accepts a change with an effective date.
+For example, a billing event says an account moved from Pro to Basic at midnight. Supply the
+current Pro proposition, the Basic proposition with its source, and the billing event's stable ID.
+
+Set `embabel.dice.store.world-progression.enabled=true` on every instance that opens this SQLite
+database with the DICE starter. With custom schema catalogs, omit the unique constraint on
+`(contextId, text)` and keep the unique proposition ID. After schema enforcement, call
+`enable` before accepting work. The first call removes the legacy text constraint from an
+existing database. Schedule that step while writes are stopped and keep a database backup.
+Initialize the writer on each instance so ordinary saves resolve returning claims to the active occurrence.
+
+[source,java]
+----
+var progression = SqliteWorldProgression.enable(repository, audit, attributionProvider);
+var basic = progression.record(event.id(), currentPro, acceptedBasic, event.effectiveAt());
+----
+
+Here `repository` is the SQLite `DrivinePropositionRepository` and `audit` is the
+`DrivineAuditLogStore` for the same datasource and transaction manager. The ordinary
+deduplicating write path still uses exact text. When a fact returns, a new occurrence gets
+its own ID and an ordinary save of that text attaches to the active occurrence. Upgrade all
+writers before enabling this policy. To roll back to a release that enforces unique text,
+restore the pre-migration backup or reconcile repeated occurrences before restoring that constraint.
+
+DICE stores Pro as `SUPERSEDED` with `validTo` set to the effective instant. Basic starts at
+the same instant and links to Pro in `supersedes`. Both writes and their audit records commit
+together. A second delivery of the same event returns the stored successor. A stale
+predecessor, a pinned claim, or an event ID reused for another transition rejects the write.
+
+Keep source disagreements on the existing revision path. Historical `CONTRADICTED` rows
+stay as recorded.
+
+For valid-time reads, open a scoped repository view for the authorized context. Include
+`ACTIVE` and `SUPERSEDED` propositions and evaluate their validity intervals to select the
+occurrence for the effective date. For transaction-time reads, use the complete audit
+baseline described above. A change effective Monday and recorded Wednesday appears in
+valid time from Monday and in the audit timeline from Wednesday.

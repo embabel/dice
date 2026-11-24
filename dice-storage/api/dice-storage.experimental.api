@@ -65,3 +65,17 @@ public final class com/embabel/dice/storage/MetamodelSchema : com/embabel/dice/s
 	public final fun getLABELS ()Ljava/util/List;
 	public fun specs ()Ljava/util/List;
 }
+
+public final class com/embabel/dice/storage/SqliteWorldProgression {
+	public static final field Companion Lcom/embabel/dice/storage/SqliteWorldProgression$Companion;
+	public synthetic fun <init> (Lcom/embabel/dice/storage/DrivinePropositionRepository;Lcom/embabel/dice/storage/DrivineAuditLogStore;Lcom/embabel/dice/audit/AuditContextProvider;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public static final fun enable (Lcom/embabel/dice/storage/DrivinePropositionRepository;Lcom/embabel/dice/storage/DrivineAuditLogStore;)Lcom/embabel/dice/storage/SqliteWorldProgression;
+	public static final fun enable (Lcom/embabel/dice/storage/DrivinePropositionRepository;Lcom/embabel/dice/storage/DrivineAuditLogStore;Lcom/embabel/dice/audit/AuditContextProvider;)Lcom/embabel/dice/storage/SqliteWorldProgression;
+	public final fun record (Ljava/lang/String;Lcom/embabel/dice/proposition/Proposition;Lcom/embabel/dice/proposition/Proposition;Ljava/time/Instant;)Lcom/embabel/dice/proposition/Proposition;
+}
+
+public final class com/embabel/dice/storage/SqliteWorldProgression$Companion {
+	public final fun enable (Lcom/embabel/dice/storage/DrivinePropositionRepository;Lcom/embabel/dice/storage/DrivineAuditLogStore;)Lcom/embabel/dice/storage/SqliteWorldProgression;
+	public final fun enable (Lcom/embabel/dice/storage/DrivinePropositionRepository;Lcom/embabel/dice/storage/DrivineAuditLogStore;Lcom/embabel/dice/audit/AuditContextProvider;)Lcom/embabel/dice/storage/SqliteWorldProgression;
+	public static synthetic fun enable$default (Lcom/embabel/dice/storage/SqliteWorldProgression$Companion;Lcom/embabel/dice/storage/DrivinePropositionRepository;Lcom/embabel/dice/storage/DrivineAuditLogStore;Lcom/embabel/dice/audit/AuditContextProvider;ILjava/lang/Object;)Lcom/embabel/dice/storage/SqliteWorldProgression;
+}

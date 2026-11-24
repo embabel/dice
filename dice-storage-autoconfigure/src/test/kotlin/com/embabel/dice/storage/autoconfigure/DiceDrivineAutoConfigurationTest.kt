@@ -23,8 +23,10 @@ import com.embabel.dice.metamodel.DeclaredSchemaSource
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.store.InMemoryPropositionRepository
 import com.embabel.dice.storage.DiceOwnedSchema
+import com.embabel.dice.storage.DrivineAuditLogStore
 import com.embabel.dice.storage.DrivineChunkHistoryStore
 import com.embabel.dice.storage.DrivinePropositionRepository
+import com.embabel.dice.storage.SqliteWorldProgression
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.assertj.core.api.Assertions.assertThat
 import org.drivine.autoconfigure.DrivineAutoConfiguration
@@ -37,8 +39,11 @@ import org.drivine.mapper.SubtypeRegistry
 import org.drivine.schema.DatabaseTarget
 import org.drivine.schema.RangeIndexSpec
 import org.drivine.schema.SchemaCatalog
+import org.drivine.schema.SchemaManager
 import org.drivine.schema.SchemaTargets
+import org.drivine.schema.UniquenessConstraintSpec
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.NoSuchBeanDefinitionException
@@ -55,6 +60,8 @@ import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.Primary
+import org.springframework.transaction.PlatformTransactionManager
+import java.nio.file.Path
 
 /**
  * A host with Drivine's starter and a datasource gets DICE's Drivine stores without writing any beans.
@@ -91,6 +98,43 @@ class DiceDrivineAutoConfigurationTest {
                 .isSameAs(ctx.getBean<GraphObjectManagerFactory>().stateless("neo"))
             assertThat(ctx.getBean<PropositionRepository>()).isInstanceOf(DrivinePropositionRepository::class.java)
             assertThat(ctx.getBean<ChunkHistoryStore>()).isInstanceOf(DrivineChunkHistoryStore::class.java)
+        }
+    }
+
+    @Test
+    fun `world progression opts SQLite out of text uniqueness while keeping proposition ids unique`(@TempDir dir: Path) {
+        val sqlite = runner.withPropertyValues(
+            "database.datasources.sqlite.type=SQLITE",
+            "database.datasources.sqlite.database-name=${dir.resolve("test.db")}",
+        )
+        val id = UniquenessConstraintSpec("Proposition", "id")
+        val text = UniquenessConstraintSpec("Proposition", listOf("contextId", "text"))
+        sqlite.run { ctx ->
+            ctx.getBean<SchemaManager>().enforce()
+            assertThat(ctx.getBean<PersistenceManager>().constraints.find(text)).isNotNull()
+        }
+        val enabled = sqlite.withPropertyValues("embabel.dice.store.world-progression.enabled=yes")
+        enabled.run { ctx ->
+            assertThat(ctx).hasNotFailed()
+            ctx.getBean<SchemaManager>().enforce()
+            val manager = ctx.getBean<PersistenceManager>()
+            SqliteWorldProgression.enable(
+                ctx.getBean<PropositionRepository>() as DrivinePropositionRepository,
+                DrivineAuditLogStore(manager, ctx.getBean<PlatformTransactionManager>()),
+            )
+            assertThat(manager.constraints.find(text)).isNull()
+        }
+        enabled.run { ctx ->
+            ctx.getBean<SchemaManager>().enforce()
+            val constraints = ctx.getBean<PersistenceManager>().constraints
+            assertThat(constraints.find(text)).isNull()
+            assertThat(constraints.find(id)).isNotNull()
+        }
+        sqlite.withPropertyValues("embabel.dice.store.world-progression.enabled=typo").run { ctx ->
+            assertThat(ctx.startupFailure).hasRootCauseMessage("Invalid boolean value 'typo'")
+        }
+        runner.withPropertyValues(*datasource("neo"), "embabel.dice.store.world-progression.enabled=true").run { ctx ->
+            assertThat(ctx.startupFailure).hasRootCauseMessage("World progression requires SQLite")
         }
     }
 

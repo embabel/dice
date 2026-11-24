@@ -47,6 +47,7 @@ import com.embabel.dice.query.graph.RelatedEntity
 import com.embabel.dice.storage.model.*
 import org.drivine.schema.SimilarityFunction
 import org.drivine.schema.VectorIndexSpec
+import org.drivine.schema.UniquenessConstraintSpec
 import org.drivine.schema.EnsureResult
 import org.drivine.StaleObjectException
 import org.drivine.connection.DatabaseType
@@ -145,6 +146,10 @@ class DrivinePropositionRepository(
 ) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable {
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
+    private val newWorldOccurrence = Any()
+
+    @Volatile
+    private var worldProgressionEnabled = false
 
     /**
      * Runs the dedup find-then-insert as one programmatic transaction (see [save]).
@@ -275,13 +280,13 @@ class DrivinePropositionRepository(
                 // (contextId, text) uniqueness constraint rejected ours. The dupe now exists — reuse
                 // it, in a transaction of its own so the failed attempt cannot roll this back.
                 logger.debug("Dedup constraint hit for context {} — reusing existing: '{}'", contextId, text)
-                txTemplate.execute { recoverDuplicate(proposition, contextId, text) } ?: throw e
+                txTemplate.execute { recoverDuplicate(proposition) } ?: throw e
             }
         }
     }
 
     private fun findOrPersist(proposition: Proposition, contextId: String, text: String): Proposition {
-        val existingId = findDuplicateId(contextId, text, proposition.id)
+        val existingId = findDuplicateId(proposition)
         val existing = existingId?.let(::findById)
         val isUpdate = existsById(proposition.id)
         // A same-text sibling only collapses a brand-new insert (parallel writers minting one fact as
@@ -317,8 +322,8 @@ class DrivinePropositionRepository(
      * Re-find the winner after a cross-instance uniqueness race and union the losing writer's
      * evidence into it. The relationship MERGE is keyed by evidence identity, so a retry is a no-op.
      */
-    private fun recoverDuplicate(proposition: Proposition, contextId: String, text: String): Proposition? {
-        val winnerId = findDuplicateId(contextId, text, proposition.id) ?: return null
+    private fun recoverDuplicate(proposition: Proposition): Proposition? {
+        val winnerId = findDuplicateId(proposition) ?: return null
         val winner = findById(winnerId) ?: return null
         return mergeDeduplicatedProvenance(winner, proposition.provenanceEntries)
     }
@@ -807,27 +812,75 @@ class DrivinePropositionRepository(
     @org.jetbrains.annotations.ApiStatus.Experimental
     fun auditCanonicalLookup(): AuditCanonicalLookup = object : AuditCanonicalLookup, AuditAccessTouch {
         override fun findAuditCanonicalId(input: Proposition): String? =
-            if (input.text.isBlank()) null else findDuplicateId(input.contextId.value, input.text, input.id)
+            if (input.text.isBlank()) null else findDuplicateId(input)
 
         override fun touchAccessedInWrite(contextId: String, propositionIds: Collection<String>) =
             refreshAccess(propositionIds, contextId)
     }
 
-    /**
-     * Id of an existing proposition with the same `contextId` and exact `text` (excluding the
-     * candidate's own id), or null if there is no duplicate. Matches on text alone — an identical
-     * sentence is the same fact regardless of status; collapsing them is always correct.
-     */
-    private fun findDuplicateId(contextId: String, text: String, excludeId: String): String? =
-        persistenceManager.maybeGetOne(
+    private fun findDuplicateId(input: Proposition): String? {
+        if (TransactionSynchronizationManager.getResource(newWorldOccurrence) == input.id) {
+            return null
+        }
+        return findExactTextId(input, input.id, "")
+    }
+
+    @Transactional(readOnly = true)
+    internal fun findActiveExactTextId(input: Proposition, excludeId: String): String? =
+        findExactTextId(input, excludeId, " AND p.status = 'ACTIVE'")
+
+    private fun findExactTextId(input: Proposition, excludeId: String, statusPredicate: String): String? {
+        // ACTIVE sorts first. Attach new evidence to the current occurrence when text has returned.
+        val order = if (worldProgressionEnabled) "p.status, p.id" else "p.id"
+        return persistenceManager.maybeGetOne(
             cypherQuery(
-                    "MATCH (p:Proposition {contextId: \$contextId}) " +
-                        "WHERE p.text = \$text AND p.id <> \$excludeId " +
-                        "RETURN p.id AS id ORDER BY p.id LIMIT 1"
-                )
-                .bind(mapOf("contextId" to contextId, "text" to text, "excludeId" to excludeId))
+                "MATCH (p:Proposition {contextId: \$contextId}) " +
+                    "WHERE p.text = \$text AND p.id <> \$excludeId$statusPredicate " +
+                    "RETURN p.id AS id ORDER BY $order LIMIT 1"
+            )
+                .bind(mapOf("contextId" to input.contextId.value, "text" to input.text, "excludeId" to excludeId))
                 .transform(String::class.java)
         )
+    }
+
+    @Transactional(propagation = Propagation.NEVER)
+    internal fun prepareWorldProgression(audit: DrivineAuditLogStore) {
+        require(callerTransactionHoldsWriteLock && audit.uses(persistenceManager, txTemplate.transactionManager)) {
+            "World progression requires a SQLite repository and durable audit on the same transaction manager"
+        }
+        val constraints = persistenceManager.constraints
+        check(constraints.find(UniquenessConstraintSpec("Proposition", "id")) != null) {
+            "World progression requires a unique Proposition id"
+        }
+        val legacy = UniquenessConstraintSpec("Proposition", listOf("contextId", "text"))
+        if (constraints.find(legacy) != null) constraints.drop(legacy)
+        check(constraints.find(legacy) == null) { "Could not remove the legacy exact-text constraint" }
+        worldProgressionEnabled = true
+    }
+
+    /**
+     * Bypass text dedup for one authorized insertion. The audit canonical lookup shares this
+     * scope, so it records a creation even if the text already exists in history.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    internal fun <T> withNewWorldOccurrence(id: String, action: () -> T): T {
+        check(worldProgressionEnabled && inGraphWriteTransaction())
+        TransactionSynchronizationManager.bindResource(newWorldOccurrence, id)
+        try {
+            return action()
+        } finally {
+            TransactionSynchronizationManager.unbindResource(newWorldOccurrence)
+        }
+    }
+
+    /** Resolve the authorized context before loading claim content and provenance. */
+    @Transactional(readOnly = true)
+    internal fun findWorldOccurrence(contextId: String, id: String): Proposition? =
+        persistenceManager.maybeGetOne(
+            cypherQuery("MATCH (p:Proposition {contextId: \$contextId, id: \$id}) RETURN p.id AS id LIMIT 1")
+                .bind(mapOf("contextId" to contextId, "id" to id))
+                .transform(String::class.java)
+        )?.let(::findById)
 
     /** True if a proposition with this exact id is already stored, so a [save] is an update, not an insert. */
     private fun existsById(id: String): Boolean =

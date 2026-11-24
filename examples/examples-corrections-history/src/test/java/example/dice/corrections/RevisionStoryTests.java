@@ -143,6 +143,10 @@ class RevisionStoryTests {
             assertThat(contradicted.getOriginal().getText()).isEqualTo(ANNUAL);
             assertThat(contradicted.getOriginal().getStatus()).isEqualTo(PropositionStatus.CONTRADICTED);
             assertThat(contradicted.getNew().getText()).isEqualTo(MONTHLY);
+            var stored = facts.findById(contradicted.getOriginal().getId());
+            assertThat(stored).isNotNull();
+            assertThat(stored.getStatus()).isEqualTo(PropositionStatus.CONTRADICTED);
+            assertThat(stored.getTemporal()).isNull();
             // Neither invoice fact mentions a plan, so neither carries the status predicate.
             assertThat(contradicted.getConflictType() instanceof ConflictType.Contradiction).isTrue();
             assertThat(EvidenceConverter.create().fromContradiction(contradicted))
