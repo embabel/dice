@@ -1,7 +1,7 @@
 # Backend swap
 
 A memory desk that stores facts about the companies Acme deals with. The same code runs on
-DICE's in-memory store, Neo4j, and SQLite. The application starts on the in-memory store.
+DICE's in-memory store, Neo4j, and SQLite. With no datasource configured, it starts in memory.
 
 ## Run
 
@@ -16,8 +16,6 @@ start without a default model, and nothing here calls one, so no API key is need
 
 `SameCodeEveryBackend` holds the shared assertions. `InMemoryBackendTests`, `Neo4jBackendTests`,
 and `SqliteBackendTests` each run them and verify that Spring selected the expected backend.
-`StartupTests` checks that the application defaults to in-memory even with a separate Drivine
-datasource configured.
 
 - **With Docker running**, all three backend test classes run. `Neo4jBackendTests` starts
   `neo4j:2026.05-community` with Testcontainers, once for the whole test run.
@@ -25,11 +23,9 @@ datasource configured.
 
 ### Pointing at a real Neo4j
 
-Set the store type to `graph` and give the `neo` datasource its connection, in
-`application.properties` or as `--` arguments:
+Configure a Neo4j datasource in `application.properties`.
 
 ```properties
-embabel.dice.store.type=graph
 database.datasources.neo.type=NEO4J
 database.datasources.neo.host=localhost
 database.datasources.neo.port=7687
@@ -40,19 +36,15 @@ database.datasources.neo.database-name=neo4j
 
 ### SQLite
 
-The example includes `dice-starter-sqlite`. In `application.properties`, replace the existing
-`embabel.dice.store.type=in-memory` line with these settings.
+Configure a SQLite datasource in `application.properties`.
 
 ```properties
-embabel.dice.store.type=
 database.datasources.local.type=SQLITE
 database.datasources.local.database-name=./dice.db
 ```
 
-The blank value lets the starter select the Drivine store. You can also pass
-`--embabel.dice.store.type=` and the two datasource settings as command-line arguments.
-Drivine opens or creates the SQLite file. If startup fails, check that the directory exists and
-the application has write access. The test uses a fresh file in a temporary directory.
+Drivine opens or creates the SQLite file. The directory must exist and be writable.
+The tests use a file in a temporary directory.
 
 ### Record an accepted plan change
 
@@ -110,16 +102,15 @@ to verify the module structure.
 
 | Package | Public types | Package-private |
 |---|---|---|
-| `backends` | `MemoryDesk` | `BackendSwapApplication`, `GraphStoreConfiguration`, `WordEmbedder` |
+| `backends` | `MemoryDesk` | `BackendSwapApplication`, `WordEmbedder` |
 
 ## DICE usage
 
 | Step | Where | What to read |
 |---|---|---|
-| Pick the store | Spring Boot configuration | The example sets `in-memory` by default. For SQLite, clear the override and configure a `SQLITE` datasource. The Neo4j setup selects `graph` explicitly. |
+| Pick the store | Spring Boot configuration | The starter uses Drivine when a datasource is configured. Otherwise DICE uses the in-memory store. |
 | Store and query facts | `MemoryDesk` | Takes a `PropositionRepository` and nothing else. `remember` saves a fact in context `acme` with a resolved entity mention, `about` queries the active facts that mention an entity, `correct` marks a fact `CONTRADICTED`, and `get` finds one by id. |
 | Embed offline | `WordEmbedder` | DICE needs an embedding service to start. This one hashes words into 16 dimensions and stands in for a real model. |
-| Connect Neo4j | `GraphStoreConfiguration` | Supplies the `neo` managers when the application explicitly sets the store type to `graph`. |
 
 `MemoryDesk` imports no store class. Swapping the store changes no Java code.
 
@@ -130,14 +121,12 @@ propositions.query(
                 .withEntityId(entityId));
 ```
 
-### The Neo4j configuration
+### Starter selection
 
-The Neo4j path in this example supplies a `PersistenceManager` and `StatelessGraphObjectManager`
-for the datasource `neo`. `GraphStoreConfiguration` declares them and enables Drivine when
-`embabel.dice.store.type=graph`. The SQLite setup uses the starter to create its managers.
-
-The connection is configured under `database.datasources.neo`: `host`, `port`, `username`,
-`password`, `type=NEO4J` and `database-name`.
+This example uses `dice-starter-sqlite` so the same build can run all three test cases.
+In your app, use `dice-starter-sqlite` for SQLite or `dice-starter-neo4j` for Neo4j.
+The starter creates the Drivine managers for the configured datasource. If the app has
+several datasources, name the one DICE should use with `embabel.dice.store.datasource`.
 
 ### The embedding service
 

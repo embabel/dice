@@ -29,7 +29,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Docker the whole class is skipped rather than failed.
  */
 @SpringBootTest(properties = {
-        "embabel.dice.store.type=graph",
         "embabel.dice.store.decay.enabled=false",
         "embabel.models.default-llm=scripted",
 })

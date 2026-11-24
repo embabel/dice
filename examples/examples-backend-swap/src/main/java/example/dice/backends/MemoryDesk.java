@@ -31,9 +31,7 @@ import java.util.UUID;
 /**
  * Remembers facts about the companies Acme deals with, and answers questions about them.
  *
- * <p>This is all the storage code the application has. It only knows the
- * {@link PropositionRepository} interface, so it runs unchanged on the in-memory store and on
- * Neo4j. Spring hands it whichever repository {@code embabel.dice.store.type} selects.
+ * <p>Spring injects the {@link PropositionRepository} selected for the configured backend.
  *
  * <p>Every fact is stored in the DICE context {@value #CONTEXT}.
  */
