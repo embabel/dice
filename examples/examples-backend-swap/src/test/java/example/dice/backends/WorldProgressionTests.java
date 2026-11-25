@@ -57,7 +57,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.groups.Tuple.tuple;
 
 @SpringBootTest(properties = {
-        "embabel.dice.store.type=",
         "embabel.dice.store.decay.enabled=false",
         "embabel.dice.store.world-progression.enabled=true",
         "embabel.models.default-llm=scripted",

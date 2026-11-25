@@ -7,7 +7,9 @@ in `dice-storage-autoconfigure`.
 
 With either Drivine starter, DICE uses its Drivine stores when the application configures
 Drivine. Otherwise it uses its in-memory stores. The application uses the same
-`PropositionRepository` API in both cases.
+`PropositionRepository` API in both cases. The
+https://github.com/embabel/dice/tree/main/examples/examples-backend-swap[backend swap example]
+runs the same Java tests against in-memory, Neo4j and SQLite stores.
 
 Drivine counts as configured when the application has a Drivine `PersistenceManager` bean.
 Once you give either starter a data source, DICE builds that bean for you. The data source's

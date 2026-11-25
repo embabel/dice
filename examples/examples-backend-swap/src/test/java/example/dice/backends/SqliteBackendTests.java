@@ -31,7 +31,6 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(properties = {
-        "embabel.dice.store.type=",
         "embabel.dice.store.decay.enabled=false",
         "embabel.models.default-llm=scripted",
         "database.datasources.local.type=SQLITE",

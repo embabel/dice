@@ -25,7 +25,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Runs the shared assertions on DICE's in-memory store. Needs nothing outside the JVM.
  */
 @SpringBootTest(properties = {
-        "embabel.dice.store.type=in-memory",
         "embabel.dice.store.decay.enabled=false",
         "embabel.models.default-llm=scripted",
 })
