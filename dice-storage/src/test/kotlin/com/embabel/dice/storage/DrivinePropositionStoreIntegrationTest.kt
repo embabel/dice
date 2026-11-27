@@ -222,6 +222,7 @@ class DrivinePropositionStoreIntegrationTest {
                 .withStatement("MATCH (p:Proposition {id: \$id}) DETACH DELETE p")
                 .bind(mapOf("id" to saved.id)),
         )
+        assertNull(repository.findById(saved.id))
 
         repository.save(saved)
 
