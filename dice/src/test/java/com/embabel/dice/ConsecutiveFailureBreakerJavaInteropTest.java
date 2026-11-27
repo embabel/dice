@@ -19,6 +19,8 @@ import com.embabel.dice.proposition.ConsecutiveFailureBreaker;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -36,6 +38,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * E7 Outcome.success gives a success outcome with its value
  * E8 Outcome.failure gives a failure outcome with its exception
  * E9 Outcome.skipped gives a skipped outcome with no value or exception
+ * E10 attemptEachCall gives one outcome per item, in order, and its call may throw checked exceptions
+ * E11 attemptEachCall goes back for items it skipped once a probe gets through
+ * E12 attemptEachCall hands each chunk of items and outcomes to the consumer
  */
 class ConsecutiveFailureBreakerJavaInteropTest {
 
@@ -165,5 +170,61 @@ class ConsecutiveFailureBreakerJavaInteropTest {
         assertFalse(outcome.isFailure());
         assertNull(outcome.getValue());
         assertNull(outcome.getException());
+    }
+
+    // E10
+    @Test
+    void attemptEachCallGivesOneOutcomePerItemInOrder() {
+        ConsecutiveFailureBreaker breaker = new ConsecutiveFailureBreaker();
+
+        List<ConsecutiveFailureBreaker.Outcome<String>> outcomes = breaker.attemptEachCall(
+            List.of("a", "bad", "c"),
+            item -> {
+                if (item.equals("bad")) {
+                    throw new IOException("refused " + item);
+                }
+                return item.toUpperCase();
+            });
+
+        assertEquals(3, outcomes.size());
+        assertEquals("A", outcomes.get(0).getValue());
+        assertInstanceOf(IOException.class, outcomes.get(1).getException());
+        assertEquals("C", outcomes.get(2).getValue());
+    }
+
+    // E11
+    @Test
+    void attemptEachCallRetriesSkippedItemsAfterAProbeGetsThrough() {
+        ConsecutiveFailureBreaker breaker = new ConsecutiveFailureBreaker(2);
+        List<Integer> items = List.of(0, 1, 2, 3, 4);
+        AtomicInteger calls = new AtomicInteger();
+
+        List<ConsecutiveFailureBreaker.Outcome<Integer>> outcomes = breaker.attemptEachCall(items, item -> {
+            calls.incrementAndGet();
+            if (item < 2) {
+                throw new IOException("refused " + item);
+            }
+            return item;
+        });
+
+        assertTrue(outcomes.get(0).isFailure());
+        assertTrue(outcomes.get(1).isFailure());
+        assertEquals(List.of(2, 3, 4), outcomes.subList(2, 5).stream().map(ConsecutiveFailureBreaker.Outcome::getValue).toList());
+        assertEquals(5, calls.get());
+    }
+
+    // E12
+    @Test
+    void attemptEachCallHandsEachChunkToTheConsumer() {
+        ConsecutiveFailureBreaker breaker = new ConsecutiveFailureBreaker();
+        List<List<String>> chunks = new ArrayList<>();
+
+        breaker.attemptEachCall(
+            List.of("a", "b", "c"),
+            2,
+            chunk -> chunks.add(chunk.stream().map(entry -> entry.getKey() + "=" + entry.getValue().getValue()).toList()),
+            item -> item.toUpperCase());
+
+        assertEquals(List.of(List.of("a=A", "b=B"), List.of("c=C")), chunks);
     }
 }

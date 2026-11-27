@@ -34,8 +34,9 @@ package com.embabel.dice.proposition
  * @param report what the run did achieve: [PropositionReembedReport.propositions] counts only the
  * propositions actually re-embedded
  * @param failedPropositionIds ids of the propositions whose re-embed failed, in the order attempted
- * @param notAttemptedPropositionIds ids of the propositions not tried because the run stopped after
- * too many consecutive failures (see [ConsecutiveFailureBreaker]); they are handled as failed ones are
+ * @param notAttemptedPropositionIds ids of the propositions not tried because the run skipped them
+ * after too many consecutive failures, and no later call got through (see [ConsecutiveFailureBreaker]);
+ * they are handled as failed ones are
  */
 class PropositionReembedIncompleteException @JvmOverloads constructor(
     val report: PropositionReembedReport,

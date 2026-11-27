@@ -90,8 +90,9 @@ class JsonFilePropositionRepository @JvmOverloads constructor(
     private fun embedOnLoad(loaded: List<Proposition>, embedder: EmbeddingService) {
         // Stops after repeated failures, so a dead embedder does not hold up startup for one timeout
         // per proposition.
-        val breaker = ConsecutiveFailureBreaker()
-        val results = loaded.map { prop -> prop.id to breaker.attempt { embedder.embed(prop.text) } }
+        val results = ConsecutiveFailureBreaker()
+            .attemptEach(loaded) { prop -> embedder.embed(prop.text) }
+            .map { (prop, result) -> prop.id to result }
         results.forEach { (id, result) -> result?.getOrNull()?.let { embeddings[id] = it } }
         val failures = results.mapNotNull { (id, result) -> result?.exceptionOrNull()?.let { id to it } }
         val notAttempted = results.count { (_, result) -> result == null }
