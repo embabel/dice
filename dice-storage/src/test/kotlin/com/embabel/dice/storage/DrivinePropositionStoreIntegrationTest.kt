@@ -208,6 +208,35 @@ class DrivinePropositionStoreIntegrationTest {
         assertEquals("https://example.com/doc", (provenance.locator as UriLocator).uri)
     }
 
+    /**
+     * A node removed by raw Cypher is gone, but a later [DrivinePropositionRepository.save] of the
+     * same id is still a save of that proposition. It has to write the whole node, including
+     * `contextId`, or every tenant-scoped read misses a row the save reported as stored.
+     * ([embabel/dice#100](https://github.com/embabel/dice/issues/100))
+     */
+    @Test
+    fun `re-save after an out-of-band delete writes the context id`() {
+        val saved = repository.save(prop(text = "Rod visited Sydney", context = "tenant-a", entityId = "rod"))
+        persistenceManager.execute(
+            QuerySpecification
+                .withStatement("MATCH (p:Proposition {id: \$id}) DETACH DELETE p")
+                .bind(mapOf("id" to saved.id)),
+        )
+
+        repository.save(saved)
+
+        val storedContextId = persistenceManager.maybeGetOne(
+            QuerySpecification
+                .withStatement("MATCH (p:Proposition {id: \$id}) RETURN p.contextId AS contextId")
+                .bind(mapOf("id" to saved.id))
+                .transform(String::class.java),
+        )
+        assertEquals("tenant-a", storedContextId)
+        val found = repository.findByContextId(ContextId("tenant-a")).single { it.id == saved.id }
+        assertEquals(saved.text, found.text)
+        assertEquals("rod", found.mentions.single().resolvedId)
+    }
+
     @Test
     fun `a recorded content revision survives a save and a load`() {
         val revised = repository.save(prop(text = "Rod lives in Sydney").withText("Rod lives in Melbourne"))
