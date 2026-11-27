@@ -16,7 +16,8 @@ and the consumer PRs that deliver it).
   propositions load in a stable order, so every rerun stopped at the same place and nothing after it
   was re-embedded. The new `attemptEach` runs a list through the breaker and goes back for what it
   skipped once a probe gets through. `reembedAll` on every store, and the JSON store's embed on load,
-  use it. A dead embedding service now costs about log2(n) more calls over n propositions, 8 instead
+  use it. Java code calls `attemptEachCall`, which takes an `ItemCall` that may throw checked
+  exceptions and returns one `Outcome` per item. A dead embedding service now costs about log2(n) more calls over n propositions, 8 instead
   of 5 over 20. **Compatibility: behavioral.** Upgrade: code that calls `attempt` or `attemptCall`
   after the breaker trips sees an occasional call run where it was always skipped before.
 

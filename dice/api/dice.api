@@ -3747,13 +3747,19 @@ public final class com/embabel/dice/proposition/ConsecutiveFailureBreaker {
 	public synthetic fun <init> (IILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun attempt-CmtIpJM (Lkotlin/jvm/functions/Function0;)Lkotlin/Result;
 	public final fun attemptCall (Ljava/util/concurrent/Callable;)Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome;
-	public final fun attemptEach (Ljava/util/List;ILkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Ljava/util/List;
+	public final synthetic fun attemptEach (Ljava/util/List;ILkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;)Ljava/util/List;
 	public static synthetic fun attemptEach$default (Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker;Ljava/util/List;ILkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Ljava/util/List;
+	public final fun attemptEachCall (Ljava/util/List;ILjava/util/function/Consumer;Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$ItemCall;)Ljava/util/List;
+	public final fun attemptEachCall (Ljava/util/List;Lcom/embabel/dice/proposition/ConsecutiveFailureBreaker$ItemCall;)Ljava/util/List;
 	public final fun getMaxConsecutiveFailures ()I
 	public final fun getTripped ()Z
 }
 
 public final class com/embabel/dice/proposition/ConsecutiveFailureBreaker$Companion {
+}
+
+public abstract interface class com/embabel/dice/proposition/ConsecutiveFailureBreaker$ItemCall {
+	public abstract fun call (Ljava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class com/embabel/dice/proposition/ConsecutiveFailureBreaker$Outcome {

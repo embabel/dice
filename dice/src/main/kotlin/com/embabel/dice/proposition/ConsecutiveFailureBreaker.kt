@@ -16,7 +16,9 @@
 package com.embabel.dice.proposition
 
 import com.embabel.dice.common.attemptCatching
+import java.util.AbstractMap
 import java.util.concurrent.Callable
+import java.util.function.Consumer
 
 /**
  * Mostly stops calling a service once [maxConsecutiveFailures] calls in a row have failed.
@@ -97,8 +99,11 @@ class ConsecutiveFailureBreaker @JvmOverloads constructor(
      * @param chunkSize how many results [onChunk] gets at once; must be positive
      * @param onChunk receives each chunk of results as it completes
      * @param call the work to run on one item
+     * Java code calls [attemptEachCall], which returns [Outcome]s.
+     *
      * @return every item, in the order given, with its result, or null if it was never run
      */
+    @JvmSynthetic
     fun <K, T> attemptEach(
         items: List<K>,
         chunkSize: Int = Int.MAX_VALUE,
@@ -143,12 +148,69 @@ class ConsecutiveFailureBreaker @JvmOverloads constructor(
      * @return a success with the value, a failure with the exception, or a skip if the breaker has
      * tripped and this call is not a probe
      */
-    fun <T> attemptCall(call: Callable<T>): Outcome<T> {
-        val result = attempt { call.call() } ?: return Outcome.skipped()
-        return result.fold(
+    fun <T> attemptCall(call: Callable<T>): Outcome<T> = outcomeOf(attempt { call.call() })
+
+    /**
+     * Runs [call] on each of [items] as [attemptEach] does, and returns one [Outcome] per item, in
+     * the order given. An item that was never run has a skipped outcome.
+     *
+     * It takes an [ItemCall] and returns [Outcome]s so that Java code can call it and read the results.
+     *
+     * @param items what to run [call] on
+     * @param call the work to run on one item; it may throw checked exceptions
+     * @return one outcome per item, at the item's index
+     */
+    fun <K, T> attemptEachCall(items: List<K>, call: ItemCall<K, T>): List<Outcome<T>> =
+        attemptEachCall(items, Int.MAX_VALUE, {}, call)
+
+    /**
+     * Runs [call] on each of [items] as [attemptEach] does, handing [onChunk] each pass's outcomes
+     * [chunkSize] items at a time, each paired with its item. An item skipped in one pass can come
+     * back with a result in a later one.
+     *
+     * @param items what to run [call] on
+     * @param chunkSize how many outcomes [onChunk] gets at once; must be positive
+     * @param onChunk receives each chunk of items and their outcomes as it completes
+     * @param call the work to run on one item; it may throw checked exceptions
+     * @return one outcome per item, at the item's index
+     */
+    fun <K, T> attemptEachCall(
+        items: List<K>,
+        chunkSize: Int,
+        onChunk: Consumer<List<Map.Entry<K, Outcome<T>>>>,
+        call: ItemCall<K, T>,
+    ): List<Outcome<T>> =
+        attemptEach(
+            items,
+            chunkSize,
+            onChunk = { chunk ->
+                onChunk.accept(chunk.map { (item, result) -> AbstractMap.SimpleImmutableEntry(item, outcomeOf(result)) })
+            },
+        ) { item -> call.call(item) }.map { (_, result) -> outcomeOf(result) }
+
+    private fun <T> outcomeOf(result: Result<T>?): Outcome<T> =
+        result?.fold(
             onSuccess = { Outcome.success(it) },
             onFailure = { Outcome.failure<T>(it as Exception) },
-        )
+        ) ?: Outcome.skipped()
+
+    /**
+     * The work [attemptEachCall] runs on one item.
+     *
+     * @param K the item type
+     * @param T what the work returns
+     */
+    fun interface ItemCall<K, T> {
+
+        /**
+         * Run the work on [item].
+         *
+         * @param item the item to work on
+         * @return the result
+         * @throws Exception when the work fails; the breaker counts it as a failure
+         */
+        @Throws(Exception::class)
+        fun call(item: K): T
     }
 
     /**
