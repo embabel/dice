@@ -152,8 +152,7 @@ public class com/embabel/dice/storage/DrivinePropositionRepository : com/embabel
 	public static final field VECTOR_INDEX Ljava/lang/String;
 	public static final field VECTOR_INDEX_LABEL Ljava/lang/String;
 	public static final field VECTOR_INDEX_PROPERTY Ljava/lang/String;
-	public fun <init> (Lorg/drivine/manager/StatelessGraphObjectManager;Lorg/drivine/manager/PersistenceManager;Lcom/embabel/common/ai/model/EmbeddingService;Lorg/springframework/transaction/PlatformTransactionManager;Ljava/lang/String;)V
-	public synthetic fun <init> (Lorg/drivine/manager/StatelessGraphObjectManager;Lorg/drivine/manager/PersistenceManager;Lcom/embabel/common/ai/model/EmbeddingService;Lorg/springframework/transaction/PlatformTransactionManager;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lorg/drivine/manager/StatelessGraphObjectManager;Lorg/drivine/manager/PersistenceManager;Lcom/embabel/common/ai/model/EmbeddingService;Lorg/springframework/transaction/PlatformTransactionManager;)V
 	public fun auditCanonicalLookup ()Lcom/embabel/dice/audit/AuditCanonicalLookup;
 	public fun clearAll ()I
 	public fun clearByContext (Ljava/lang/String;)I

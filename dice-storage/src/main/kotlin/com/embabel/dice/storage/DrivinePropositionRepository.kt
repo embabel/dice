@@ -122,14 +122,14 @@ internal object SourceProvenanceQueryStatements {
  *
  * Filtering, ordering, limiting, vector search, and entity (`HAS_MENTION`) predicates all push into
  * the database via the high-level [StatelessGraphObjectManager] DSL — no whole-store scans. A few operations the
- * DSL can't express drop to hand-written Cypher: the [findClusters] correlation, the cascade-aware bulk
- * clear (`queries/clear_propositions.cypher`), the dedup lookup, and the batch re-embed.
+ * DSL can't express drop to hand-written Cypher: the cascade-aware bulk clear
+ * (`queries/clear_propositions.cypher`), the dedup lookup, and the batch re-embed.
  *
  * Embeddings are derived from [Proposition.embeddableValue] and owned here, not by the model mapper.
  *
  * **v1 notes:**
- * - [findClusters] runs as a single correlated Cypher statement (one round trip) rather than the
- *   interface default's vector query per candidate.
+ * - [findClusters] runs as a single statement (one round trip) rather than the interface default's
+ *   vector query per candidate.
  * - Detached re-saves with changed mentions may leave orphan Mention nodes (load-then-save avoids it).
  */
 @Transactional
@@ -138,11 +138,6 @@ class DrivinePropositionRepository(
     private val persistenceManager: PersistenceManager,
     private val embeddingService: EmbeddingService,
     transactionManager: PlatformTransactionManager,
-    /**
-     * Name of the Neo4j vector index backing `Proposition.embedding`, used by the hand-written
-     * [findClusters] Cypher. Defaults to the canonical [VECTOR_INDEX]; overridable only for tests.
-     */
-    private val vectorIndexName: String = VECTOR_INDEX,
 ) : PropositionRepository, GraphQueryCapable, SourceRevisionQueryCapable, ProvenanceSubtractionCapable {
 
     private val logger = LoggerFactory.getLogger(DrivinePropositionRepository::class.java)
@@ -1220,20 +1215,21 @@ class DrivinePropositionRepository(
     }
 
     /**
-     * Single correlated statement: select candidates DB-side via [query], then within that set run
-     * the vector index once per seed using the seed's own embedding, keeping `seed.id < m.id` so each
-     * pair appears once. No N+1 round trips; membership and dedup stay server-side.
+     * Selects the candidates DB-side via [query], then has Drivine measure every pair of them, on
+     * every store, in one statement. Each anchor keeps its [topK] nearest among the candidates with a
+     * later id, so each pair appears once, as the in-memory store pairs them.
+     *
+     * Only the candidates are measured, so propositions outside [query] can't crowd a candidate's
+     * neighbours out of its [topK]. No `searchK` is passed: with one, Drivine would go back through
+     * the vector index across every proposition and the pairing would be approximate again. Reading
+     * every pair above the threshold means cost and memory grow with the square of the number of
+     * candidates.
      *
      * [similarityThreshold] is raw cosine — a candidate pair is admitted at cosine >= threshold, same
      * scale as [findSimilarWithScores]. Older deployments that tuned a threshold against Neo4j's raw
      * `(1 + cosine) / 2` index score (before this method converted back to cosine) admitted down to
      * cosine `2*t - 1` for a stored `t`; that threshold now means something stricter and should be
      * retuned.
-     *
-     * SQLite has no vector index procedure to call. There Drivine measures every pair of the
-     * candidates itself, exactly, and each anchor keeps its [topK] nearest among the candidates with
-     * a later id, as the in-memory store pairs them. That reads every pair above the threshold, so
-     * its cost and memory grow with the square of the number of candidates.
      */
     @Transactional(readOnly = true)
     override fun findClusters(
@@ -1244,26 +1240,20 @@ class DrivinePropositionRepository(
         val candidates = query(query)
         if (candidates.size < 2) return emptyList()
         val byId = candidates.associateBy { it.id }
-        val ids = candidates.map { it.id }
 
-        val rows = if (persistenceManager.type == DatabaseType.SQLITE) {
-            nearestLaterPairs(ids, similarityThreshold, topK)
-        } else {
-            nearestPairsByIndex(ids, similarityThreshold, topK)
-        }
-
-        val clusters = rows
-            .groupBy { it["anchorId"] as String }
-            .mapNotNull { (anchorId, group) ->
+        val clusters = graphObjectManager
+            .loadNearestAmong(
+                PropositionView::class.java,
+                byId.keys,
+                topK,
+                neighbours = AmongNeighbours.AFTER,
+                threshold = toEngineScore(similarityThreshold),
+            )
+            .mapNotNull { (anchorId, near) ->
                 val anchor = byId[anchorId] ?: return@mapNotNull null
-                val similar = group
-                    .sortedByDescending { (it["score"] as Number).toDouble() }
-                    .take(topK)
-                    .mapNotNull { row ->
-                        byId[row["otherId"] as String]?.let { other ->
-                            SimilarityResult(match = other, score = (row["score"] as Number).toDouble())
-                        }
-                    }
+                val similar = near.mapNotNull { scored ->
+                    byId[scored.value]?.let { other -> SimilarityResult(match = other, score = toRawCosine(scored.score)) }
+                }
                 if (similar.isNotEmpty()) Cluster(anchor = anchor, similar = similar) else null
             }
             .sortedByDescending { it.similar.size }
@@ -1273,36 +1263,6 @@ class DrivinePropositionRepository(
         )
         return clusters
     }
-
-    /** Each candidate's nearest others among [ids], one row per pair with the smaller id as the anchor, through Neo4j's vector index. */
-    private fun nearestPairsByIndex(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> {
-        // A COSINE index scores as (1 + cosine) / 2 (see toRawCosine below); the `cosine` binding here
-        // converts back to raw cosine so the gate and the returned score are both cosine, as the
-        // in-memory store returns. COSINE-only: a EUCLIDEAN index normalizes differently.
-        @Suppress("UNCHECKED_CAST")
-        return persistenceManager.query(
-            cypherQuery(
-                    """
-                    UNWIND ${'$'}ids AS sid
-                    MATCH (seed:Proposition {id: sid}) WHERE seed.embedding IS NOT NULL
-                    CALL db.index.vector.queryNodes('$vectorIndexName', ${'$'}k, seed.embedding) YIELD node AS m, score
-                    WITH sid, m, 2.0 * score - 1.0 AS cosine
-                    WHERE m.id IN ${'$'}ids AND sid < m.id AND cosine >= ${'$'}threshold
-                    RETURN { anchorId: sid, otherId: m.id, score: cosine } AS row
-                    """.trimIndent()
-                )
-                .bind(mapOf("ids" to ids, "k" to topK + 1, "threshold" to similarityThreshold))
-        ) as List<Map<String, Any>>
-    }
-
-    /** On SQLite, each anchor's [topK] nearest among the candidates with a later id, measured by Drivine. */
-    private fun nearestLaterPairs(ids: List<String>, similarityThreshold: ZeroToOne, topK: Int): List<Map<String, Any>> =
-        graphObjectManager.loadNearestAmong(PropositionView::class.java, ids, ids.size, toEngineScore(similarityThreshold))
-            .flatMap { (anchorId, near) ->
-                near.filter { it.value > anchorId }
-                    .take(topK)
-                    .map { mapOf("anchorId" to anchorId, "otherId" to it.value, "score" to toRawCosine(it.score)) }
-            }
 
     /**
      * A Neo4j COSINE vector index reports `(1 + cosine) / 2`, not raw cosine — this converts an

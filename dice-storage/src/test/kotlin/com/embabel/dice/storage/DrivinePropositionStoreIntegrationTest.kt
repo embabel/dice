@@ -320,8 +320,7 @@ class DrivinePropositionStoreIntegrationTest {
     fun `findClusters reports raw cosine, not Neo4j's normalized score`() {
         // Score must be raw cosine (what the in-memory store returns), but a COSINE index reports
         // (1 + cosine) / 2 — if that leaked through, a cosine-0.5 pair would read as 0.75 and the
-        // dedup scorer would over-merge distinct facts. Cosine 0.8 also keeps the pair each other's
-        // nearest neighbour, so the index's global top-k can't truncate the edge.
+        // dedup scorer would over-merge distinct facts.
         val v1 = FloatArray(embeddingService.dimensions).also { it[0] = 1f }
         val v2 = FloatArray(embeddingService.dimensions).also { it[0] = 0.8f; it[1] = 0.6f }
         seedRawNodeWithEmbedding(prop("alpha fact", context = "ctx-cos"), v1.toList())
@@ -341,6 +340,27 @@ class DrivinePropositionStoreIntegrationTest {
             0.8, edge!!.score, 0.02,
             "score must be raw cosine (0.8); Neo4j's normalized (1 + cos) / 2 = 0.9 must not leak through",
         )
+    }
+
+    @Test
+    fun `findClusters finds a scoped pair when closer neighbours sit in another context`() {
+        // The decoys are cosine 0.96 to the anchor and 0.94 to the sibling, closer than the pair's 0.8.
+        // A search across every proposition gives topK = 1 to a decoy and never sees the pair.
+        val anchor = FloatArray(embeddingService.dimensions).also { it[0] = 1f }
+        val sibling = FloatArray(embeddingService.dimensions).also { it[0] = 0.8f; it[1] = 0.6f }
+        val decoy = FloatArray(embeddingService.dimensions).also { it[0] = 1f; it[1] = 0.3f }
+        seedRawNodeWithEmbedding(prop("alpha fact", context = "ctx-scoped"), anchor.toList())
+        seedRawNodeWithEmbedding(prop("beta fact", context = "ctx-scoped"), sibling.toList())
+        (1..3).forEach { seedRawNodeWithEmbedding(prop("decoy $it", context = "ctx-other"), decoy.toList()) }
+
+        val clusters = repository.findClusters(
+            similarityThreshold = 0.5,
+            topK = 1,
+            query = PropositionQuery.forContextId(ContextId("ctx-scoped")),
+        )
+
+        assertEquals(1, clusters.size, "the two ctx-scoped propositions are cosine 0.8 apart")
+        assertEquals(0.8, clusters.single().similar.single().score, 0.02)
     }
 
     @Test
@@ -2354,25 +2374,6 @@ class DrivinePropositionStoreIntegrationTest {
                 .bind(mapOf("id" to id))
                 .transform(Long::class.java)
         ).toInt().takeIf { it >= 0 }
-
-    /** findClusters must query the configured vector index, not a hard-coded name. */
-    @Test
-    fun `findClusters uses the configured vector index name`() {
-        repository.save(prop("shared fact", context = "ctx-a"))
-        repository.save(prop("shared fact", context = "ctx-b"))
-
-        val bogusName = "nonexistent_vector_index"
-        val repoWithBogusIndex = DrivinePropositionRepository(
-            graphObjectManager, persistenceManager, embeddingService, transactionManager,
-            vectorIndexName = bogusName,
-        )
-
-        val thrown = assertThrows<Exception> {
-            repoWithBogusIndex.findClusters(similarityThreshold = 0.95, topK = 10, query = PropositionQuery())
-        }
-        val messages = generateSequence(thrown as Throwable?) { it.cause }.mapNotNull { it.message }.joinToString(" | ")
-        assertTrue(messages.contains(bogusName), "findClusters should query the configured index; error chain was: $messages")
-    }
 
     /** A null (never-materialised) effectiveConfidence must sort last under EFFECTIVE_CONFIDENCE_DESC, not first. */
     @Test

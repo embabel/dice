@@ -10,6 +10,18 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- `DrivinePropositionRepository.findClusters` measures every pair of the candidates exactly, on
+  Neo4j as on SQLite, through Drivine's `loadNearestAmong` with `AmongNeighbours.AFTER`. Before, on
+  Neo4j it asked the vector index for each candidate's `topK + 1` nearest propositions across every
+  context and only then kept the candidates. When `query` was scoped to a context and closer
+  propositions sat in another one, they used up `topK` and the scoped pair was never returned. The
+  cost and memory now grow with the square of the number of candidates on every store, so keep
+  `query` narrow on a large store. The `vectorIndexName` constructor parameter is removed, since
+  nothing reads the index by name any more. Drivine is now 0.9.0, up from 0.6.2. On SQLite it
+  stores instants as typed values (store layout 2), and scoped reads ordered by `CREATED_DESC`
+  order by the stored instant itself. **Compatibility: breaking** for a caller that passes
+  `vectorIndexName`; behavioral otherwise.
+
 - A `VectorSearchRequest` must name a context. `forText` and the Kotlin block throw
   `IllegalArgumentException` when the filter has none. Before, such a request was accepted and a
   store that implements `FilteredVectorSearch` could search every context with it. To search
