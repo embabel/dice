@@ -2318,8 +2318,9 @@ class DrivinePropositionStoreIntegrationTest {
                     .reembedAll()
             }
 
-            assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, calls.get())
-            assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, thrown.failedPropositionIds.size)
+            // Five calls before the breaker trips, then probes at the 7th and 10th of the 12.
+            assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES + 2, calls.get())
+            assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES + 2, thrown.failedPropositionIds.size)
             assertTrue(thrown.notAttemptedPropositionIds.isNotEmpty())
             assertTrue(
                 (thrown.failedPropositionIds + thrown.notAttemptedPropositionIds).containsAll(saved.map { it.id }),
@@ -2327,6 +2328,43 @@ class DrivinePropositionStoreIntegrationTest {
             )
             assertEquals(startingWidth * 2, storedIndexWidth(startingWidth), "the index must not be left dropped")
             saved.forEach { assertNull(storedEmbeddingWidth(it.id), "no vector of the old width stays behind") }
+        } finally {
+            persistenceManager.indexes.recreate(DrivinePropositionRepository.vectorIndexSpec(startingWidth))
+        }
+    }
+
+    /**
+     * A block of propositions the embedder always refuses trips the breaker, but what comes after it
+     * still gets a vector, including what was skipped before a probe got through.
+     */
+    @Test
+    fun `reembedAll gets past a block of propositions the embedder refuses`() {
+        val saved = (1..12).map { repository.save(prop("fact number $it")) }
+        val startingWidth = embeddingService.dimensions
+        val newWidth = startingWidth * 2
+        val blockSize = ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES + 1
+        val refused = mutableSetOf<String>()
+        val blocking = object : EmbeddingService by FakeEmbeddingService(newWidth) {
+            override fun embed(text: String): FloatArray {
+                if (text in refused || refused.size < blockSize) {
+                    refused += text
+                    throw EmbedRefused(text)
+                }
+                return FakeEmbeddingService(newWidth).embed(text)
+            }
+        }
+        try {
+            val thrown = assertThrows<PropositionReembedIncompleteException> {
+                DrivinePropositionRepository(graphObjectManager, persistenceManager, blocking, transactionManager)
+                    .reembedAll()
+            }
+
+            assertEquals(blockSize, thrown.failedPropositionIds.size)
+            assertTrue(thrown.notAttemptedPropositionIds.isEmpty(), "everything behind the block is attempted")
+            assertEquals(saved.size - blockSize, thrown.reembedded)
+            saved.filter { it.id !in thrown.failedPropositionIds }.forEach {
+                assertEquals(newWidth, storedEmbeddingWidth(it.id), "'${it.text}' is re-embedded")
+            }
         } finally {
             persistenceManager.indexes.recreate(DrivinePropositionRepository.vectorIndexSpec(startingWidth))
         }

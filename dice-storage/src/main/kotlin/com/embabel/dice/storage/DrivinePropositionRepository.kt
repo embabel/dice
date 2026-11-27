@@ -1613,25 +1613,29 @@ class DrivinePropositionRepository(
             where { proposition.contextId.isNotNull() } // skip malformed/foreign :Proposition nodes (see findAll)
         }.filter { it.proposition.text.isNotBlank() }
         val dimensions = embeddingService.dimensions
-        // Once the service has failed too many times in a row, the rest are not attempted: each would
-        // wait out its own timeout, and vector search is down until the index is back.
+        // Once the service has failed too many times in a row, most of the rest are not attempted: each
+        // would wait out its own timeout, and vector search is down until the index is back. A skipped
+        // proposition has its stale vector cleared, and gets it back if a later pass embeds it.
         val breaker = ConsecutiveFailureBreaker()
-        val batchResults = views.chunked(REEMBED_WRITE_BATCH).map { batch ->
-            val embedded = batch.map { view ->
-                view.proposition.id to breaker.attempt { embeddingService.embed(view.proposition.text) }
-            }
-            persistenceManager.executeBatch(embedded.map { (id, result) -> rewriteOf(id, result, dimensions) })
-            embedded
-        }.flatten()
-        if (breaker.tripped) {
-            logger.warn(
-                "reembedAll: stopped embedding after {} consecutive failures; {} proposition(s) not attempted",
-                breaker.maxConsecutiveFailures,
-                batchResults.count { (_, result) -> result == null },
-            )
-        }
+        val batchResults = breaker.attemptEach(
+            views,
+            chunkSize = REEMBED_WRITE_BATCH,
+            onChunk = { batch ->
+                persistenceManager.executeBatch(
+                    batch.map { (view, result) -> rewriteOf(view.proposition.id, result, dimensions) },
+                )
+            },
+        ) { view -> embeddingService.embed(view.proposition.text) }
+            .map { (view, result) -> view.proposition.id to result }
         val failures = batchResults.mapNotNull { (id, result) -> result?.exceptionOrNull()?.let { id to it } }.toMap()
         val notAttempted = batchResults.filter { (_, result) -> result == null }.map { (id, _) -> id }
+        if (notAttempted.isNotEmpty()) {
+            logger.warn(
+                "reembedAll: skipped embedding {} proposition(s) after {} consecutive failures",
+                notAttempted.size,
+                breaker.maxConsecutiveFailures,
+            )
+        }
         return RewriteOutcome(
             rewritten = views.size - failures.size - notAttempted.size,
             failures = failures,

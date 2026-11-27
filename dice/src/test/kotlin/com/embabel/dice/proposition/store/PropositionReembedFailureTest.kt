@@ -140,11 +140,26 @@ class PropositionReembedFailureTest {
 
         val thrown = assertThrows<PropositionReembedIncompleteException> { repo.reembedAll() }
 
-        assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, calls.get())
-        assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, thrown.failedPropositionIds.size)
-        assertEquals(20 - ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, thrown.notAttemptedPropositionIds.size)
+        assertEquals(DEAD_SERVICE_CALLS_OVER_20, calls.get())
+        assertEquals(DEAD_SERVICE_CALLS_OVER_20, thrown.failedPropositionIds.size)
+        assertEquals(20 - DEAD_SERVICE_CALLS_OVER_20, thrown.notAttemptedPropositionIds.size)
         assertEquals(0, thrown.reembedded)
         assertEquals(all.map { it.id }.toSet(), (thrown.failedPropositionIds + thrown.notAttemptedPropositionIds).toSet())
+    }
+
+    @Test
+    fun `default reembedAll gets past a block of propositions the embedder always rejects`() {
+        val repo = InMemoryPropositionRepository(embeddingService)
+        (1..20).forEach { repo.save(proposition("text $it")) }
+        val block = repo.findAll().take(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES + 1)
+        embedded.clear()
+        failing += block.map { it.text }
+
+        val thrown = assertThrows<PropositionReembedIncompleteException> { repo.reembedAll() }
+
+        assertEquals(block.map { it.id }.toSet(), thrown.failedPropositionIds.toSet())
+        assertTrue(thrown.notAttemptedPropositionIds.isEmpty(), "everything behind the block is attempted")
+        assertEquals(20 - block.size, thrown.reembedded)
     }
 
     @Test
@@ -160,6 +175,11 @@ class PropositionReembedFailureTest {
         val reloaded = JsonFilePropositionRepository(file, embeddingService)
 
         assertEquals(20, reloaded.count())
-        assertEquals(ConsecutiveFailureBreaker.DEFAULT_MAX_CONSECUTIVE_FAILURES, calls.get())
+        assertEquals(DEAD_SERVICE_CALLS_OVER_20, calls.get())
+    }
+
+    private companion object {
+        /** Five calls before the breaker trips, then probes at the 7th, 10th and 15th. */
+        const val DEAD_SERVICE_CALLS_OVER_20 = 8
     }
 }

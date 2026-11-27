@@ -27,7 +27,7 @@ class ConsecutiveFailureBreakerTest {
     private fun fail(): Nothing = throw IllegalStateException("down")
 
     @Test
-    fun `trips after the limit and makes no more calls`() {
+    fun `trips after the limit and skips the next call`() {
         val breaker = ConsecutiveFailureBreaker(3)
         repeat(3) { assertTrue(breaker.attempt { fail() }?.isFailure == true) }
 
@@ -35,6 +35,94 @@ class ConsecutiveFailureBreakerTest {
         assertNull(breaker.attempt { called = true })
         assertFalse(called)
         assertTrue(breaker.tripped)
+    }
+
+    @Test
+    fun `once tripped it probes after skipping 1, 2, 4 and 8 calls`() {
+        val breaker = ConsecutiveFailureBreaker(3)
+        val ran = (0 until 40).filter { i -> breaker.attempt { fail() } != null }
+
+        assertEquals(listOf(0, 1, 2, 4, 7, 12, 21, 38), ran)
+        assertTrue(breaker.tripped)
+    }
+
+    @Test
+    fun `a probe that succeeds resets the breaker`() {
+        val breaker = ConsecutiveFailureBreaker(2)
+        repeat(2) { breaker.attempt { fail() } }
+        assertNull(breaker.attempt { 1 })
+
+        assertEquals(Result.success(2), breaker.attempt { 2 })
+        assertFalse(breaker.tripped)
+        assertEquals(Result.success(3), breaker.attempt { 3 })
+    }
+
+    @Test
+    fun `after a successful probe the gap starts again at one`() {
+        val breaker = ConsecutiveFailureBreaker(1)
+        breaker.attempt { fail() }
+        assertNull(breaker.attempt { 0 })
+        assertTrue(breaker.attempt { fail() }?.isFailure == true, "the first probe fails, so the gap grows to two")
+        assertNull(breaker.attempt { 0 })
+        assertNull(breaker.attempt { 0 })
+        assertEquals(Result.success(0), breaker.attempt { 0 })
+
+        breaker.attempt { fail() }
+
+        assertNull(breaker.attempt { 0 })
+        assertEquals(Result.success(1), breaker.attempt { 1 }, "the next probe comes after one skip, not four")
+    }
+
+    @Test
+    fun `attemptEach goes back for what it skipped once a probe gets through`() {
+        val rejected = (0 until 6).toSet()
+        val calls = mutableListOf<Int>()
+        val results = ConsecutiveFailureBreaker(5).attemptEach((0 until 20).toList()) { i ->
+            calls += i
+            if (i in rejected) fail() else i
+        }
+
+        assertEquals((0 until 20).toList(), results.map { it.first })
+        assertEquals(rejected, results.filter { it.second?.isFailure == true }.map { it.first }.toSet())
+        assertTrue(results.none { it.second == null }, "nothing is left unattempted")
+        assertEquals((0 until 20).toList(), calls.sorted(), "each item runs once")
+    }
+
+    @Test
+    fun `attemptEach against a dead service stops after the probes`() {
+        val calls = mutableListOf<Int>()
+        val results = ConsecutiveFailureBreaker(5).attemptEach((0 until 20).toList()) { i ->
+            calls += i
+            fail()
+        }
+
+        assertEquals(listOf(0, 1, 2, 3, 4, 6, 9, 14), calls)
+        assertEquals(12, results.count { it.second == null })
+    }
+
+    @Test
+    fun `attemptEach hands each pass to onChunk in chunks, skipped items included`() {
+        val chunks = mutableListOf<List<Pair<Int, Boolean?>>>()
+        ConsecutiveFailureBreaker(2).attemptEach(
+            (0 until 5).toList(),
+            chunkSize = 2,
+            onChunk = { chunk -> chunks += chunk.map { (i, result) -> i to result?.isSuccess } },
+        ) { i -> if (i < 2) fail() else i }
+
+        assertEquals(
+            listOf(
+                listOf(0 to false, 1 to false),
+                listOf(2 to null, 3 to true),
+                listOf(4 to true),
+                listOf(2 to true),
+            ),
+            chunks,
+        )
+    }
+
+    @Test
+    fun `attemptEach refuses a chunk size below one`() {
+        assertThrows<IllegalArgumentException> { ConsecutiveFailureBreaker().attemptEach(listOf(1), chunkSize = 0) { it } }
     }
 
     @Test
@@ -63,7 +151,6 @@ class ConsecutiveFailureBreakerTest {
         assertTrue(breaker.attemptCall<Int> { fail() }.isFailure)
         assertTrue(breaker.tripped)
         assertNull(breaker.attempt { 1 })
-        assertTrue(breaker.attemptCall { 1 }.isSkipped)
     }
 
     @Test
@@ -75,7 +162,6 @@ class ConsecutiveFailureBreakerTest {
         assertTrue(breaker.attempt { fail() }?.isFailure == true)
         assertTrue(breaker.tripped)
         assertTrue(breaker.attemptCall { 1 }.isSkipped)
-        assertNull(breaker.attempt { 1 })
     }
 
     @Test

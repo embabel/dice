@@ -109,8 +109,9 @@ interface PropositionRepository :
      */
     fun reembedAll(): PropositionReembedReport {
         val all = findAll()
-        val breaker = ConsecutiveFailureBreaker()
-        val results = all.map { proposition -> proposition.id to breaker.attempt { save(proposition) } }
+        val results = ConsecutiveFailureBreaker()
+            .attemptEach(all) { proposition -> save(proposition) }
+            .map { (proposition, result) -> proposition.id to result }
         val failures = results.mapNotNull { (id, result) -> result?.exceptionOrNull()?.let { id to it } }.toMap()
         val notAttempted = results.filter { (_, result) -> result == null }.map { (id, _) -> id }
         val report = PropositionReembedReport(
