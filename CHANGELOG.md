@@ -10,6 +10,18 @@ and the consumer PRs that deliver it).
 
 ### Changed
 
+- Drivine is now 0.9.0, up from 0.6.2. On SQLite, Drivine 0.8.0 moved to store layout 2, which
+  keeps values typed rather than as text (liberation-data/drivine4j#822). Scoped reads ordered by
+  `CREATED_DESC`, and `ChunkHistoryStore.getLastBookmark`, now order by the stored instant itself on
+  every store, where SQLite used to sort a key built from its text. The decay sweep cuts its own
+  time to the microsecond. On SQLite it still fails on a proposition whose `created`,
+  `contentRevised`, `validFrom`, `validTo` or `invalidatedAt` has digits past the microsecond,
+  because Drivine's SQL stores keep only microseconds (liberation-data/drivine4j#421). The clock
+  gives more on Windows and on some JDKs on Linux, so a proposition saved with the default
+  `Instant.now()` there can't be swept until #421 is fixed. For an existing SQLite database written
+  in layout 1, Drivine has an opt-in migrator to layout 2 (liberation-data/drivine4j#870).
+  **Compatibility: behavioral.**
+
 - A `VectorSearchRequest` must name a context. `forText` and the Kotlin block throw
   `IllegalArgumentException` when the filter has none. Before, such a request was accepted and a
   store that implements `FilteredVectorSearch` could search every context with it. To search
