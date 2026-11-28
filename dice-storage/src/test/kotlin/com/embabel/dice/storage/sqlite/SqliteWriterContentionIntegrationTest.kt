@@ -42,6 +42,8 @@ import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.TransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -142,7 +144,13 @@ class SqliteWriterContentionIntegrationTest {
     @Test
     fun `a decay sweep waits for another writer and then refreshes`() {
         val context = ContextId("decay-contended-ctx")
-        val saved = repository.save(ghost("The ghost waits its turn", context))
+        // Drivine's SQL stores keep only microseconds, and the sweep can't read an instant saved with
+        // more (drivine4j#421). The clock gives more on Windows and on some JDKs on Linux.
+        val at = Instant.now().truncatedTo(ChronoUnit.MICROS)
+        val saved = repository.save(
+            ghost("The ghost waits its turn", context)
+                .copy(created = at, contentRevised = at, metadataRevised = at, lastAccessed = at),
+        )
         val dataSource = (registry.connectionProvider("neo") as NativeDriverSource<*>).nativeDriver as DataSource
         dataSource.connection.use { it.createStatement().execute("CREATE TABLE IF NOT EXISTS decay_holder (x INTEGER)") }
         val holding = CountDownLatch(1)

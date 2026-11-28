@@ -26,6 +26,7 @@ import org.drivine.model.Stamps
 import org.drivine.query.QuerySpecification
 import org.drivine.transaction.Transactions
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /**
  * Graph [DecayManager]: the storage-agnostic lifecycle sweep (inherited), plus materialisation of the
@@ -61,7 +62,9 @@ class GraphDecayManager(
     override fun materializeAll() = sweep("MATCH (p:Proposition)", emptyMap())
 
     private fun sweep(match: String, extraParams: Map<String, Any>) {
-        val now = Instant.now()
+        // Drivine's SQL stores keep only microseconds, and can't compute with an instant that has
+        // more (drivine4j#421). The clock gives more on Windows and on some JDKs on Linux.
+        val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
         val statement = cypherQuery("$match\nCALL {\n  WITH p\n$DECAY_EXPRESSION\n} IN TRANSACTIONS OF $BATCH_ROWS ROWS")
             .bind(extraParams + mapOf("now" to now))
         val holder = (persistenceManager as? DelegatingPersistenceManager)?.contextHolder

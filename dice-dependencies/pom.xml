@@ -29,7 +29,7 @@
 
     <properties>
         <!-- Keep in step with drivine.version in the root pom -->
-        <drivine.version>0.6.2</drivine.version>
+        <drivine.version>0.9.0</drivine.version>
     </properties>
 
     <dependencyManagement>
